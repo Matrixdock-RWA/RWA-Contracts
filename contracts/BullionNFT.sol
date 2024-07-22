@@ -372,3 +372,9 @@ contract BullionNFT_UT is BullionNFT {
         super.multiSafeTransferFrom(_sender, _recipients, _tokenIds, data);
     }
 }
+
+contract BullionNFT_UT2 is BullionNFT_UT {
+    function version() public pure returns (uint) {
+        return 2;
+    }
+}

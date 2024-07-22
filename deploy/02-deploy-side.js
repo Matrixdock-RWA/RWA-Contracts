@@ -19,10 +19,6 @@ async function main() {
   const mtSymbol          = "MT";
   const mtOwnerAddr       = owner.address;
   const mtOperatorAddr    = owner.address;
-  const nftName           = "BNFT";
-  const nftSymbol         = "BNFT";
-  const nftOwnerAddr      = owner.address;
-  const nftPackSignerAddr = owner.address;
 
   // deploy TLController
   console.log("deploy TimelockController ...");
@@ -65,8 +61,6 @@ async function main() {
   console.log("tlAdminAddr      :", tlAdminAddr);
   console.log("mtOwnerAddr      :", mtOwnerAddr);
   console.log("mtOperatorAddr   :", mtOperatorAddr);
-  console.log("nftOwnerAddr     :", nftOwnerAddr);
-  console.log("nftPackSignerAddr:", nftPackSignerAddr);
   console.log('ccipRouterAddr   :', ccipRouterAddr);
   console.log('tlcAddr          :', tlcAddr);
   console.log('mtAddr           :', mtAddr);

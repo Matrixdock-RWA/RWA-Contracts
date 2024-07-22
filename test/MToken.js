@@ -62,16 +62,16 @@ describe("ALL", function () {
     const reserveFeed = await FakeAggregatorV3.deploy(100000000);
 
     const MTokenMain = await ethers.getContractFactory("MTokenMain");
-    const mt = await MTokenMain.deploy();
-    await mt.initialize("MTM", owner.address, operator.address, reserveFeed.target);
+    const mt = await upgrades.deployProxy(MTokenMain, 
+      ["MTM", owner.address, operator.address, reserveFeed.target]);
 
     const MTokenSide = await ethers.getContractFactory("MTokenSide");
-    const mtSide = await MTokenSide.deploy();
-    await mtSide.initialize("MTS", owner.address, operator.address);
+    const mtSide = await upgrades.deployProxy(MTokenSide,
+      ["MTS", owner.address, operator.address]);
 
     const BullionNFT = await ethers.getContractFactory("BullionNFT_UT");
-    const nft = await BullionNFT.deploy();
-    await nft.initialize("BNFT", "BNFT", mt.target, packSigner.address, owner.address);
+    const nft = await upgrades.deployProxy(BullionNFT,
+      ["BNFT", "BNFT", mt.target, packSigner.address, owner.address]);
 
     const FakeRouterClient = await ethers.getContractFactory("FakeRouterClient");
     const ccipRouter = await FakeRouterClient.deploy();
@@ -1143,6 +1143,47 @@ describe("ALL", function () {
         .to.emit(mtSide, "CCReceiveMintBudget")
         .withArgs(5000);
       expect(await mtSide.mintBudget()).to.equal(5000);
+    });
+
+  });
+
+  describe("Proxy", function () {
+
+    it("upgradeProxy: upgrades", async function () {
+      const {nft, owner, alice, bob} = await loadFixture(deployTestFixture);
+
+      const NFTv2 = await ethers.getContractFactory("BullionNFT_UT2");
+      expect(await nft.getAddress()).to.equal(nft.target);
+
+      const upgraded = await upgrades.upgradeProxy(nft.target, NFTv2);
+      expect(upgraded.target).to.equal(nft.target);
+      expect(await upgraded.version()).to.equal(2);
+    });
+
+    it("upgradeProxy: manually", async function () {
+      const {nft, owner, alice, bob} = await loadFixture(deployTestFixture);
+      
+      const NFTv2 = await ethers.getContractFactory("BullionNFT_UT2");
+      const nft2impl = await NFTv2.deploy();
+
+      const proxyAdminABI = [
+        `function upgradeAndCall(address proxy, address impl, bytes data) public`,
+        `function owner() public returns (address)`,
+      ];
+      const nftAdminAddr = await upgrades.erc1967.getAdminAddress(nft.target);
+      const nftProxyAdmin = new ethers.Contract(nftAdminAddr, proxyAdminABI);
+      // expect(await nftProxyAdmin.owner()).to.equal(owner.address);
+
+      // not owner
+      await expect(nftProxyAdmin.connect(alice).upgradeAndCall(nft.target, nft2impl.target, "0x"))
+        .to.be.reverted;
+
+      // ok
+      await nftProxyAdmin.connect(owner).upgradeAndCall(nft.target, nft2impl.target, "0x");
+      const nft2 = NFTv2.attach(nft.target);
+      expect(await nft2.version()).to.equal(2);
+      expect(await upgrades.erc1967.getImplementationAddress(nft.target))
+        .to.equal(nft2impl.target);
     });
 
   });
