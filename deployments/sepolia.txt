@@ -1,0 +1,86 @@
+% npx hardhat run deploy/01-deploy-main.js --network sepolia
+owner: 0x5eC85f3049071A7BA7ea6fe3CA31aA17aa183Be7
+balance: 0.41466354663538389
+ccipRouterAddr: 0x0BF3dE8c5D3e8A2B34D2BEeB17ABfCeBaf363A59
+deploy FakeAggregatorV3 ...
+FakeAggregatorV3 deployed to: 0x74E8Fa4d2e42f0d70e2347e56856d90bDB144E62
+The contract 0x74E8Fa4d2e42f0d70e2347e56856d90bDB144E62 has already been verified on the block explorer. If you're trying to verify a partially verified contract, please use the --force flag.
+https://sepolia.etherscan.io/address/0x74E8Fa4d2e42f0d70e2347e56856d90bDB144E62#code
+
+deploy TimelockController ...
+TimelockController deployed to: 0x733a1F6c11C5d5220705F3c19Bc2A14eE1593496
+The contract 0x733a1F6c11C5d5220705F3c19Bc2A14eE1593496 has already been verified on the block explorer. If you're trying to verify a partially verified contract, please use the --force flag.
+https://sepolia.etherscan.io/address/0x733a1F6c11C5d5220705F3c19Bc2A14eE1593496#code
+
+deploy MTokenMain ...
+MTokenMain deployed to: 0x53B747e5c8C3A348b8f8444566755E195e9ADe16
+Verifying implementation: 0x25e17e1E18e10d336E75984dAC8FBbB986031817
+Successfully submitted source code for contract
+contracts/MTokenMain.sol:MTokenMain at 0x25e17e1E18e10d336E75984dAC8FBbB986031817
+for verification on the block explorer. Waiting for verification result...
+
+Successfully verified contract MTokenMain on the block explorer.
+https://sepolia.etherscan.io/address/0x25e17e1E18e10d336E75984dAC8FBbB986031817#code
+
+Verifying proxy: 0x53B747e5c8C3A348b8f8444566755E195e9ADe16
+The contract 0x53B747e5c8C3A348b8f8444566755E195e9ADe16 has already been verified on the block explorer. If you're trying to verify a partially verified contract, please use the --force flag.
+https://sepolia.etherscan.io/address/0x53B747e5c8C3A348b8f8444566755E195e9ADe16#code
+
+Linking proxy 0x53B747e5c8C3A348b8f8444566755E195e9ADe16 with implementation
+Successfully linked proxy to implementation.
+Verifying proxy admin: 0x3A21D34be790C427B101Fe3228bE57357E2444E3
+Failed to verify ProxyAdmin contract at 0x3A21D34be790C427B101Fe3228bE57357E2444E3: Already Verified
+
+Verification completed with the following warnings.
+
+Warning 1: Failed to verify ProxyAdmin contract at 0x3A21D34be790C427B101Fe3228bE57357E2444E3: Already Verified
+deploy BullionNFT ...
+BullionNFT deployed to: 0x198228c6bf941B5486f7e7aF72d0B820FC8e4674
+Verifying implementation: 0x4954B83C66674713251638dd7b99D8c926e2325B
+The contract 0x4954B83C66674713251638dd7b99D8c926e2325B has already been verified on the block explorer. If you're trying to verify a partially verified contract, please use the --force flag.
+https://sepolia.etherscan.io/address/0x4954B83C66674713251638dd7b99D8c926e2325B#code
+
+Verifying proxy: 0x198228c6bf941B5486f7e7aF72d0B820FC8e4674
+The contract 0x198228c6bf941B5486f7e7aF72d0B820FC8e4674 has already been verified on the block explorer. If you're trying to verify a partially verified contract, please use the --force flag.
+https://sepolia.etherscan.io/address/0x198228c6bf941B5486f7e7aF72d0B820FC8e4674#code
+
+Linking proxy 0x198228c6bf941B5486f7e7aF72d0B820FC8e4674 with implementation
+Failed to link proxy 0x198228c6bf941B5486f7e7aF72d0B820FC8e4674 with its implementation. Reason: This contract does not look like it contains any delegatecall opcode sequence.
+Verifying proxy admin: 0x4614514D471a9b77a3e9C53990A2c13ACC2B4CB0
+The contract 0x4614514D471a9b77a3e9C53990A2c13ACC2B4CB0 has already been verified on the block explorer. If you're trying to verify a partially verified contract, please use the --force flag.
+https://sepolia.etherscan.io/address/0x4614514D471a9b77a3e9C53990A2c13ACC2B4CB0#code
+
+
+Verification completed with the following warnings.
+
+Warning 1: Failed to link proxy 0x198228c6bf941B5486f7e7aF72d0B820FC8e4674 with its implementation. Reason: This contract does not look like it contains any delegatecall opcode sequence.
+deploy MTokenMessager ...
+MTokenMessager deployed to: 0xbbb3922bf0C872dC1Ddc3Be5E2c4477ddE59719c
+The contract 0xbbb3922bf0C872dC1Ddc3Be5E2c4477ddE59719c has already been verified on the block explorer. If you're trying to verify a partially verified contract, please use the --force flag.
+https://sepolia.etherscan.io/address/0xbbb3922bf0C872dC1Ddc3Be5E2c4477ddE59719c#code
+
+-----
+ownerAddr        : 0x5eC85f3049071A7BA7ea6fe3CA31aA17aa183Be7
+tlProposerAddr   : 0x5eC85f3049071A7BA7ea6fe3CA31aA17aa183Be7
+tlExecutorAddr   : 0x5eC85f3049071A7BA7ea6fe3CA31aA17aa183Be7
+tlAdminAddr      : 0x0000000000000000000000000000000000000000
+mtOwnerAddr      : 0x5eC85f3049071A7BA7ea6fe3CA31aA17aa183Be7
+mtOperatorAddr   : 0x5eC85f3049071A7BA7ea6fe3CA31aA17aa183Be7
+nftOwnerAddr     : 0x5eC85f3049071A7BA7ea6fe3CA31aA17aa183Be7
+nftPackSignerAddr: 0x5eC85f3049071A7BA7ea6fe3CA31aA17aa183Be7
+ccipRouterAddr   : 0x0BF3dE8c5D3e8A2B34D2BEeB17ABfCeBaf363A59
+reserveFeedAddr  : 0x74E8Fa4d2e42f0d70e2347e56856d90bDB144E62
+tlcAddr          : 0x733a1F6c11C5d5220705F3c19Bc2A14eE1593496
+mtAddr           : 0x53B747e5c8C3A348b8f8444566755E195e9ADe16
+nftAddr          : 0x198228c6bf941B5486f7e7aF72d0B820FC8e4674
+msgAddr          : 0xbbb3922bf0C872dC1Ddc3Be5E2c4477ddE59719c
+mtAdminAddr      : 0x3A21D34be790C427B101Fe3228bE57357E2444E3
+mtImplAddr       : 0x25e17e1E18e10d336E75984dAC8FBbB986031817
+nftAdminAddr     : 0x4614514D471a9b77a3e9C53990A2c13ACC2B4CB0
+nftImplAddr      : 0x4954B83C66674713251638dd7b99D8c926e2325B
+
+
+
+npx hardhat verify --network sepolia 0x4954B83C66674713251638dd7b99D8c926e2325B
+
+npx hardhat verify --network sepolia 0xbbb3922bf0C872dC1Ddc3Be5E2c4477ddE59719c 0x0BF3dE8c5D3e8A2B34D2BEeB17ABfCeBaf363A59 0x53B747e5c8C3A348b8f8444566755E195e9ADe16
