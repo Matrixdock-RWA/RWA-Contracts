@@ -5,15 +5,6 @@ import "./MToken.sol";
 
 // this contract will be deployed on Ethereum
 contract MTokenMain is MToken {
-    // usedReserve = Sum of each chain's totalSupply and mintBudget
-    // usedReserve <= Chainlink's PoR
-    uint112 public usedReserve;
-
-    // ChainLink PoR
-    address public reserveFeed;
-    address public nextReserveFeed;
-    uint64 public etNextReserveFeed; //effective time
-
     event SetReserveFeedRequest(address oldAddr, address newAddr, uint64 et);
     event SetReserveFeedEffected(address newAddr);
 

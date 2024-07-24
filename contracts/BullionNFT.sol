@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.24;
 
+import "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
@@ -9,10 +10,11 @@ import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import "./interfaces/IMToken.sol";
 
-contract BullionNFT is
+abstract contract BullionNFTBase is
     ERC721Upgradeable,
     EIP712Upgradeable,
-    OwnableUpgradeable
+    OwnableUpgradeable,
+    UUPSUpgradeable
 {
     address public mtokenContract;
     // a certain amount of mtoken can be packed into a NFT
@@ -21,13 +23,20 @@ contract BullionNFT is
     // lock NFTs to avoid accidentally losing them
     mapping(uint => bool) public isLocked;
 
-    string private baseURI;
+    string baseURI;
 
     // a packSigner endorse the information of a bullion
     address public packSigner;
     address public nextPackSigner;
     uint64 public etNextPackSigner; //effective time
 
+    // upgradeToAndCall() is delayed
+    address public nextImplementation;
+    bytes32 public nextUpgradeToAndCallDataHash;
+    uint64 public etNextUpgradeToAndCall; //effective time
+}
+
+contract BullionNFT is BullionNFTBase {
     bytes32 private constant PACK_TYPEHASH =
         keccak256(
             "Pack(address owner,uint256 amount,uint256 bullion,uint256 deadline)"
@@ -37,6 +46,7 @@ contract BullionNFT is
     event SetPackSignerEffected(address newAddr);
     event LockPlaced(uint indexed _user, bytes reason);
     event LockReleased(uint indexed _user);
+    event UpgradeToAndCallRequest(address newImplementation, bytes data);
 
     error NotOperator(address);
     error NotRevoker(address);
@@ -49,6 +59,9 @@ contract BullionNFT is
     error NotNftOwner(uint, address);
     error SignatureExpired(uint);
     error InvalidSigner(address);
+    error InvalidUpgradeToAndCallImpl();
+    error InvalidUpgradeToAndCallData();
+    error TooEarlyToUpgradeToAndCall();
 
     modifier onlyOperator() {
         if (msg.sender != IMToken(mtokenContract).operator()) {
@@ -140,8 +153,48 @@ contract BullionNFT is
         }
     }
 
+    function requestUpgradeToAndCall(
+        address _newImplementation,
+        bytes memory _data
+    ) public onlyOwner {
+        uint64 delay = IMToken(mtokenContract).delay();
+        nextImplementation = _newImplementation;
+        nextUpgradeToAndCallDataHash = keccak256(_data);
+        etNextUpgradeToAndCall = uint64(block.timestamp) + delay;
+        emit UpgradeToAndCallRequest(_newImplementation, _data);
+    }
+
+    function upgradeToAndCall(
+        address _newImplementation,
+        bytes memory _data
+    ) public payable override onlyProxy {
+        if (_newImplementation != nextImplementation) {
+            revert InvalidUpgradeToAndCallImpl();
+        }
+        if (keccak256(_data) != nextUpgradeToAndCallDataHash) {
+            revert InvalidUpgradeToAndCallData();
+        }
+
+        uint64 et = etNextUpgradeToAndCall;
+        if (et == 0 || et > block.timestamp) {
+            revert TooEarlyToUpgradeToAndCall();
+        }
+
+        // _authorizeUpgrade(newImplementation);
+        // _upgradeToAndCallUUPS(newImplementation, data);
+        super.upgradeToAndCall(_newImplementation, _data);
+    }
+
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal override onlyOwner {}
+
     function revokeNextPackSigner() public onlyRevoker {
         etNextPackSigner = 0;
+    }
+
+    function revokeNextUpgrade() public onlyRevoker {
+        etNextUpgradeToAndCall = 0;
     }
 
     function addToLockedList(
@@ -371,10 +424,14 @@ contract BullionNFT_UT is BullionNFT {
     ) public {
         super.multiSafeTransferFrom(_sender, _recipients, _tokenIds, data);
     }
+
+    function version() public pure virtual returns (uint) {
+        return 1;
+    }
 }
 
 contract BullionNFT_UT2 is BullionNFT_UT {
-    function version() public pure returns (uint) {
+    function version() public pure override returns (uint) {
         return 2;
     }
 }

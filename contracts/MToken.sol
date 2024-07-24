@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.24;
 
+import "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PermitUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import "./MTokenMessager.sol";
 // import "hardhat/console.sol";
 
-// this contract will be deployed on EVM-compatible chains other than Ethereum
-contract MToken is OwnableUpgradeable, ERC20PermitUpgradeable, ICCIPClient {
+abstract contract MTokenBase is
+    OwnableUpgradeable,
+    ERC20PermitUpgradeable,
+    UUPSUpgradeable
+{
     // every chain has its own mintBudget, operator can move mintBudget from one chain to another
     uint112 public mintBudget;
 
@@ -27,13 +31,18 @@ contract MToken is OwnableUpgradeable, ERC20PermitUpgradeable, ICCIPClient {
     address public nextRevoker;
     uint64 public etNextRevoker; //effective time
 
-    // the delayed minting requests are stored in requestMap
-    mapping(bytes32 requestHash => uint effectiveTime) public requestMap;
-
     // the messager contract takes care of cross-chain task
     address public messager;
     address public nextMessager;
     uint64 public etNextMessager; //effective time
+
+    // upgradeToAndCall() is delayed
+    address public nextImplementation;
+    bytes32 public nextUpgradeToAndCallDataHash;
+    uint64 public etNextUpgradeToAndCall; //effective time
+
+    // the delayed minting requests are stored in requestMap
+    mapping(bytes32 requestHash => uint effectiveTime) public requestMap;
 
     // the gold NFT contract for bullions
     address public nftContract;
@@ -43,6 +52,20 @@ contract MToken is OwnableUpgradeable, ERC20PermitUpgradeable, ICCIPClient {
 
     bool public disableCcSend;
 
+    /* Main Chain */
+
+    // usedReserve = Sum of each chain's totalSupply and mintBudget
+    // usedReserve <= Chainlink's PoR
+    uint112 public usedReserve;
+
+    // ChainLink PoR
+    address public reserveFeed;
+    address public nextReserveFeed;
+    uint64 public etNextReserveFeed; //effective time
+}
+
+// this contract will be deployed on EVM-compatible chains other than Ethereum
+contract MToken is MTokenBase, ICCIPClient {
     uint constant TagSendToken = 2;
     uint constant TagSendMintBudget = 3;
 
@@ -71,6 +94,7 @@ contract MToken is OwnableUpgradeable, ERC20PermitUpgradeable, ICCIPClient {
     event Redeem(address indexed customer, uint amount, bytes data);
     event MintRequest(address indexed receiver, uint amount, uint nonce);
     event RequestRevoked(bytes32 indexed req);
+    event UpgradeToAndCallRequest(address newImplementation, bytes data);
 
     error BlockedAccount(address);
     error NotOperator(address);
@@ -85,6 +109,9 @@ contract MToken is OwnableUpgradeable, ERC20PermitUpgradeable, ICCIPClient {
     error TooEarlyToExecute(address receiver, uint amount, uint nonce);
     error CcSendDisabled();
     error InvalidMsg(uint tag);
+    error InvalidUpgradeToAndCallImpl();
+    error InvalidUpgradeToAndCallData();
+    error TooEarlyToUpgradeToAndCall();
 
     modifier onlyNotBlocked() {
         _checkBlocked(_msgSender());
@@ -207,6 +234,53 @@ contract MToken is OwnableUpgradeable, ERC20PermitUpgradeable, ICCIPClient {
         }
     }
 
+    function setOperator(address _operator) public onlyOwner {
+        uint64 et = etNextOperator;
+        if (_operator == nextOperator && et != 0 && et < block.timestamp) {
+            operator = _operator;
+            emit SetOperatorEffected(_operator);
+        } else {
+            nextOperator = _operator;
+            etNextOperator = uint64(block.timestamp) + delay;
+            emit SetOperatorRequest(operator, _operator, etNextOperator);
+        }
+    }
+
+    function requestUpgradeToAndCall(
+        address _newImplementation,
+        bytes memory _data
+    ) public onlyOwner {
+        nextImplementation = _newImplementation;
+        nextUpgradeToAndCallDataHash = keccak256(_data);
+        etNextUpgradeToAndCall = uint64(block.timestamp) + delay;
+        emit UpgradeToAndCallRequest(_newImplementation, _data);
+    }
+
+    function upgradeToAndCall(
+        address _newImplementation,
+        bytes memory _data
+    ) public payable override onlyProxy {
+        if (_newImplementation != nextImplementation) {
+            revert InvalidUpgradeToAndCallImpl();
+        }
+        if (keccak256(_data) != nextUpgradeToAndCallDataHash) {
+            revert InvalidUpgradeToAndCallData();
+        }
+
+        uint64 et = etNextUpgradeToAndCall;
+        if (et == 0 || et > block.timestamp) {
+            revert TooEarlyToUpgradeToAndCall();
+        }
+
+        // _authorizeUpgrade(newImplementation);
+        // _upgradeToAndCallUUPS(newImplementation, data);
+        super.upgradeToAndCall(_newImplementation, _data);
+    }
+
+    function _authorizeUpgrade(
+        address newImplementation
+    ) internal override onlyOwner {}
+
     function revokeRequest(bytes32 req) public onlyRevoker {
         delete requestMap[req];
         emit RequestRevoked(req);
@@ -228,16 +302,8 @@ contract MToken is OwnableUpgradeable, ERC20PermitUpgradeable, ICCIPClient {
         etNextRevoker = 0;
     }
 
-    function setOperator(address _operator) public onlyOwner {
-        uint64 et = etNextOperator;
-        if (_operator == nextOperator && et != 0 && et < block.timestamp) {
-            operator = _operator;
-            emit SetOperatorEffected(_operator);
-        } else {
-            nextOperator = _operator;
-            etNextOperator = uint64(block.timestamp) + delay;
-            emit SetOperatorRequest(operator, _operator, etNextOperator);
-        }
+    function revokeNextUpgrade() public onlyRevoker {
+        etNextUpgradeToAndCall = 0;
     }
 
     function addToBlockedList(address _user) public onlyOperator {
