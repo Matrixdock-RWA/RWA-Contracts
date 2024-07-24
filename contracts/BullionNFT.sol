@@ -1,20 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC721/ERC721Upgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/utils/cryptography/EIP712Upgradeable.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
+import "./DelayedUpgradeable.sol";
 import "./interfaces/IMToken.sol";
 
 abstract contract BullionNFTBase is
     ERC721Upgradeable,
     EIP712Upgradeable,
-    OwnableUpgradeable,
-    UUPSUpgradeable
+    DelayedUpgradeable
 {
     address public mtokenContract;
     // a certain amount of mtoken can be packed into a NFT
@@ -29,11 +26,6 @@ abstract contract BullionNFTBase is
     address public packSigner;
     address public nextPackSigner;
     uint64 public etNextPackSigner; //effective time
-
-    // upgradeToAndCall() is delayed
-    address public nextImplementation;
-    bytes32 public nextUpgradeToAndCallDataHash;
-    uint64 public etNextUpgradeToAndCall; //effective time
 }
 
 contract BullionNFT is BullionNFTBase {
@@ -46,7 +38,6 @@ contract BullionNFT is BullionNFTBase {
     event SetPackSignerEffected(address newAddr);
     event LockPlaced(uint indexed _user, bytes reason);
     event LockReleased(uint indexed _user);
-    event UpgradeToAndCallRequest(address newImplementation, bytes data);
 
     error NotOperator(address);
     error NotRevoker(address);
@@ -59,9 +50,6 @@ contract BullionNFT is BullionNFTBase {
     error NotNftOwner(uint, address);
     error SignatureExpired(uint);
     error InvalidSigner(address);
-    error InvalidUpgradeToAndCallImpl();
-    error InvalidUpgradeToAndCallData();
-    error TooEarlyToUpgradeToAndCall();
 
     modifier onlyOperator() {
         if (msg.sender != IMToken(mtokenContract).operator()) {
@@ -153,41 +141,9 @@ contract BullionNFT is BullionNFTBase {
         }
     }
 
-    function requestUpgradeToAndCall(
-        address _newImplementation,
-        bytes memory _data
-    ) public onlyOwner {
-        uint64 delay = IMToken(mtokenContract).delay();
-        nextImplementation = _newImplementation;
-        nextUpgradeToAndCallDataHash = keccak256(_data);
-        etNextUpgradeToAndCall = uint64(block.timestamp) + delay;
-        emit UpgradeToAndCallRequest(_newImplementation, _data);
+    function getDelay() internal override returns (uint64) {
+        return IMToken(mtokenContract).delay();
     }
-
-    function upgradeToAndCall(
-        address _newImplementation,
-        bytes memory _data
-    ) public payable override onlyProxy {
-        if (_newImplementation != nextImplementation) {
-            revert InvalidUpgradeToAndCallImpl();
-        }
-        if (keccak256(_data) != nextUpgradeToAndCallDataHash) {
-            revert InvalidUpgradeToAndCallData();
-        }
-
-        uint64 et = etNextUpgradeToAndCall;
-        if (et == 0 || et > block.timestamp) {
-            revert TooEarlyToUpgradeToAndCall();
-        }
-
-        // _authorizeUpgrade(newImplementation);
-        // _upgradeToAndCallUUPS(newImplementation, data);
-        super.upgradeToAndCall(_newImplementation, _data);
-    }
-
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal override onlyOwner {}
 
     function revokeNextPackSigner() public onlyRevoker {
         etNextPackSigner = 0;

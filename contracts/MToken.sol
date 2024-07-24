@@ -1,18 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PermitUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+import "./DelayedUpgradeable.sol";
 import "./MTokenMessager.sol";
 // import "hardhat/console.sol";
 
-abstract contract MTokenBase is
-    OwnableUpgradeable,
-    ERC20PermitUpgradeable,
-    UUPSUpgradeable
-{
+abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
     // every chain has its own mintBudget, operator can move mintBudget from one chain to another
     uint112 public mintBudget;
 
@@ -35,11 +30,6 @@ abstract contract MTokenBase is
     address public messager;
     address public nextMessager;
     uint64 public etNextMessager; //effective time
-
-    // upgradeToAndCall() is delayed
-    address public nextImplementation;
-    bytes32 public nextUpgradeToAndCallDataHash;
-    uint64 public etNextUpgradeToAndCall; //effective time
 
     // the delayed minting requests are stored in requestMap
     mapping(bytes32 requestHash => uint effectiveTime) public requestMap;
@@ -94,7 +84,6 @@ contract MToken is MTokenBase, ICCIPClient {
     event Redeem(address indexed customer, uint amount, bytes data);
     event MintRequest(address indexed receiver, uint amount, uint nonce);
     event RequestRevoked(bytes32 indexed req);
-    event UpgradeToAndCallRequest(address newImplementation, bytes data);
 
     error BlockedAccount(address);
     error NotOperator(address);
@@ -109,9 +98,6 @@ contract MToken is MTokenBase, ICCIPClient {
     error TooEarlyToExecute(address receiver, uint amount, uint nonce);
     error CcSendDisabled();
     error InvalidMsg(uint tag);
-    error InvalidUpgradeToAndCallImpl();
-    error InvalidUpgradeToAndCallData();
-    error TooEarlyToUpgradeToAndCall();
 
     modifier onlyNotBlocked() {
         _checkBlocked(_msgSender());
@@ -246,40 +232,9 @@ contract MToken is MTokenBase, ICCIPClient {
         }
     }
 
-    function requestUpgradeToAndCall(
-        address _newImplementation,
-        bytes memory _data
-    ) public onlyOwner {
-        nextImplementation = _newImplementation;
-        nextUpgradeToAndCallDataHash = keccak256(_data);
-        etNextUpgradeToAndCall = uint64(block.timestamp) + delay;
-        emit UpgradeToAndCallRequest(_newImplementation, _data);
+    function getDelay() internal view override returns (uint64) {
+        return delay;
     }
-
-    function upgradeToAndCall(
-        address _newImplementation,
-        bytes memory _data
-    ) public payable override onlyProxy {
-        if (_newImplementation != nextImplementation) {
-            revert InvalidUpgradeToAndCallImpl();
-        }
-        if (keccak256(_data) != nextUpgradeToAndCallDataHash) {
-            revert InvalidUpgradeToAndCallData();
-        }
-
-        uint64 et = etNextUpgradeToAndCall;
-        if (et == 0 || et > block.timestamp) {
-            revert TooEarlyToUpgradeToAndCall();
-        }
-
-        // _authorizeUpgrade(newImplementation);
-        // _upgradeToAndCallUUPS(newImplementation, data);
-        super.upgradeToAndCall(_newImplementation, _data);
-    }
-
-    function _authorizeUpgrade(
-        address newImplementation
-    ) internal override onlyOwner {}
 
     function revokeRequest(bytes32 req) public onlyRevoker {
         delete requestMap[req];

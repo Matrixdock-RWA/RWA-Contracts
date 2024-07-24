@@ -3,18 +3,19 @@ const { ethers, upgrades, erc1967 } = require("hardhat");
 const zeroAddr = "0x0000000000000000000000000000000000000000";
 
 // npx hardhat run deploy/01-deploy-mt.js --network sepolia
-// npx hardhat run deploy/01-deploy-mt.js --network bscTest
+// npx hardhat run deploy/01-deploy-mt.js --network bscTestnet
 async function main() {
   const [owner] = await ethers.getSigners();
-  console.log('owner:', owner.address);
-  console.log('balance:', ethers.formatEther(await owner.provider.getBalance(owner.address)));
+  console.log('owner            :', owner.address);
+  console.log('balance          :', ethers.formatEther(await owner.provider.getBalance(owner.address)));
 
   const {chainId, chainType, ccipRouterAddr, reserveFeedAddr} = hre.network.config;
   const isHardhat = chainId == 31337;
-  const isMainChain = chainType == "main";
-  console.log('chainType:', chainType, ", isMainChain:", isMainChain);
-  console.log('ccipRouterAddr:', ccipRouterAddr);
-  console.log('reserveFeedAddr:', reserveFeedAddr);
+  const isMainChain = !!reserveFeedAddr;
+  console.log('ccipRouterAddr   :', ccipRouterAddr);
+  console.log('reserveFeedAddr  :', reserveFeedAddr);
+  console.log('isHardhat        :', isHardhat);
+  console.log("isMainChain      :", isMainChain);
 
   // TODO
   const mtSymbol          = "MT";
@@ -76,13 +77,26 @@ async function main() {
   console.log("nftPackSignerAddr:", nftPackSignerAddr);
   console.log('ccipRouterAddr   :', ccipRouterAddr);
   console.log('reserveFeedAddr  :', reserveFeedAddr);
-  console.log('mtAddr           :', mtAddr);
-  console.log('nftAddr          :', nftAddr);
-  console.log('msgAddr          :', msgAddr);
-  console.log('mtAdminAddr      :', await upgrades.erc1967.getAdminAddress(mtAddr));
+  console.log('mtProxyAddr      :', mtAddr);
   console.log('mtImplAddr       :', await upgrades.erc1967.getImplementationAddress(mtAddr));
-  console.log('nftAdminAddr     :', await upgrades.erc1967.getAdminAddress(nftAddr));
+  console.log('nftProxyAddr     :', nftAddr);
   console.log('nftImplAddr      :', await upgrades.erc1967.getImplementationAddress(nftAddr));
+  console.log('msgAddr          :', msgAddr);
+
+  // mt.setNFTContract(nft)
+  console.log("-----");
+  console.log("call setNFTContract() ...");
+  const tx = await mt.setNFTContract(nftAddr);
+  console.log('tx:', tx.hash);
+
+  // mt.setMessager(msg)
+  console.log("call setMessager() ...");
+  const tx1 = await mt.setMessager(msgAddr);
+  console.log('tx1:', tx1.hash);
+  await tx1.wait();
+  const tx2 = await mt.setMessager(msgAddr);
+  console.log('tx2:', tx2.hash);
+  await tx2.wait();
 }
 
 main()

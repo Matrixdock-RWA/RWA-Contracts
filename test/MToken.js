@@ -954,8 +954,8 @@ describe("ALL", function () {
       const { mt, nft, operator, alice, bob } = await loadFixture(deployTestFixture);
       await mt.setNFTContract(nft.target);
       await mt.connect(operator).increaseMintBudget(2000000);
-      await mt.connect(operator).mintTo(operator.address, 65000, 0);
-      await mt.connect(operator).mintTo(operator.address, 65000, 0);
+      await mt.connect(operator).mintTo(operator.address, 100000, 0);
+      await mt.connect(operator).mintTo(operator.address, 100000, 0);
 
       // pack 101, 102, 103
       await expect(nft.connect(operator).pack(10000, 101))
@@ -968,12 +968,17 @@ describe("ALL", function () {
         .withArgs(101);
       await nft.connect(operator).pack(30000, 103);
 
+      // transfer to alice, bob
+      await nft.connect(operator).transferFrom(operator.address, alice.address, 101);
+      await nft.connect(operator).transferFrom(operator.address, bob.address, 102);
+
       // unpack 101, 102
-      await expect(nft.connect(operator).unpack(101))
-        .to.emit(mt, "Transfer").withArgs(nft.target, operator.address, 10000)
-        .to.emit(nft, "Transfer").withArgs(operator, zeroAddr, 101);
-      await expect(nft.connect(operator).unpack(102))
-        .to.changeTokenBalances(mt, [nft.target, operator.address], [-20000, 20000])
+      await expect(nft.connect(alice).unpack(101))
+        .to.emit(mt, "Transfer").withArgs(nft.target, alice.address, 10000)
+        .to.emit(nft, "Transfer").withArgs(alice, zeroAddr, 101);
+      await expect(nft.connect(bob).unpack(102))
+        .to.changeTokenBalances(mt, [nft.target, bob.address], [-20000, 20000]);
+
       await expect(nft.connect(operator).unpack(404))
         .to.be.revertedWithCustomError(nft, "NoSuchBullion")
         .withArgs(404);
