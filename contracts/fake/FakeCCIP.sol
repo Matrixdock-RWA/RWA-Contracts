@@ -10,14 +10,14 @@ contract FakeRouterClient {
     mapping(bytes32 msgId => address) public senderMap;
 
     function getFee(
-        uint64 destinationChainSelector,
+        uint64 /*destinationChainSelector*/,
         Client.EVM2AnyMessage memory message
-    ) external view returns (uint256 fee) {
+    ) external pure returns (uint256 fee) {
         return message.data.length * 10000;
     }
 
     function ccipSend(
-        uint64 destinationChainSelector,
+        uint64 /*destinationChainSelector*/,
         Client.EVM2AnyMessage calldata message
     ) external payable returns (bytes32) {
         lastMsgId = keccak256(message.data);

@@ -16,13 +16,14 @@ contract FakeAggregatorV3 {
         external
         view
         returns (
-            uint80 roundId,
-            int256 answer,
-            uint256 startedAt,
-            uint256 updatedAt,
-            uint80 answeredInRound
+            uint80 /*roundId*/,
+            int256 /*answer*/,
+            uint256 /*startedAt*/,
+            uint256 /*updatedAt*/,
+            uint80 /*answeredInRound*/
         )
     {
-        answer = reserve;
+        // answer = reserve;
+        return (0, reserve, 0, 0, 0);
     }
 }
