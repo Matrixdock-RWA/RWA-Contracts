@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.24;
 
+import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {Client} from "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.sol";
 import {CCIPReceiver} from "@chainlink/contracts-ccip/src/v0.8/ccip/applications/CCIPReceiver.sol";
 import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
@@ -31,6 +32,8 @@ interface ICCIPClient {
 }
 
 contract MTokenMessager is CCIPReceiver, OwnerIsCreator {
+    using Address for address payable;
+
     ICCIPClient public ccipClient;
 
     mapping(uint64 => mapping(address => bool)) public allowedPeer;
@@ -53,6 +56,7 @@ contract MTokenMessager is CCIPReceiver, OwnerIsCreator {
         bool allowed
     ) external onlyOwner {
         allowedPeer[chainSelector][messager] = allowed;
+        emit AllowedPeer(chainSelector, messager, allowed);
     }
 
     function _ccipReceive(
@@ -128,13 +132,13 @@ contract MTokenMessager is CCIPReceiver, OwnerIsCreator {
             recipient,
             value
         );
-        return
-            sendDataToChain(
-                destinationChainSelector,
-                messageReceiver,
-                extraArgs,
-                data
-            );
+        messageId = sendDataToChain(
+            destinationChainSelector,
+            messageReceiver,
+            extraArgs,
+            data
+        );
+        emit CCSendToken(messageId, data);
     }
 
     function sendMintBudgetToChain(
@@ -147,13 +151,13 @@ contract MTokenMessager is CCIPReceiver, OwnerIsCreator {
             revert NotInAllowListed(destinationChainSelector, messageReceiver);
         }
         bytes memory data = ccipClient.ccSendMintBudget(value);
-        return
-            sendDataToChain(
-                destinationChainSelector,
-                messageReceiver,
-                extraArgs,
-                data
-            );
+        messageId = sendDataToChain(
+            destinationChainSelector,
+            messageReceiver,
+            extraArgs,
+            data
+        );
+        emit CCSendMintBudget(messageId, data);
     }
 
     function getFeeAndMessage(
@@ -204,10 +208,8 @@ contract MTokenMessager is CCIPReceiver, OwnerIsCreator {
             evm2AnyMessage
         );
         if (msg.value - fee > 0) {
-            bool success = payable(msg.sender).send(msg.value - fee);
-            require(success, "MTokenMessager: TRANSFER_FAILED");
+            payable(msg.sender).sendValue(msg.value - fee);
         }
-        emit CCSendToken(messageId, data);
         return messageId;
     }
 }

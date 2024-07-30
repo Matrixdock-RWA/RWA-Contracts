@@ -100,8 +100,19 @@ describe("ALL", function () {
       {c: "mt",  field: "revoker",     zeroVal: zeroAddr, initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000005"},
       {c: "mt",  field: "operator",    zeroVal: zeroAddr, initVal: "opAddr", newVal: "0x0000000000000000000000000000000000000002"},
       {c: "mt",  field: "reserveFeed", zeroVal: zeroAddr, initVal: "rfAddr", newVal: "0x0000000000000000000000000000000000000003"},
+      {c: "mt",  field: "fallbackFeed",zeroVal: zeroAddr, initVal: "fbAddr", newVal: "0x0000000000000000000000000000000000000006"},
       {c: "nft", field: "packSigner",  zeroVal: zeroAddr, initVal: "psAddr", newVal: "0x0000000000000000000000000000000000000004"},
     ];
+
+    it("setDelay: MIN_DELAY", async function () {
+        const { mt, owner } = await loadFixture(deployTestFixture);
+
+        for (const delay of [0, 1, 43, 888, 3599]) {
+          await expect(mt.setDelay(1)).to.be.revertedWithCustomError(mt, "DelayTooSmall");
+        }
+
+        await mt.setDelay(3600); // ok
+    });
 
     for (const {c, field, zeroVal, initVal, newVal} of testCases) {
       const _Field = field[0].toUpperCase() + field.substring(1);
@@ -119,6 +130,7 @@ describe("ALL", function () {
         let _initVal = initVal;
         if (initVal == "opAddr") { _initVal = operator.address; }
         if (initVal == "rfAddr") { _initVal = reserveFeed.target; }
+        if (initVal == "fbAddr") { _initVal = zeroAddr; }
         if (initVal == "psAddr") { _initVal = packSigner.address; }
 
         expect(await _c[field]()).to.equal(_initVal);
@@ -268,6 +280,24 @@ describe("ALL", function () {
 
     });
   }
+
+  it("checkZeroAddress", async function () {
+      const { mt, nft, owner, operator } = await loadFixture(deployTestFixture);
+
+      const testCases = [
+        mt.connect(owner).setMessager(zeroAddr),
+        mt.connect(owner).setNFTContract(zeroAddr),
+        mt.connect(owner).setRevoker(zeroAddr),
+        mt.connect(owner).setOperator(zeroAddr),
+        mt.connect(owner).setReserveFeed(zeroAddr),
+        nft.connect(operator).setPackSigner(zeroAddr),
+      ];
+
+      for (const testCase of testCases) {
+        await expect(testCase)
+          .to.be.revertedWithCustomError(mt, "ZeroAddress");
+      }
+  });
 
   describe("MToken", function () {
 
@@ -679,6 +709,29 @@ describe("ALL", function () {
       expect(await mt.usedReserve()).to.equal(8000);
     });
 
+    it("increaseMintBudget: fallbackFeed", async function () {
+      const { mt, reserveFeed, owner, operator, alice } = await loadFixture(deployTestFixture);
+
+      // reserve feed is broken
+      await reserveFeed.setReserve(50000);
+      await reserveFeed.setUpdatedAt(1722000000);
+
+      // no fallback feed
+      await expect(mt.connect(operator).increaseMintBudget(60000))
+        .to.be.reverted;
+
+      // set fallback feed
+      const FakeAggregatorV3 = await ethers.getContractFactory("FakeAggregatorV3");
+      const fallbackFeed = await FakeAggregatorV3.deploy(70000);
+      await mt.setFallbackFeed(fallbackFeed.target);
+      await mt.setFallbackFeed(fallbackFeed.target);
+
+      // use fallback feed
+      await mt.connect(operator).increaseMintBudget(60000);
+      expect(await mt.mintBudget()).to.equal(60000);
+      expect(await mt.usedReserve()).to.equal(60000);
+    });
+
   });
 
   describe("MTokenSide", function () {
@@ -811,15 +864,16 @@ describe("ALL", function () {
       await mt.connect(operator).increaseMintBudget(2000000);
       await nft.connect(operator).mintAndPack(10000, 101, 0);
       await nft.connect(operator).mintAndPack(10000, 101, 0);
+      await nft.connect(operator).transferFrom(operator.address, bob.address, 101);
 
       const testCases = [
-        // nft.connect(operator).unpackAndRedeem(101, alice.address, "0x1234"),
-        nft.connect(alice).unpack(101),
+        nft.connect(operator).unpackAndRedeem(101, alice.address, "0x1234"),
+        nft.connect(operator).unpack(101),
       ];
 
       for (const testCase of testCases) {
         await expect(testCase).to.be.revertedWithCustomError(nft, "NotNftOwner")
-          .withArgs(101, alice.address);
+          .withArgs(101, operator.address);
       }
     });
 
@@ -1008,6 +1062,22 @@ describe("ALL", function () {
         .to.emit(nft, "Transfer").withArgs(operator, zeroAddr, 200);
     });
 
+    it("pack/unpack: blocked", async function () {
+      const { mt, nft, operator, alice, bob } = await loadFixture(deployTestFixture);
+      await mt.setNFTContract(nft.target);
+      await mt.connect(operator).increaseMintBudget(2000000);
+      await mt.connect(operator).mintTo(operator.address, 65000, 0);
+      await mt.connect(operator).mintTo(operator.address, 65000, 0);
+
+      await nft.connect(operator).pack(10000, 101);
+      await nft.connect(operator).transferFrom(operator.address, alice.address, 101);
+      await mt.connect(operator).addToBlockedList(alice.address);
+
+      await expect(nft.connect(alice).unpack(101))
+        .to.be.revertedWithCustomError(nft, "BlockedAccount")
+        .withArgs(alice.address);
+    });
+
     it("mint/redeem", async function () {
       const { mt, nft, operator, alice, bob } = await loadFixture(deployTestFixture);
       await mt.setNFTContract(nft.target);
@@ -1068,8 +1138,8 @@ describe("ALL", function () {
       it("error: InvalidSigner", async function () {
         const { mt, nft, operator, alice, bob } = await loadFixture(deployTestFixture);
 
-        const [r, s, v] = await sign712Pack(alice, nft.target, alice.address, 12345, 888, 1721999999);
-        await expect(nft.connect(alice).packWithSig(12345, 888, 1721999999, v, r, s))
+        const [r, s, v] = await sign712Pack(alice, nft.target, alice.address, 12345, 888, 1731999999);
+        await expect(nft.connect(alice).packWithSig(12345, 888, 1731999999, v, r, s))
           .to.be.revertedWithCustomError(nft, "InvalidSigner")
           .withArgs(alice.address);
       });
@@ -1083,8 +1153,8 @@ describe("ALL", function () {
         await mt.connect(operator).mintTo(alice.address, 65000, 0);
         await mt.connect(operator).mintTo(alice.address, 65000, 0);
 
-        const [r, s, v] = await sign712Pack(alice, nft.target, alice.address, 12345, 888, 1721999999);
-        await nft.connect(alice).packWithSig(12345, 888, 1721999999, v, r, s);
+        const [r, s, v] = await sign712Pack(alice, nft.target, alice.address, 12345, 888, 1731999999);
+        await nft.connect(alice).packWithSig(12345, 888, 1731999999, v, r, s);
       });
 
     });
@@ -1109,12 +1179,18 @@ describe("ALL", function () {
       await expect(mtMsg.connect(alice).setAllowedPeer(123, bob.address, true))
         .to.be.revertedWith("Only callable by owner")
 
-      await mtMsg.setAllowedPeer(123, alice.address, true);
-      await mtMsg.setAllowedPeer(456, bob.address, true);
+      await expect(mtMsg.setAllowedPeer(123, alice.address, true))
+        .to.emit(mtMsg, "AllowedPeer")
+        .withArgs(123, alice.address, true);
+      await expect(mtMsg.setAllowedPeer(456, bob.address, true))
+        .to.emit(mtMsg, "AllowedPeer")
+        .withArgs(456, bob.address, true);
       expect(await mtMsg.allowedPeer(123, alice.address)).to.equal(true);
       expect(await mtMsg.allowedPeer(456, bob.address)).to.equal(true);
 
-      await mtMsg.setAllowedPeer(123, alice.address, false);
+      await expect(mtMsg.setAllowedPeer(123, alice.address, false))
+        .to.emit(mtMsg, "AllowedPeer")
+        .withArgs(123, alice.address, false);
       expect(await mtMsg.allowedPeer(123, alice.address)).to.equal(false);
       expect(await mtMsg.allowedPeer(456, bob.address)).to.equal(true);
     });
@@ -1221,7 +1297,7 @@ describe("ALL", function () {
           {value: 1280000}
         )
       ).to.emit(mt, "CCSendMintBudget").withArgs(5000)
-        .to.emit(mtMsg, "CCSendToken");
+        .to.emit(mtMsg, "CCSendMintBudget");
       const msgId = await ccipRouter.lastMsgId();
       // console.log('msgId:', msgId);
 

@@ -52,10 +52,15 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
     address public reserveFeed;
     address public nextReserveFeed;
     uint64 public etNextReserveFeed; //effective time
+    address public fallbackFeed;
+    address public nextFallbackFeed;
+    uint64 public etNextFallbackFeed; //effective time
 }
 
 // this contract will be deployed on EVM-compatible chains other than Ethereum
 contract MToken is MTokenBase, ICCIPClient {
+    uint64 constant MIN_DELAY = 1 hours;
+
     uint constant TagSendToken = 2;
     uint constant TagSendMintBudget = 3;
 
@@ -98,6 +103,7 @@ contract MToken is MTokenBase, ICCIPClient {
     error TooEarlyToExecute(address receiver, uint amount, uint nonce);
     error CcSendDisabled();
     error InvalidMsg(uint tag);
+    error DelayTooSmall();
 
     modifier onlyNotBlocked() {
         _checkBlocked(_msgSender());
@@ -178,6 +184,10 @@ contract MToken is MTokenBase, ICCIPClient {
     }
 
     function setDelay(uint64 _delay) public onlyOwner {
+        if (_delay < MIN_DELAY) {
+            revert DelayTooSmall();
+        }
+
         uint64 et = etNextDelay;
         if (_delay == nextDelay && et != 0 && et < block.timestamp) {
             delay = _delay;
@@ -190,6 +200,7 @@ contract MToken is MTokenBase, ICCIPClient {
     }
 
     function setMessager(address _messager) public onlyOwner {
+        _checkZeroAddress(_messager);
         uint64 et = etNextMessager;
         if (_messager == nextMessager && et != 0 && et < block.timestamp) {
             messager = _messager;
@@ -203,12 +214,14 @@ contract MToken is MTokenBase, ICCIPClient {
 
     // init nftContract. can only be called once
     function setNFTContract(address _nftContract) public onlyOwner {
+        _checkZeroAddress(_nftContract);
         if (nftContract == address(0)) {
             nftContract = _nftContract;
         }
     }
 
     function setRevoker(address _revoker) public onlyOwner {
+        _checkZeroAddress(_revoker);
         uint64 et = etNextRevoker;
         if (_revoker == nextRevoker && et != 0 && et < block.timestamp) {
             revoker = _revoker;
@@ -221,6 +234,7 @@ contract MToken is MTokenBase, ICCIPClient {
     }
 
     function setOperator(address _operator) public onlyOwner {
+        _checkZeroAddress(_operator);
         uint64 et = etNextOperator;
         if (_operator == nextOperator && et != 0 && et < block.timestamp) {
             operator = _operator;

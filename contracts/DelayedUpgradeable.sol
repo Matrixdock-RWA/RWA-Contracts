@@ -15,6 +15,7 @@ abstract contract DelayedUpgradeable is OwnableUpgradeable, UUPSUpgradeable {
     error InvalidUpgradeToAndCallImpl();
     error InvalidUpgradeToAndCallData();
     error TooEarlyToUpgradeToAndCall();
+    error ZeroAddress();
 
     function getDelay() internal virtual returns (uint64);
 
@@ -52,4 +53,10 @@ abstract contract DelayedUpgradeable is OwnableUpgradeable, UUPSUpgradeable {
     function _authorizeUpgrade(
         address newImplementation
     ) internal override onlyOwner {}
+
+    function _checkZeroAddress(address _addr) internal pure {
+        if (_addr == address(0)) {
+            revert ZeroAddress();
+        }
+    }
 }

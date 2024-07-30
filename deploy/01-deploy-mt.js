@@ -1,4 +1,4 @@
-const { ethers, upgrades, erc1967 } = require("hardhat");
+const { ethers, upgrades } = require("hardhat");
 
 const zeroAddr = "0x0000000000000000000000000000000000000000";
 

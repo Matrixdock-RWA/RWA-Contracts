@@ -129,6 +129,7 @@ contract BullionNFT is BullionNFTBase {
     }
 
     function setPackSigner(address addr) public onlyOperator {
+        _checkZeroAddress(addr);
         uint64 et = etNextPackSigner;
         uint64 delay = IMToken(mtokenContract).delay();
         if (addr == nextPackSigner && et != 0 && et < block.timestamp) {
@@ -312,6 +313,7 @@ contract BullionNFT is BullionNFTBase {
     // unpack a bullion NFT and return the MTokens. Can be used by customers.
     function unpack(uint bullion) public {
         uint amount = _getAmount(bullion);
+        _checkBlocked(msg.sender);
         if (ownerOf(bullion) != msg.sender) {
             revert NotNftOwner(bullion, msg.sender);
         }
