@@ -5,18 +5,18 @@ async function main() {
   const {chainId} = hre.network.config;
   const isHardhat = chainId == 31337;
 
-  // deploy fake feed
-  console.log("deploy FakeAggregatorV3 ...");
-  const initReserve = 100000000n * (10n ** 18n);
-  const FakeAggregatorV3 = await ethers.getContractFactory("FakeAggregatorV3");
-  const fakeFeed = await FakeAggregatorV3.deploy(initReserve);
-  await fakeFeed.waitForDeployment();
-  const feedAddr = await fakeFeed.getAddress();
-  console.log("FakeAggregatorV3 deployed to:", feedAddr);
+  // deploy reserve feed
+  console.log("deploy FallbackReserveFeed ...");
+  const [signer] = await ethers.getSigners();
+  const FallbackReserveFeed = await ethers.getContractFactory("FallbackReserveFeed");
+  const feed = await FallbackReserveFeed.deploy(signer.address);
+  await feed.waitForDeployment();
+  const feedAddr = await feed.getAddress();
+  console.log("FallbackReserveFeed deployed to:", feedAddr);
 
   if (!isHardhat) {
     await hre.run("verify:verify", 
-      {address: feedAddr, constructorArguments: [initReserve]});
+      {address: feedAddr, constructorArguments: [signer.address]});
   }
 }
 

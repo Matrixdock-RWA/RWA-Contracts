@@ -88,6 +88,7 @@ async function main() {
   console.log("call setNFTContract() ...");
   const tx = await mt.setNFTContract(nftAddr);
   console.log('tx:', tx.hash);
+  await tx.wait();
 
   // mt.setMessager(msg)
   console.log("call setMessager() ...");

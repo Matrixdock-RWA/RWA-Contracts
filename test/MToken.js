@@ -58,8 +58,9 @@ describe("ALL", function () {
   async function deployTestFixture() {
     const [owner, operator, packSigner, fakeNft, alice, bob] = await ethers.getSigners();
 
-    const FakeAggregatorV3 = await ethers.getContractFactory("FakeAggregatorV3");
-    const reserveFeed = await FakeAggregatorV3.deploy(100000000);
+    const FallbackReserveFeed = await ethers.getContractFactory("FallbackReserveFeed");
+    const reserveFeed = await FallbackReserveFeed.deploy(owner.address);
+    await reserveFeed.setReserve(100000000);
 
     const MTokenMain = await ethers.getContractFactory("MTokenMain");
     const mt = await upgrades.deployProxy(MTokenMain, 
@@ -714,15 +715,16 @@ describe("ALL", function () {
 
       // reserve feed is broken
       await reserveFeed.setReserve(50000);
-      await reserveFeed.setUpdatedAt(1722000000);
+      await time.increase(48 * 3600);
 
       // no fallback feed
       await expect(mt.connect(operator).increaseMintBudget(60000))
         .to.be.reverted;
 
       // set fallback feed
-      const FakeAggregatorV3 = await ethers.getContractFactory("FakeAggregatorV3");
-      const fallbackFeed = await FakeAggregatorV3.deploy(70000);
+      const FallbackReserveFeed = await ethers.getContractFactory("FallbackReserveFeed");
+      const fallbackFeed = await FallbackReserveFeed.deploy(owner.address);
+      await fallbackFeed.setReserve(70000);
       await mt.setFallbackFeed(fallbackFeed.target);
       await mt.setFallbackFeed(fallbackFeed.target);
 
@@ -1325,6 +1327,59 @@ describe("ALL", function () {
         .to.emit(mtSide, "CCReceiveMintBudget")
         .withArgs(5000);
       expect(await mtSide.mintBudget()).to.equal(5000);
+    });
+
+  });
+
+  describe("FallbackReserveFeed", function () {
+
+    async function deployFeedFixture() {
+      const [owner, alice, bob] = await ethers.getSigners();
+
+      const FallbackReserveFeed = await ethers.getContractFactory("FallbackReserveFeed");
+      const reserveFeed = await FallbackReserveFeed.deploy(owner.address);
+
+      return {reserveFeed, owner, alice, bob};
+    };
+
+    it("init", async function () {
+        const { reserveFeed, owner } = await loadFixture(deployFeedFixture);
+
+        expect(await reserveFeed.owner()).to.equal(owner.address);
+        expect(await reserveFeed.decimals()).to.equal(18);
+        expect(await reserveFeed.description()).to.equal("MatrixDock Bullion Reserve");
+        expect(await reserveFeed.version()).to.equal(1);
+
+        expect(await reserveFeed.roundId()).to.equal(0);
+        expect(await reserveFeed.reserve()).to.equal(0);
+        expect(await reserveFeed.updatedAt()).to.equal(0);
+    });
+
+    it("setReserve", async function () {
+      const { reserveFeed, owner, alice } = await loadFixture(deployFeedFixture);
+
+      await expect(reserveFeed.connect(alice).setReserve(123))
+        .to.be.revertedWithCustomError(reserveFeed, "OwnableUnauthorizedAccount")
+        .withArgs(alice.address);
+
+      await expect(reserveFeed.setReserve(10000))
+        .to.emit(reserveFeed, "ReserveSet")
+        .withArgs(1, 10000);
+      expect(await reserveFeed.roundId()).to.equal(1);
+      expect(await reserveFeed.reserve()).to.equal(10000);
+
+      const tx = await reserveFeed.setReserve(20000);
+      const ts = await getTS(tx);
+      expect(await reserveFeed.roundId()).to.equal(2);
+      expect(await reserveFeed.reserve()).to.equal(20000);
+      expect(await reserveFeed.updatedAt()).to.equal(ts);
+      expect(await reserveFeed.latestRoundData())
+        .to.deep.equal([2, 20000, ts, ts, 2]);
+      expect(await reserveFeed.getRoundData(2))
+        .to.deep.equal([2, 20000, ts, ts, 2]);
+
+      await expect(reserveFeed.getRoundData(3))
+        .to.be.revertedWith("NO_DATA");
     });
 
   });
