@@ -613,6 +613,11 @@ describe("ALL", function () {
         .to.emit(mt, "CCSendMintBudget")
         .withArgs(10000);
       await expect(await mt.mintBudget()).to.equal(40000);
+
+      await expect(mt.connect(operator).ccSendMintBudget(30000))
+        .to.emit(mt, "CCSendMintBudget")
+        .withArgs(30000);
+      await expect(await mt.mintBudget()).to.equal(10000);
     });
 
     it("ccReceiveToken", async function () {

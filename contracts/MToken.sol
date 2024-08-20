@@ -405,9 +405,10 @@ contract MToken is MTokenBase, ICCIPClient {
     ) public onlyMessager returns (bytes memory message) {
         _checkOperator(tx.origin);
         _checkZeroValue(value);
+        message = msgOfCcSendMintBudget(value);
         mintBudget -= value;
         emit CCSendMintBudget(value);
-        return msgOfCcSendMintBudget(value);
+        return message;
     }
 
     // finish a cross-chain token transfer
