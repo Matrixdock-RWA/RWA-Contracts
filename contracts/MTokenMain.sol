@@ -16,21 +16,23 @@ contract MTokenMain is MToken {
     error ReserveNotEnough(int max, int amount);
 
     function initialize(
+        string memory name,
         string memory symbol,
         address _owner,
         address _operator,
         address _reserveFeed
     ) public initializer {
-        __MTOKENMAIN_init(symbol, _owner, _operator, _reserveFeed);
+        __MTOKENMAIN_init(name, symbol, _owner, _operator, _reserveFeed);
     }
 
     function __MTOKENMAIN_init(
+        string memory name,
         string memory symbol,
         address _owner,
         address _operator,
         address _reserveFeed
     ) internal onlyInitializing {
-        __MTOKEN_init(symbol, _owner, _operator);
+        __MTOKEN_init(name, symbol, _owner, _operator);
         reserveFeed = _reserveFeed;
     }
 

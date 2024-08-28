@@ -167,11 +167,12 @@ contract MToken is MTokenBase, ICCIPClient {
     }
 
     function __MTOKEN_init(
+        string memory name,
         string memory symbol,
         address _owner,
         address _operator
     ) internal onlyInitializing {
-        __ERC20_init_unchained(symbol, symbol);
+        __ERC20_init_unchained(name, symbol);
         __EIP712_init_unchained(symbol, "1");
         __ERC20Permit_init_unchained(symbol);
         __Ownable_init_unchained(_owner);

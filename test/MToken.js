@@ -64,19 +64,19 @@ describe("ALL", function () {
 
     const MTokenMain = await ethers.getContractFactory("MTokenMain");
     const mt = await upgrades.deployProxy(MTokenMain, 
-      ["MTM", owner.address, operator.address, reserveFeed.target],
+      ["MTokenMain", "MTM", owner.address, operator.address, reserveFeed.target],
       {kind: "uups"}
     );
 
     const MTokenSide = await ethers.getContractFactory("MTokenSide");
     const mtSide = await upgrades.deployProxy(MTokenSide,
-      ["MTS", owner.address, operator.address],
+      ["MTokenSide", "MTS", owner.address, operator.address],
       {kind: "uups"}
     );
 
     const BullionNFT = await ethers.getContractFactory("BullionNFT_UT");
     const nft = await upgrades.deployProxy(BullionNFT,
-      ["BNFT", "BNFT", mt.target, packSigner.address, owner.address],
+      ["BullionNFT", "BNFT", mt.target, packSigner.address, owner.address],
       {kind: "uups"}
     );
 
@@ -680,12 +680,13 @@ describe("ALL", function () {
     it("init", async function () {
       const { mt, reserveFeed, owner, operator, alice } = await loadFixture(deployTestFixture);
 
+      expect(await mt.name()).to.equal("MTokenMain");
       expect(await mt.symbol()).to.equal("MTM");
       expect(await mt.owner()).to.equal(owner.address);
       expect(await mt.operator()).to.equal(operator.address);
       expect(await mt.reserveFeed()).to.equal(reserveFeed.target);
     
-      await expect(mt.initialize("MTM", owner.address, operator.address, owner.address))
+      await expect(mt.initialize("MTM2", "MTM2", owner.address, operator.address, owner.address))
         .to.be.revertedWithCustomError(mt, "InvalidInitialization");
     });
 
@@ -746,11 +747,12 @@ describe("ALL", function () {
     it("init", async function () {
       const { mtSide, owner, operator } = await loadFixture(deployTestFixture);
 
+      expect(await mtSide.name()).to.equal("MTokenSide");
       expect(await mtSide.symbol()).to.equal("MTS");
       expect(await mtSide.owner()).to.equal(owner.address);
       expect(await mtSide.operator()).to.equal(operator.address);
 
-      await expect(mtSide.initialize("MTS", operator.address, owner.address))
+      await expect(mtSide.initialize("MTS2", "MTS2", operator.address, owner.address))
         .to.be.revertedWithCustomError(mtSide, "InvalidInitialization");
     });
 
@@ -761,6 +763,7 @@ describe("ALL", function () {
     it("init", async function () {
       const {mt, nft, owner, packSigner} = await loadFixture(deployTestFixture);
       expect(await nft.owner()).to.equal(owner.address);
+      expect(await nft.name()).to.equal("BullionNFT");
       expect(await nft.symbol()).to.equal("BNFT");
       expect(await nft.mtokenContract()).to.equal(mt.target);
       expect(await nft.packSigner()).to.equal(packSigner.address);
