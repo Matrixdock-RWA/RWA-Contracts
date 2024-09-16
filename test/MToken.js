@@ -74,7 +74,7 @@ describe("ALL", function () {
       {kind: "uups"}
     );
 
-    const BullionNFT = await ethers.getContractFactory("BullionNFT_UT");
+    const BullionNFT = await ethers.getContractFactory("BullionEnumerableNFT_UT");
     const nft = await upgrades.deployProxy(BullionNFT,
       ["BullionNFT", "BNFT", mt.target, packSigner.address, owner.address],
       {kind: "uups"}
@@ -237,7 +237,7 @@ describe("ALL", function () {
           await _mt.setDelay(100000);
         }
 
-        const NFTv2 = await ethers.getContractFactory("BullionNFT_UT2");
+        const NFTv2 = await ethers.getContractFactory("BullionEnumerableNFT_UT2");
         const nft2impl = await NFTv2.deploy();
         await _c.connect(owner).requestUpgradeToAndCall(nft2impl.target, "0x");
 
