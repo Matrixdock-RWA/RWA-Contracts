@@ -5,13 +5,13 @@ import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {Client} from "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.sol";
 import {CCIPReceiver} from "@chainlink/contracts-ccip/src/v0.8/ccip/applications/CCIPReceiver.sol";
 import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
-import {OwnerIsCreator} from "@chainlink/contracts-ccip/src/v0.8/shared/access/OwnerIsCreator.sol";
+import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+
 import "./interfaces/ICCIPClient.sol";
+import "./MTokenMessagerLZ.sol";
 
-contract MTokenMessager is CCIPReceiver, OwnerIsCreator {
+contract MTokenMessagerV2 is CCIPReceiver, MTokenMessagerLZ {
     using Address for address payable;
-
-    ICCIPClient public ccipClient;
 
     mapping(uint64 => mapping(address => bool)) public allowedPeer;
 
@@ -23,10 +23,12 @@ contract MTokenMessager is CCIPReceiver, OwnerIsCreator {
     error NotInAllowListed(uint64 chainSelector, address messager);
     error InsufficientFee(uint256 required, uint256 actual);
 
-    constructor(address _router, address _ccipClient) CCIPReceiver(_router) {
-        ccipClient = ICCIPClient(_ccipClient);
+    constructor(address _router, address _ccipClient, address _endpoint, address _initialOwner)
+        CCIPReceiver(_router) MTokenMessagerLZ(_ccipClient, _endpoint, _initialOwner) {
+
     }
 
+    // CCIP related config.
     function setAllowedPeer(
         uint64 chainSelector,
         address messager,
@@ -44,7 +46,7 @@ contract MTokenMessager is CCIPReceiver, OwnerIsCreator {
             revert NotInAllowListed(any2EvmMessage.sourceChainSelector, sender);
         }
 
-        ccipClient.ccReceive(any2EvmMessage.data);
+        ICCIPClient(ccipClient).ccReceive(any2EvmMessage.data);
         emit CCReceive(any2EvmMessage.messageId, any2EvmMessage.data);
     }
 
@@ -60,7 +62,7 @@ contract MTokenMessager is CCIPReceiver, OwnerIsCreator {
         view
         returns (uint256 fee, Client.EVM2AnyMessage memory evm2AnyMessage)
     {
-        bytes memory data = ccipClient.msgOfCcSendToken(
+        bytes memory data = ICCIPClient(ccipClient).msgOfCcSendToken(
             sender,
             recipient,
             value
@@ -84,7 +86,7 @@ contract MTokenMessager is CCIPReceiver, OwnerIsCreator {
         view
         returns (uint256 fee, Client.EVM2AnyMessage memory evm2AnyMessage)
     {
-        bytes memory data = ccipClient.msgOfCcSendMintBudget(value);
+        bytes memory data = ICCIPClient(ccipClient).msgOfCcSendMintBudget(value);
         return
             getFeeAndMessage(
                 destinationChainSelector,
@@ -104,7 +106,7 @@ contract MTokenMessager is CCIPReceiver, OwnerIsCreator {
         if (!allowedPeer[destinationChainSelector][messageReceiver]) {
             revert NotInAllowListed(destinationChainSelector, messageReceiver);
         }
-        bytes memory data = ccipClient.ccSendToken(
+        bytes memory data = ICCIPClient(ccipClient).ccSendToken(
             msg.sender,
             recipient,
             value
@@ -127,7 +129,7 @@ contract MTokenMessager is CCIPReceiver, OwnerIsCreator {
         if (!allowedPeer[destinationChainSelector][messageReceiver]) {
             revert NotInAllowListed(destinationChainSelector, messageReceiver);
         }
-        bytes memory data = ccipClient.ccSendMintBudget(value);
+        bytes memory data = ICCIPClient(ccipClient).ccSendMintBudget(value);
         messageId = sendDataToChain(
             destinationChainSelector,
             messageReceiver,
