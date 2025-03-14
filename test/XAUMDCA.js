@@ -473,6 +473,7 @@ describe("XAUMDCA", function () {
             [sender.setLegalAccount(alice)             , 'OwnableUnauthorizedAccount'],
             [sender.setMinDollarPriceAllowed(123)      , 'OwnableUnauthorizedAccount'],
             [sender.setMinDollarAmount(123)            , 'OwnableUnauthorizedAccount'],
+            [sender.setMaxDollarAmount(123)            , 'OwnableUnauthorizedAccount'],
             [sender.setMinTradeInterval(123)           , 'OwnableUnauthorizedAccount'],
             [sender.setAdapterWhitelist(xaum, true)    , 'OwnableUnauthorizedAccount'],
             [sender.setUserBlacklist(alice, true)      , 'OwnableUnauthorizedAccount'],
@@ -506,9 +507,11 @@ describe("XAUMDCA", function () {
 
         await dca.connect(owner).setLegalAccount(alice.address);
         await dca.connect(owner).setMinDollarAmount(12345);
+        await dca.connect(owner).setMaxDollarAmount(54321);
 
         expect(await dca.legalAccount()).to.equal(alice.address);
         expect(await dca.minDollarAmount()).to.equal(12345);
+        expect(await dca.maxDollarAmount()).to.equal(54321);
     });
 
     it("withdrawERC20", async function () {
@@ -543,6 +546,10 @@ describe("XAUMDCA", function () {
         await dollar.connect(alice).approve(dcaRouter, defaultMintDollarAmount * 2n);
         await expect(dcaRouter.connect(alice).createOrder(dollar, defaultMintDollarAmount * 2n, defaultMintDollarAmount - 1n, 3, alice))
             .to.be.revertedWith('DCA_INVALID_AMOUNT_PER_TRADE');
+    
+        await dca.setMaxDollarAmount(10000n);
+        await expect(dcaRouter.connect(alice).createOrder(dollar, defaultMintDollarAmount * 2n, 10001n, 3, alice))
+            .to.be.revertedWith('DCA_AMOUNT_PER_TRADE_TOO_LARGE');
     });
 
     it("createOrder: DCA_INVALID_INIT_DOLLAR_AMOUNT", async function () {

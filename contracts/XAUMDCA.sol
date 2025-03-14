@@ -61,6 +61,7 @@ contract XAUMDCA is PausableUpgradeable, DelayedUpgradeable, ReentrancyGuardUpgr
     address public minter;
     address public legalAccount;
     uint public minDollarAmount; // minDollarPerTrade
+    uint public maxDollarAmount; // maxDollarPerTrade
     uint public minTradeInterval;
     uint224 public minDollarPriceAllowed;
 
@@ -152,6 +153,7 @@ contract XAUMDCA is PausableUpgradeable, DelayedUpgradeable, ReentrancyGuardUpgr
         if (dollar == stableToken) {
             dollarIsStableToken = true;
         }
+        maxDollarAmount = type(uint112).max;
     }
 
     function setFee(uint256 _fee) public onlyOwner {
@@ -233,6 +235,10 @@ contract XAUMDCA is PausableUpgradeable, DelayedUpgradeable, ReentrancyGuardUpgr
         minDollarAmount = _minDollarAmount;
     }
 
+    function setMaxDollarAmount(uint _maxDollarAmount) public onlyOwner {
+        maxDollarAmount = _maxDollarAmount;
+    }
+
     function setMinTradeInterval(uint minInterval) public onlyOwner {
         minTradeInterval = minInterval;
     }
@@ -265,6 +271,7 @@ contract XAUMDCA is PausableUpgradeable, DelayedUpgradeable, ReentrancyGuardUpgr
 
     function createOrder(address user, uint initDollarAmount, uint amountPerTrade, uint64 interval, address receiver) public onlyRouter whenNotPaused nonReentrant {
         require(amountPerTrade >= minDollarAmount, 'DCA_INVALID_AMOUNT_PER_TRADE');
+        require(amountPerTrade < maxDollarAmount, 'DCA_AMOUNT_PER_TRADE_TOO_LARGE');
         require(initDollarAmount >= amountPerTrade && initDollarAmount % amountPerTrade == 0, 'DCA_INVALID_INIT_DOLLAR_AMOUNT');
         require(interval >= minTradeInterval && interval % minTradeInterval == 0, 'DCA_INVALID_TRADE_INTERVAL');
         require(userBlacklist[user] == false && userBlacklist[receiver] == false, 'DCA_IN_BLACKLIST');
@@ -387,6 +394,7 @@ contract XAUMDCA is PausableUpgradeable, DelayedUpgradeable, ReentrancyGuardUpgr
         if (!success) {
             revert CallFailed(result);
         }
+        IERC20(dollarAddr).forceApprove(adapter, 0); // approve more
 
         // Get balances after swap
         uint256 dollarBalanceAfter = IERC20(dollarAddr).balanceOf(address(this));
