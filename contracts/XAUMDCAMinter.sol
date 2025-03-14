@@ -11,7 +11,7 @@ import "./DelayedUpgradeable.sol";
 import "./interfaces/IXAUMDCAMinter.sol";
 
 /*
- method              | caller        | delayed | revoker 
+ method              | caller        | delayed | revoker
 ---------------------+---------------+---------+---------
 upgrade              | owner         | yes     | revoker
 setDelay             | owner         | yes     | revoker
@@ -21,7 +21,6 @@ setFundRecipient     | owner         | yes     | revoker
 setMinPrice          | owner         | yes     | revoker
 setMaxPrice          | owner         | yes     | revoker
 setRevoker           | owner         | yes     | owner
-setUSD               | owner         | no      | 
 setDCA               | owner         | no      |
 withdrawERC20        | owner         | no      |
 withdrawERC721       | owner         | no      |
@@ -43,7 +42,7 @@ contract XAUMDCAMinter is DelayedUpgradeable, IXAUMMinter {
     error InvalidPriceLimit(uint256 minPrice, uint256 maxPrice);
     error NoSystemFundRecipient();
     error SignatureExpired(uint256);
-    error TokenInNotInWhitelist(address tokenIn);
+    error InvalidUsdToken(address tokenIn);
     error PriceOutOfRange(uint256 price);
     error FixedPriceExpired();
     error NotEnoughSystemXAUm(uint256 have, uint256 need);
@@ -68,7 +67,6 @@ contract XAUMDCAMinter is DelayedUpgradeable, IXAUMMinter {
     event SetMaxPriceEffected(uint256 newVal);
     event SetFixedPrice(uint256 price, uint64 expirationTime);
     event SetRecipient(address indexed user, address indexed recipient);
-    event SetUSD(address indexed token, bool flag);
     event SetDCA(address indexed dca, bool flag);
     event WithdrawSystemFund(address indexed token, uint256 amount);
 
@@ -122,7 +120,12 @@ contract XAUMDCAMinter is DelayedUpgradeable, IXAUMMinter {
     // state variables
     // et = effective time
 
-    address public xaum; // the XAUm contract
+    // the XAUm contract
+    address public xaum; 
+
+    // the stable token like USDT, USDC, etc.
+    address public usdToken; 
+    uint8 usdDecimals;
 
     uint64 public delay;
     uint64 public nextDelay;
@@ -132,35 +135,46 @@ contract XAUMDCAMinter is DelayedUpgradeable, IXAUMMinter {
     address public nextRevoker;
     uint64 public etNextRevoker;
 
+    // the address to set the fixedPrice
     address public priceOperator;
     address public nextPriceOperator;
     uint64 public etNextPriceOperator;
 
+    // the address to withdraw the system fund
     address public fundOperator;
     address public nextFundOperator;
     uint64 public etNextFundOperator;
 
+    // the address to receive the system fund
     address public fundRecipient;
     address public nextFundRecipient;
     uint64 public etNextFundRecipient;
 
+    // the minumum of fixedPrice, must be set by owner
     uint256 public minPrice;
     uint256 public nextMinPrice;
     uint64 public etNextMinPrice;
 
+    // the maximum of fixedPrice, must be set by owner
     uint256 public maxPrice;
     uint256 public nextMaxPrice;
     uint64 public etNextMaxPrice;
 
+    // fixed USD/XAUm price, must be set by priceOperator
     uint256 private fixedPrice;
     uint64 private fixedPriceExpirationTime;
 
     mapping(address dca => bool) public dcaMap;
-    mapping(address token => bool) public usdWhitelist;
     mapping(address dca => mapping(address user => uint256 amt)) public xaumBalances;
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
 
     function initialize(
         address _xaum,
+        address _usdToken,
         address _owner,
         address _revoker,
         address _priceOperator,
@@ -172,6 +186,7 @@ contract XAUMDCAMinter is DelayedUpgradeable, IXAUMMinter {
     ) public initializer {
         __XAUMDCAMinter_init(
             _xaum,
+            _usdToken,
             _owner,
             _revoker,
             _priceOperator,
@@ -185,6 +200,7 @@ contract XAUMDCAMinter is DelayedUpgradeable, IXAUMMinter {
 
     function __XAUMDCAMinter_init(
         address _xaum,
+        address _usdToken,
         address _owner,
         address _revoker,
         address _priceOperator,
@@ -197,6 +213,8 @@ contract XAUMDCAMinter is DelayedUpgradeable, IXAUMMinter {
         checkPriceLimit(_minPrice, _maxPrice);
         __Ownable_init(_owner);
         xaum = _xaum;
+        usdToken = _usdToken;
+        usdDecimals = IERC20Metadata(_usdToken).decimals();
         revoker = _revoker;
         priceOperator = _priceOperator;
         fundOperator = _fundOperator;
@@ -342,11 +360,6 @@ contract XAUMDCAMinter is DelayedUpgradeable, IXAUMMinter {
         }
     }
 
-    function setUSD(address token, bool flag) external onlyOwner {
-        usdWhitelist[token] = flag;
-        emit SetUSD(token, flag);
-    }
-
     function setDCA(address dca, bool flag) external onlyOwner {
         dcaMap[dca] = flag;
         emit SetDCA(dca, flag);
@@ -394,18 +407,17 @@ contract XAUMDCAMinter is DelayedUpgradeable, IXAUMMinter {
     // swap usd for xaum at fixed price
     function swapForXAUm(
         address user,
-        address tokenIn, // whitelisted usd token
+        address tokenIn, // must be usdToken
         uint256 amountIn
     ) external onlyDCA returns (uint256 amountOut) {
         address dca = msg.sender;
         if (block.timestamp > fixedPriceExpirationTime) {
             revert FixedPriceExpired();
         }
-        if (!usdWhitelist[tokenIn]) {
-            revert TokenInNotInWhitelist(tokenIn);
+        if (tokenIn != usdToken) {
+            revert InvalidUsdToken(tokenIn);
         }
 
-        uint8 usdDecimals = IERC20Metadata(tokenIn).decimals();
         uint8 decimalsAdjust = 18 + 18 - usdDecimals;
         amountOut = amountIn * (10 ** decimalsAdjust) / fixedPrice;
 

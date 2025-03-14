@@ -4,13 +4,14 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/ReentrancyGuardUpgradeable.sol";
 
 import "./DelayedUpgradeable.sol";
-import "hardhat/console.sol";
 import "./interfaces/IXAUMDCA.sol";
 import "./interfaces/IXAUMDCAMinter.sol";
+// import "hardhat/console.sol";
 
 /*
  method                  | caller   | delayed | revoker
@@ -40,9 +41,10 @@ claimAllXAUm             | operator | no      |
 closeOrderByOperator     | operator | no      |
 */
 
-contract XAUMDCA is OwnableUpgradeable, PausableUpgradeable, DelayedUpgradeable, IXAUMDCA {
+contract XAUMDCA is PausableUpgradeable, DelayedUpgradeable, ReentrancyGuardUpgradeable, IXAUMDCA {
 
     using SafeERC20 for IERC20;
+    using SafeCast for uint256;
 
     uint64 public constant MIN_PARAM_SET_DELAY = 1 hours;
     uint32 public constant STATUS_ACTIVE = 1;
@@ -116,6 +118,11 @@ contract XAUMDCA is OwnableUpgradeable, PausableUpgradeable, DelayedUpgradeable,
 
     error CallFailed(bytes);
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize(
         address _minter,
         address _dollar,
@@ -131,6 +138,7 @@ contract XAUMDCA is OwnableUpgradeable, PausableUpgradeable, DelayedUpgradeable,
     ) public initializer {
         __Ownable_init(_owner);
         __Pausable_init_unchained();
+        __ReentrancyGuard_init_unchained();
         delay = _delay;
         minter = _minter;
         dollar = _dollar;
@@ -245,15 +253,17 @@ contract XAUMDCA is OwnableUpgradeable, PausableUpgradeable, DelayedUpgradeable,
         }
     }
 
+    // for emergency use, if someone accidentally sends tokens here
     function withdrawERC20(address token, address recipient, uint256 amount) public onlyOwner {
         IERC20(token).safeTransfer(recipient, amount);
     }
 
+    // for emergency use, if someone accidentally sends tokens here
     function withdrawERC721(address token, address recipient, uint256 tokenId) public onlyOwner {
         IERC721(token).transferFrom(address(this), recipient, tokenId);
     }
 
-    function createOrder(address user, uint initDollarAmount, uint amountPerTrade, uint64 interval, address receiver) public onlyRouter whenNotPaused {
+    function createOrder(address user, uint initDollarAmount, uint amountPerTrade, uint64 interval, address receiver) public onlyRouter whenNotPaused nonReentrant {
         require(amountPerTrade >= minDollarAmount, 'DCA_INVALID_AMOUNT_PER_TRADE');
         require(initDollarAmount >= amountPerTrade && initDollarAmount % amountPerTrade == 0, 'DCA_INVALID_INIT_DOLLAR_AMOUNT');
         require(interval >= minTradeInterval && interval % minTradeInterval == 0, 'DCA_INVALID_TRADE_INTERVAL');
@@ -278,22 +288,22 @@ contract XAUMDCA is OwnableUpgradeable, PausableUpgradeable, DelayedUpgradeable,
         emit NewOrder(user, order.id, initDollarAmount, amountPerTrade, interval, receiver);
     }
 
-    function executeOrder(uint64 id, address adapter, bytes memory data) public onlyOperator {
+    function executeOrder(uint64 id, address adapter, bytes memory data) public onlyOperator nonReentrant {
         _executeOrder(id, adapter, data);
     }
 
-    function executeOrderAndClaim(uint64 id, address adapter, bytes memory data) public onlyOperator {
+    function executeOrderAndClaim(uint64 id, address adapter, bytes memory data) public onlyOperator nonReentrant {
         _executeOrder(id, adapter, data);
         _collectXAUm(id);
         _claimXaum(id);
     }
 
-    function executeOrder(uint64 id) public onlyOperator {
+    function executeOrder(uint64 id) public onlyOperator nonReentrant {
         require(dollarIsStableToken, 'DCA_DOLLAR_MUST_BE_STABLE_TOKEN');
         _executeOrder(id, address(0), "");
     }
 
-    function executeOrderAndClaim(uint64 id) public onlyOperator {
+    function executeOrderAndClaim(uint64 id) public onlyOperator nonReentrant {
         require(dollarIsStableToken, 'DCA_DOLLAR_MUST_BE_STABLE_TOKEN');
         _executeOrder(id, address(0), "");
         _collectXAUm(id);
@@ -322,7 +332,13 @@ contract XAUMDCA is OwnableUpgradeable, PausableUpgradeable, DelayedUpgradeable,
             order.dollarBalance = 0;
         }
         if (isRebaseToken) {
-            order.dollarShareBalance -= _burnShareAfterSendDollar(dollarDelta);
+            uint burntShare = _burnShareAfterSendDollar(dollarDelta);
+            // as of round up of burntShare, the order.dollarShareBalance may be less than burntShare when the last trade
+            if (burntShare <= order.dollarShareBalance) {
+                order.dollarShareBalance -= burntShare;
+            } else {
+                order.dollarShareBalance = 0;
+            }
         }
         order.lastTradeTime = uint64(block.timestamp);
 
@@ -333,6 +349,10 @@ contract XAUMDCA is OwnableUpgradeable, PausableUpgradeable, DelayedUpgradeable,
             order.status = STATUS_COMPLETED_WITHOUT_COLLECT;
             if (order.dollarShareBalance > 0) {
                 uint256 shareBalance = order.dollarShareBalance;
+                // as of round up of share calculate, the totalShares may be less than shareBalance when the last trade of contract
+                if (shareBalance > totalShares) {
+                    shareBalance = totalShares;
+                }
                 order.dollarShareBalance = 0;
                 uint transferAmount = getAmountByShare(shareBalance);
                 totalShares -= shareBalance;
@@ -386,13 +406,14 @@ contract XAUMDCA is OwnableUpgradeable, PausableUpgradeable, DelayedUpgradeable,
         require(stableTokenDelta > 0, 'DCA_INVALID_STABLE_TOKEN_AMOUNT');
 
         // Validate price
-        uint price = uint224(uint224(stableTokenDelta) * (2**112) / uint112(dollarDelta));
+        uint price = uint224(stableTokenDelta.toUint112()) * uint224(2**112) / dollarDelta.toUint112();
+        require(minDollarPriceAllowed > 0, 'DCA_MIN_DOLLAR_PRICE_NOT_SET');
         require(price >= minDollarPriceAllowed, 'DCA_INVALID_DOLLAR_PRICE');
 
         return (dollarDelta, stableTokenDelta);
     }
 
-    function collectXAUm(uint64 id) public onlyOperator {
+    function collectXAUm(uint64 id) public onlyOperator nonReentrant {
         _collectXAUm(id);
     }
 
@@ -417,7 +438,7 @@ contract XAUMDCA is OwnableUpgradeable, PausableUpgradeable, DelayedUpgradeable,
         feeToClaim = 0;
     }
 
-    function claimAllXAUm(uint64 id) public onlyOperator {
+    function claimAllXAUm(uint64 id) public onlyOperator nonReentrant {
         _claimXaum(id);
     }
 
@@ -441,24 +462,24 @@ contract XAUMDCA is OwnableUpgradeable, PausableUpgradeable, DelayedUpgradeable,
         }
     }
 
-    function closeOrder(address user, uint64 id, address receiver) public whenNotPaused onlyRouter {
+    function closeOrder(address user, uint64 id, address receiver) public whenNotPaused onlyRouter nonReentrant {
         require(userBlacklist[user] == false && userBlacklist[receiver] == false, 'DCA_IN_BLACKLIST');
         Order storage order = orders[id];
         require(user == order.owner, 'NOT_ORDER_OWNER');
         require(receiver == user || receiver == order.receiver, 'DCA_INVALID_RECEIVER');
-        require(order.xaumPending == 0, 'DCA_HAS_PENDING_XAUM');
+        require(order.status == STATUS_ACTIVE, 'DCA_INVALID_ORDER_STATUS');
 
         _closeOrder(order, user, id, receiver);
     }
 
-    function closeOrderByOperator(uint64 id) public onlyOperator {
+    function closeOrderByOperator(uint64 id) public onlyOperator nonReentrant {
         Order storage order = orders[id];
         require(userBlacklist[order.owner] == true, 'DCA_NOT_IN_BLACKLIST');
         _closeOrder(order, order.owner, id, legalAccount);
     }
 
     function _closeOrder(Order storage order, address user, uint64 id, address receiver) internal {
-        require(order.status == STATUS_ACTIVE, 'DCA_INVALID_ORDER_STATUS');
+        require(order.xaumPending == 0, 'DCA_HAS_PENDING_XAUM');
 
         uint xaumBalance = order.xaumBalance;
         uint dollarBalance = order.dollarBalance;
@@ -471,6 +492,9 @@ contract XAUMDCA is OwnableUpgradeable, PausableUpgradeable, DelayedUpgradeable,
             order.dollarBalance = 0;
             if (isRebaseToken) {
                 uint256 shareBalance = order.dollarShareBalance;
+                if (shareBalance > totalShares) {
+                    shareBalance = totalShares;
+                }
                 order.dollarShareBalance = 0;
                 dollarBalance = getAmountByShare(shareBalance);
                 totalShares -= shareBalance;
@@ -489,6 +513,7 @@ contract XAUMDCA is OwnableUpgradeable, PausableUpgradeable, DelayedUpgradeable,
             return dollarAmount;
         } else {
             share = totalShares * dollarAmount / (balance - dollarAmount);
+            require(share > 0, 'DCA_INVALID_SHARE_AMOUNT');
             totalShares += share;
             return share;
         }
@@ -496,9 +521,16 @@ contract XAUMDCA is OwnableUpgradeable, PausableUpgradeable, DelayedUpgradeable,
 
     function _burnShareAfterSendDollar(uint256 dollarAmount) internal returns (uint256 share) {
         uint256 balance = IERC20(dollar).balanceOf(address(this));
-        share = totalShares * dollarAmount / (balance + dollarAmount);
-        totalShares -= share;
-        return share;
+        share = (totalShares * dollarAmount + (balance + dollarAmount - 1)) / (balance + dollarAmount);
+        // maybe share greater than totalShares, because of the rounding up.
+        if (totalShares >= share) {
+            totalShares -= share;
+            return share;
+        } else {
+            share = totalShares;
+            totalShares = 0;
+            return share;
+        }
     }
 
     function _removeUserOrder(address user, uint64 id) internal {
@@ -515,6 +547,9 @@ contract XAUMDCA is OwnableUpgradeable, PausableUpgradeable, DelayedUpgradeable,
     }
 
     function getAmountByShare(uint256 share) public view returns (uint256 amount) {
+        if (totalShares == 0) {
+            return 0;
+        }
         return IERC20(dollar).balanceOf(address(this)) * share / totalShares;
     }
 
@@ -551,15 +586,4 @@ contract XAUMDCA is OwnableUpgradeable, PausableUpgradeable, DelayedUpgradeable,
         }
         return _orders;
     }
-
-    function getTotalFee(uint initAmount, uint amountPerTrade) public view returns (uint256) {
-        return fee * ((initAmount + amountPerTrade - 1) / amountPerTrade);
-    }
 }
-
-contract XAUMDCAForTest is XAUMDCA {
-    function setRebaseTokenToggle(bool _isRebaseToken) public {
-        isRebaseToken = _isRebaseToken;
-    }
-}
-

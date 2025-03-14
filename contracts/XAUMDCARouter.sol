@@ -15,7 +15,9 @@ contract XAUMDCARouter is Ownable {
 
     constructor() Ownable(msg.sender){}
 
-    function setDCA(address dollar, address dca) onlyOwner public {
+    function setDCA(address dca) onlyOwner public {
+        address dollar = IXAUMDCA(dca).dollar();
+        require(dollar != address(0), "DCA_ROUTER_INVALID_DOLLAR");
         dcaSet[dollar] = dca;
     }
 
@@ -48,11 +50,6 @@ contract XAUMDCARouter is Ownable {
     function getOrdersLength(address dollar) public view returns (uint) {
         address dca = _getDCA(dollar);
         return IXAUMDCA(dca).getOrdersLength();
-    }
-
-    function getTotalFee(address dollar, uint initAmount, uint amountPerTrade) public view returns (uint256) {
-        address dca = _getDCA(dollar);
-        return IXAUMDCA(dca).getTotalFee(initAmount, amountPerTrade);
     }
 
     function getMinDollarAmountPerTrade(address dollar) public view returns (uint256) {

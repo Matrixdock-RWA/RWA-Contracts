@@ -15,15 +15,10 @@ const zeroAddr = '0x0000000000000000000000000000000000000000';
 
 const priceDec = 18n;
 const xaumDec  = 18n;
-const usdcDec  =  6n;
-const usdtDec  = 18n;
-const usdvDec  = 20n;
 
 function _price(n) { return n * (10n ** priceDec);}
 function _xaum(n)  { return n * (10n ** xaumDec); }
-function _usdc(n)  { return n * (10n ** usdcDec); }
-function _usdt(n)  { return n * (10n ** usdtDec); }
-function _usdv(n)  { return n * (10n ** usdvDec); }
+function _usdt(n, decimals=18n)  { return n * (10n ** decimals); }
 
 
 describe("XAUMDCAMinter", function () {
@@ -35,18 +30,14 @@ describe("XAUMDCAMinter", function () {
   const defaultMaxPrice = _price(_maxPrice);
   const defaultMinPrice = _price(_minPrice);
 
-  async function deployTestFixture() {
+  async function deployTestFixture(usdtDecimals = 18n) {
     const [owner, priceOperator, fundOperator, fundRecipient, revoker, dca, dca2, alice, bob] = await ethers.getSigners();
 
     const ERC20 = await ethers.getContractFactory("FakeERC20");
     const xaum = await ERC20.deploy("XAUM", _xaum(100_000_000n), xaumDec);
-    const usdc = await ERC20.deploy("USDC", _usdc(100_000_000n), usdcDec);
-    const usdt = await ERC20.deploy("USDT", _usdt(100_000_000n), usdtDec);
-    const usdv = await ERC20.deploy("USDV", _usdv(100_000_000n), usdvDec);
+    const usdt = await ERC20.deploy("USDT", _usdt(100_000_000n, usdtDecimals), usdtDecimals);
     await xaum.transfer(alice.address, _xaum(100_000_000n));
-    await usdc.transfer(alice.address, _usdc(100_000_000n));
-    await usdt.transfer(alice.address, _usdt(100_000_000n));
-    await usdv.transfer(alice.address, _usdv(100_000_000n));
+    await usdt.transfer(alice.address, _usdt(100_000_000n, usdtDecimals));
 
     const NFT = await ethers.getContractFactory("FakeERC721");
     const nft = await NFT.deploy("GBAR");
@@ -54,7 +45,7 @@ describe("XAUMDCAMinter", function () {
     const Minter = await ethers.getContractFactory("XAUMDCAMinter");
     const minter = await upgrades.deployProxy(Minter, 
       [
-        xaum.target,
+        xaum.target, usdt.target,
         owner.address, revoker.address, 
         priceOperator.address, fundOperator.address, fundRecipient.address,
         defaultDelay, defaultMinPrice, defaultMaxPrice,
@@ -64,14 +55,14 @@ describe("XAUMDCAMinter", function () {
 
     await minter.setDCA(dca, true);
 
-    for (const token of [usdc, usdt, usdv, xaum]) {
+    for (const token of [usdt, xaum]) {
       const decimals = await token.decimals();
       token.amt = function(n) { return n * (10n ** decimals); }
       token.toPrice = function(n) { return _price(n / (10n ** decimals)); }
     }
 
     return {
-      minter, usdc, usdt, usdv, xaum, nft,
+      minter, usdt, xaum, nft,
       owner, priceOperator, fundOperator, fundRecipient, revoker, dca, dca2,
       alice, bob,
     }
@@ -79,11 +70,12 @@ describe("XAUMDCAMinter", function () {
 
   it("init", async function() {
     const {
-      minter, xaum,
+      minter, xaum, usdt,
       owner, priceOperator, fundOperator, fundRecipient, revoker, dca,
     } = await loadFixture(deployTestFixture);
 
     expect(await minter.xaum()).to.equal(xaum.target);
+    expect(await minter.usdToken()).to.equal(usdt.target);
     expect(await minter.dcaMap(dca.address)).to.equal(true);
     expect(await minter.owner()).to.equal(owner.address);
     expect(await minter.revoker()).to.equal(revoker.address);
@@ -199,21 +191,19 @@ describe("XAUMDCAMinter", function () {
   }); // end of describe
 
   it("privileged ops", async function () {
-    const {minter, usdc, xaum, alice, bob} = await loadFixture(deployTestFixture);
+    const {minter, usdt, xaum, alice, bob} = await loadFixture(deployTestFixture);
 
     const sender = minter.connect(alice);
 
     const testCases = [
-      [sender.setUSD(alice.address, true), 'OwnableUnauthorizedAccount'],
-      [sender.setUSD(alice.address, false), 'OwnableUnauthorizedAccount'],
       [sender.setDCA(alice.address, true), 'OwnableUnauthorizedAccount'],
       [sender.setDCA(alice.address, false), 'OwnableUnauthorizedAccount'],
-      [sender.withdrawERC20(usdc.target, alice.address, 1234), 'OwnableUnauthorizedAccount'],
-      [sender.withdrawERC721(usdc.target, alice.address, 1234), 'OwnableUnauthorizedAccount'],
-      [sender.withdrawForRebalance(usdc.target, 1234), 'NotFundOperator'],
+      [sender.withdrawERC20(usdt.target, alice.address, 1234), 'OwnableUnauthorizedAccount'],
+      [sender.withdrawERC721(usdt.target, alice.address, 1234), 'OwnableUnauthorizedAccount'],
+      [sender.withdrawForRebalance(usdt.target, 1234), 'NotFundOperator'],
       [sender.collectXAUm(alice.address, 1234), 'NotDCA'],
       [sender.setFixedPrice(123, 456), 'NotPriceOperator'],
-      [sender.swapForXAUm(alice.address, usdc.target, 123), 'NotDCA'],
+      [sender.swapForXAUm(alice.address, usdt.target, 123), 'NotDCA'],
     ];
 
     for (const [op, err] of testCases) {
@@ -223,18 +213,6 @@ describe("XAUMDCAMinter", function () {
     }
   });
   
-  it("usd whitelist", async function () {
-    const {minter, usdc, owner} = await loadFixture(deployTestFixture);
-
-    await expect(minter.connect(owner).setUSD(usdc.target, true))
-      .to.emit(minter, 'SetUSD').withArgs(usdc.target, true);
-    expect(await minter.usdWhitelist(usdc.target)).to.equal(true);
-    
-    await expect(minter.connect(owner).setUSD(usdc.target, false))
-      .to.emit(minter, 'SetUSD').withArgs(usdc.target, false);
-    expect(await minter.usdWhitelist(usdc.target)).to.equal(false);
-  });
-
   it("dca map", async function () {
     const {minter, owner, dca2} = await loadFixture(deployTestFixture);
 
@@ -248,12 +226,11 @@ describe("XAUMDCAMinter", function () {
   });
 
   it("withdrawERC20", async function () {
-    const {minter, usdc, usdt, alice, bob} = await loadFixture(deployTestFixture);
-    await usdc.connect(alice).transfer(minter, 12345);
+    const {minter, usdt, alice, bob} = await loadFixture(deployTestFixture);
     await usdt.connect(alice).transfer(minter, 12345);
 
-    await expect(minter.withdrawERC20(usdc.target, alice.address, 1234))
-      .to.changeTokenBalances(usdc, [minter, alice], [-1234, 1234]);
+    await expect(minter.withdrawERC20(usdt.target, alice.address, 1234))
+      .to.changeTokenBalances(usdt, [minter, alice], [-1234, 1234]);
     await expect(minter.withdrawERC20(usdt.target, bob.address, 2345))
       .to.changeTokenBalances(usdt, [minter, bob], [-2345, 2345]);
     
@@ -277,12 +254,12 @@ describe("XAUMDCAMinter", function () {
   });
 
   it("withdrawForRebalance", async function () {
-    const {minter, usdc, usdt, fundOperator, fundRecipient, alice} = await loadFixture(deployTestFixture);
-    await usdc.connect(alice).transfer(minter, 12345);
+    const {minter, usdt, fundOperator, fundRecipient, alice} = await loadFixture(deployTestFixture);
+    await usdt.connect(alice).transfer(minter, 12345);
     await usdt.connect(alice).transfer(minter, 12345);
     
-    await expect(minter.connect(fundOperator).withdrawForRebalance(usdc.target, 1234))
-      .to.changeTokenBalances(usdc, [minter, fundRecipient], [-1234, 1234]);
+    await expect(minter.connect(fundOperator).withdrawForRebalance(usdt.target, 1234))
+      .to.changeTokenBalances(usdt, [minter, fundRecipient], [-1234, 1234]);
     await expect(minter.connect(fundOperator).withdrawForRebalance(usdt.target, 2345))
       .to.emit(minter, 'WithdrawSystemFund')
       .withArgs(usdt.target, 2345);
@@ -291,7 +268,6 @@ describe("XAUMDCAMinter", function () {
   it("claim: NotEnoughUserXAUm", async function () {
     const { usdt, xaum, minter, priceOperator,
       dca, alice, bob } = await loadFixture(deployTestFixture);
-    await minter.setUSD(usdt, true);
     await usdt.connect(dca).approve(minter, _xaum(100_000_000n));
     await usdt.connect(alice).transfer(dca, _xaum(50_000_000n));
     await xaum.connect(alice).transfer(minter, _xaum(50_000_000n));
@@ -310,7 +286,6 @@ describe("XAUMDCAMinter", function () {
   it("claim: NotEnoughSystemToken", async function () {
     const { usdt, xaum, minter, priceOperator,
       dca, alice, bob } = await loadFixture(deployTestFixture);
-    await minter.setUSD(usdt.target, true);
     await usdt.connect(dca).approve(minter, _xaum(100_000_000n));
     await usdt.connect(alice).transfer(dca, _xaum(50_000_000n));
     await xaum.connect(alice).transfer(minter, _xaum(100n));
@@ -329,7 +304,6 @@ describe("XAUMDCAMinter", function () {
   it("claim: ok", async function () {
     const { usdt, xaum, minter, priceOperator,
       dca, alice, bob } = await loadFixture(deployTestFixture);
-    await minter.setUSD(usdt.target, true);
     await usdt.connect(dca).approve(minter, _xaum(100_000_000n));
     await usdt.connect(alice).transfer(dca, _xaum(50_000_000n));
     await xaum.connect(alice).transfer(minter, _xaum(50_000_000n));
@@ -387,19 +361,18 @@ describe("XAUMDCAMinter", function () {
       .to.be.revertedWithCustomError(minter, 'FixedPriceExpired');
   });
 
-  it("swapForXAUm: TokenInNotInWhitelist", async function() {
+  it("swapForXAUm: InvalidUsdToken", async function() {
     const { minter, xaum, usdt, priceOperator, dca, alice } = await loadFixture(deployTestFixture);
     await minter.connect(priceOperator).setFixedPrice(_price(_midPrice), 500);
 
     const [fromAmt, toAmt] = [_usdt(_midPrice * 200n), _xaum(200n)];
-    await expect(minter.connect(dca).swapForXAUm(alice, usdt, fromAmt))
-      .to.be.revertedWithCustomError(minter, 'TokenInNotInWhitelist');
+    await expect(minter.connect(dca).swapForXAUm(alice, xaum, fromAmt))
+      .to.be.revertedWithCustomError(minter, 'InvalidUsdToken');
   });
 
   it("swapForXAUm: ok", async function () {
     const { usdt, xaum, minter, priceOperator,
       dca, alice, bob } = await loadFixture(deployTestFixture);
-    await minter.setUSD(usdt.target, true);
     await usdt.connect(dca).approve(minter, _usdt(100_000_000n));
     await xaum.connect(dca).approve(minter, _xaum(100_000_000n));
     await usdt.connect(alice).transfer(dca, _usdt(50_000_000n));
@@ -414,34 +387,31 @@ describe("XAUMDCAMinter", function () {
       .withArgs(dca.address, bob.address, usdt.target, fromAmt, toAmt);
   });
 
-  it("swapForXAUm: ok", async function() {
-    const { usdc, usdt, usdv, xaum, minter, priceOperator,
-      dca, alice, bob } = await loadFixture(deployTestFixture);
-    await minter.setUSD(usdc.target, true);
-    await minter.setUSD(usdt.target, true);
-    await minter.setUSD(usdv.target, true);
+  for (const usdtDecimals of [6n, 18n, 20n]) {
+    it("swapForXAUm: " + usdtDecimals, async function() {
+      const { usdt, xaum, minter, priceOperator,
+        dca, alice, bob } = await deployTestFixture(usdtDecimals);
 
-    await xaum.connect(dca).approve(minter, _xaum(100_000_000n));
-    await xaum.connect(alice).transfer(minter, _xaum(50_000_000n));
-    await xaum.connect(alice).transfer(dca, _xaum(50_000_000n));
+      expect(await usdt.decimals()).to.equal(usdtDecimals);
+  
+      await xaum.connect(dca).approve(minter, _xaum(100_000_000n));
+      await xaum.connect(alice).transfer(minter, _xaum(50_000_000n));
+      await xaum.connect(alice).transfer(dca, _xaum(50_000_000n));
+  
+      await minter.connect(priceOperator).setFixedPrice(_price(_midPrice), 300);
+  
+      await usdt.connect(alice).transfer(dca, usdt.amt(10_000_000n));
+      await usdt.connect(dca).approve(minter, usdt.amt(100_000_000n));
 
-    await minter.connect(priceOperator).setFixedPrice(_price(_midPrice), 300);
-
-    let i = 0n;
-    for (const token of [usdc, usdt, usdv]) {
-      i++;
-      await token.connect(alice).transfer(dca, token.amt(10_000_000n));
-      await token.connect(dca).approve(minter, token.amt(100_000_000n));
-
-      // token => xaum
-      const [fromAmt1, toAmt1] = [token.amt(_midPrice * 20n), _xaum(20n)];
-      const tx1 = minter.connect(dca).swapForXAUm(bob, token, fromAmt1);
+      // usdt => xaum
+      const [fromAmt1, toAmt1] = [_usdt(_midPrice * 20n, usdtDecimals), _xaum(20n)];
+      const tx1 = minter.connect(dca).swapForXAUm(bob, usdt, fromAmt1);
       await expect(tx1).to.emit(minter, 'SwapForXAUm')
-        .withArgs(dca.address, bob.address, token.target, fromAmt1, toAmt1);
-      await expect(tx1).to.changeTokenBalances(token, [dca, minter], [-fromAmt1, fromAmt1]);
+        .withArgs(dca.address, bob.address, usdt.target, fromAmt1, toAmt1);
+      await expect(tx1).to.changeTokenBalances(usdt, [dca, minter], [-fromAmt1, fromAmt1]);
       // await expect(tx1).to.changeTokenBalances(xaum, [bob, minter], [toAmt1, -toAmt1]);
-      expect(await minter.xaumBalances(dca.address, bob.address)).to.equal(toAmt1 * i);
-    }
-  });
+      expect(await minter.xaumBalances(dca.address, bob.address)).to.equal(toAmt1);
+    });
+  }
 
 });

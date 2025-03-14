@@ -44,7 +44,7 @@ describe("XAUMDCA", function () {
     ];
     const iface = new ethers.Interface(swapAbi);
 
-    async function deployTestFixture() {
+    async function deployTestFixture(isRebase = false) {
         const [owner, priceOperator, fundOperator, fundRecipient, revoker, operator, legalAccount, alice, bob] = await ethers.getSigners();
 
         const ERC20 = await ethers.getContractFactory("FakeERC20");
@@ -55,10 +55,11 @@ describe("XAUMDCA", function () {
         await usdt.transfer(alice.address, _usdt(100_000_000n));
         await dollar.transfer(alice.address, _usdt(100_000_000n));
 
+        // deploy minter
         const Minter = await ethers.getContractFactory("XAUMDCAMinter");
         const minter = await upgrades.deployProxy(Minter,
             [
-                xaum.target,
+                xaum.target, usdt.target,
                 owner.address, revoker.address,
                 priceOperator.address, fundOperator.address, fundRecipient.address,
                 defaultDelay, defaultMinPrice, defaultMaxPrice,
@@ -69,14 +70,14 @@ describe("XAUMDCA", function () {
         const XAUMDCARouter = await ethers.getContractFactory("XAUMDCARouter");
         const xaumDCARouter = await XAUMDCARouter.deploy();
 
-        const DCA = await ethers.getContractFactory("XAUMDCAForTest");
+        const DCA = await ethers.getContractFactory("XAUMDCA");
         const dca = await upgrades.deployProxy(DCA, [
             minter.target,
-            dollar.target, false, xaum.target, usdt.target, legalAccount.address, operator.address, owner.address, xaumDCARouter.target,
+            dollar.target, isRebase, xaum.target, usdt.target, legalAccount.address, operator.address, owner.address, xaumDCARouter.target,
             defaultDelay, defaultMintDollarAmount,
         ], {kind: "uups"});
         await minter.setDCA(dca, true);
-        await xaumDCARouter.setDCA(dollar.target, dca.target);
+        await xaumDCARouter.setDCA(dca);
 
         // console.log(dca.target);
         await dca.setMinDollarPriceAllowed(2n ** 112n);
@@ -86,8 +87,18 @@ describe("XAUMDCA", function () {
         const router = await ROUTER.deploy(dollar.target, usdt.target);
 
         await usdt.transfer(router.target, _usdt(100_000_000n));
-
         await dca.setAdapterWhitelist(router.target, true);
+
+        const okxTokenApprove = alice; // TODO
+        const OKXSwapAdapter = await ethers.getContractFactory("OKXSwapAdapter");
+        const okxSwapAdapter = await OKXSwapAdapter.deploy(
+            dca, usdt, dollar, router, okxTokenApprove);
+        
+        const aaveV3Pool = alice; // TODO
+        const AUSDTAdapter = await ethers.getContractFactory("AUSDTAdapter");
+        const ausdtAdapter = await AUSDTAdapter.deploy(
+            dca, usdt, dollar, aaveV3Pool);
+
 
         dca.getOrderStatus = async function(id) {
             const order = await dca.getOrder(id);
@@ -105,6 +116,7 @@ describe("XAUMDCA", function () {
         return {
             dca, minter, dollar, usdt, xaum, router, fakeSwap: router,
             xaumDCARouter, dcaRouter: xaumDCARouter,
+            okxSwapAdapter, ausdtAdapter,
             owner, priceOperator, fundOperator, fundRecipient, legalAccount, operator, revoker,
             alice, bob,
         }
@@ -248,7 +260,6 @@ describe("XAUMDCA", function () {
         const price = _price(_midPrice);
         const validPeriod = 300000;
         await minter.connect(priceOperator).setFixedPrice(price, validPeriod);
-        await minter.setUSD(usdt, true);
         await expect(dca.connect(operator).executeOrder(0, fakeSwap.target, calldata)).to.emit(dca, 'XaumConvert')
             .withArgs(alice.address, 0, 10_000, 10_000, 5_000, 0);
         order = await dca.getOrder(0);
@@ -328,10 +339,10 @@ describe("XAUMDCA", function () {
     });
 
     it("test rebase token versioned dca", async function () {
-        const {dca, usdt, dollar, xaum, owner, priceOperator, minter, fakeSwap, operator, alice, bob, xaumDCARouter} = await loadFixture(deployTestFixture);
+        const {dca, usdt, dollar, xaum, minter, fakeSwap, 
+            priceOperator, operator, alice, bob, xaumDCARouter} = await deployTestFixture(true);
         // create order
         await dollar.connect(alice).approve(xaumDCARouter, 20_000);
-        await dca.setRebaseTokenToggle(true);
         expect(await dca.isRebaseToken()).to.equal(true);
         await expect(xaumDCARouter.connect(alice).createOrder(dollar, 20_000, 10_000, 3600 * 24, bob.address))
             .to.emit(dca, 'NewOrder').withArgs(alice.address, 0, 20_000, 10_000, 3600 * 24, bob.address);
@@ -359,7 +370,6 @@ describe("XAUMDCA", function () {
         await dollar.transfer(dca.target, 40_000); // dollar amount per share double here
         let calldata = iface.encodeFunctionData("swap", [10_000]);
         await minter.connect(priceOperator).setFixedPrice(_price(_midPrice), 300000);
-        await minter.setUSD(usdt, true);
         await expect(dca.connect(operator).executeOrder(0, fakeSwap.target, calldata)).to.emit(dca, 'XaumConvert')
             .withArgs(alice.address, 0, 10_000, 10_000, 5_000, 0); //event XaumConvert(address indexed user, uint64 id, uint dollarDelta, uint stableTokenDelta, uint xaumAmountOut);
         order = await dca.getOrder(0);
@@ -616,7 +626,6 @@ describe("XAUMDCA", function () {
             .to.be.revertedWith('DCA_INVALID_ORDER_STATUS');
 
         // execute order#2
-        await minter.setUSD(usdt, true);
         await minter.connect(priceOperator).setFixedPrice(defaultMinPrice, 3600);
         await dca.connect(operator).executeOrder(2, fakeSwap, calldata);
         expect(await dca.getOrderStatus(2)).to.equal(ORDER_STATUS_COMPLETED_WITHOUT_COLLECT);
@@ -639,7 +648,6 @@ describe("XAUMDCA", function () {
         // create & execute order
         await dollar.connect(alice).approve(dcaRouter, 5000);
         await dcaRouter.connect(alice).createOrder(dollar, 1000, 100, 600, alice);
-        await minter.setUSD(usdt, true);
         await minter.connect(priceOperator).setFixedPrice(defaultMinPrice, 3600);
         const calldata = iface.encodeFunctionData("swap", [100]);
         await dca.connect(operator).executeOrder(0, fakeSwap, calldata);
@@ -666,7 +674,6 @@ describe("XAUMDCA", function () {
         await dcaRouter.connect(alice).createOrder(dollar, 1000, 500, 7, alice);
 
         // execute order
-        await minter.setUSD(usdt, true);
         await minter.connect(priceOperator).setFixedPrice(defaultMinPrice, 3600);
         const calldata = iface.encodeFunctionData("swap", [500]);
         await dca.connect(operator).executeOrder(0, fakeSwap, calldata);
@@ -680,7 +687,6 @@ describe("XAUMDCA", function () {
     it("executeOrder: trade amount", async function () {
         const {dca, dollar, usdt, minter, fakeSwap,
             dcaRouter, priceOperator, operator, alice} = await loadFixture(deployTestFixture);
-        await minter.setUSD(usdt, true);
         await minter.connect(priceOperator).setFixedPrice(defaultMinPrice, 3600);
 
         // create order
@@ -724,7 +730,6 @@ describe("XAUMDCA", function () {
             .to.be.revertedWith('DCA_INVALID_ORDER_STATUS');
 
         // execute & collect order#1
-        await minter.setUSD(usdt, true);
         await minter.connect(priceOperator).setFixedPrice(defaultMinPrice, 3600);
         const calldata = iface.encodeFunctionData("swap", [1000]);
         await dca.connect(operator).executeOrder(1, fakeSwap, calldata);
@@ -758,7 +763,6 @@ describe("XAUMDCA", function () {
         // cerate & execute order
         await dollar.connect(alice).approve(dcaRouter, 5000);
         await dcaRouter.connect(alice).createOrder(dollar, 1000, 500, 7, alice);
-        await minter.setUSD(usdt, true);
         await minter.connect(priceOperator).setFixedPrice(defaultMinPrice, 3600);
         const calldata = iface.encodeFunctionData("swap", [500]);
         await dca.connect(operator).executeOrder(0, fakeSwap, calldata);
@@ -786,7 +790,6 @@ describe("XAUMDCA", function () {
         // cerate, execute & collect order
         await dollar.connect(alice).approve(dcaRouter, 1000);
         await dcaRouter.connect(alice).createOrder(dollar, 1000, 500, 7, bob);
-        await minter.setUSD(usdt, true);
         await minter.connect(priceOperator).setFixedPrice(defaultMinPrice, 3600);
         const calldata = iface.encodeFunctionData("swap", [500]);
         await dca.connect(operator).executeOrder(0, fakeSwap, calldata);
@@ -820,7 +823,6 @@ describe("XAUMDCA", function () {
             .to.be.revertedWith('DCA_INVALID_ORDER_STATUS');
 
         // finish order#1
-        await minter.setUSD(usdt, true);
         await minter.connect(priceOperator).setFixedPrice(defaultMinPrice, 3600);
         const calldata = iface.encodeFunctionData("swap", [1000]);
         await dca.connect(operator).executeOrder(1, fakeSwap, calldata);
@@ -839,7 +841,6 @@ describe("XAUMDCA", function () {
         // cerate, execute & collect order
         await dollar.connect(alice).approve(dcaRouter, 1000);
         await dcaRouter.connect(alice).createOrder(dollar, 1000, 500, 7, bob);
-        await minter.setUSD(usdt, true);
         await minter.connect(priceOperator).setFixedPrice(defaultMinPrice, 3600);
         const calldata = iface.encodeFunctionData("swap", [500]);
         await dca.connect(operator).executeOrder(0, fakeSwap, calldata);
@@ -856,7 +857,6 @@ describe("XAUMDCA", function () {
     it("claimAllXAUm: ok (ORDER_STATUS_COMPLETED_WITHOUT_COLLECT)", async function () {
         const {dca, dcaRouter, usdt, dollar, xaum, minter, fakeSwap,
             priceOperator, operator, alice, bob} = await loadFixture(deployTestFixture);
-        await minter.setUSD(usdt, true);
         await xaum.transfer(minter, 10000);
         await minter.connect(priceOperator).setFixedPrice(defaultMinPrice, 3600);
         const calldata = iface.encodeFunctionData("swap", [500]);
@@ -877,7 +877,6 @@ describe("XAUMDCA", function () {
     it("claimAllXAUm: Forbidden (ORDER_STATUS_COMPLETED_WITHOUT_CLAIM)", async function () {
         const {dca, dcaRouter, usdt, dollar, xaum, minter, fakeSwap,
             priceOperator, operator, alice, bob} = await loadFixture(deployTestFixture);
-        await minter.setUSD(usdt, true);
         await xaum.transfer(minter, 10000);
         await minter.connect(priceOperator).setFixedPrice(defaultMinPrice, 3600);
         const calldata = iface.encodeFunctionData("swap", [500]);
@@ -897,7 +896,6 @@ describe("XAUMDCA", function () {
     it("executeOrderAndClaim: ok", async function () {
         const {dca, dollar, usdt, minter, fakeSwap, xaum,
             dcaRouter, priceOperator, operator, alice} = await loadFixture(deployTestFixture);
-        await minter.setUSD(usdt, true);
         await xaum.transfer(minter, 10000);
         await minter.connect(priceOperator).setFixedPrice(defaultMinPrice, 3600);
         const calldata = iface.encodeFunctionData("swap", [500]);
@@ -955,7 +953,6 @@ describe("XAUMDCA", function () {
         await dcaRouter.connect(alice).createOrder(dollar, 1000, 100, 7, alice);
 
         // execute order
-        await minter.setUSD(usdt, true);
         await minter.connect(priceOperator).setFixedPrice(defaultMinPrice, 3600);
         const calldata = iface.encodeFunctionData("swap", [100]);
         await dca.connect(operator).executeOrder(0, fakeSwap, calldata);
@@ -997,7 +994,6 @@ describe("XAUMDCA", function () {
             .to.be.revertedWith('DCA_INVALID_ORDER_STATUS');
 
         // complete order#1
-        await minter.setUSD(usdt, true);
         await minter.connect(priceOperator).setFixedPrice(defaultMinPrice, 3600);
         const calldata = iface.encodeFunctionData("swap", [1000]);
         await dca.connect(operator).executeOrder(1, fakeSwap, calldata);
@@ -1018,7 +1014,6 @@ describe("XAUMDCA", function () {
         // create & execute order
         await dollar.connect(alice).approve(dcaRouter, 2000);
         await dcaRouter.connect(alice).createOrder(dollar, 1000, 100, 7, alice);
-        await minter.setUSD(usdt, true);
         await minter.connect(priceOperator).setFixedPrice(defaultMinPrice, 3600);
         const calldata = iface.encodeFunctionData("swap", [100]);
         const execTx = await dca.connect(operator).executeOrder(0, fakeSwap, calldata);
@@ -1097,7 +1092,6 @@ describe("XAUMDCA", function () {
         const {dca, minter, dollar, usdt, dcaRouter, fakeSwap,
             priceOperator, operator, alice, bob} = await loadFixture(deployTestFixture);
         await dca.setFee(200);
-        await minter.setUSD(usdt, true);
 
         // create & execute order
         await dollar.connect(alice).approve(dcaRouter, 20000);
@@ -1180,17 +1174,25 @@ describe("XAUMDCA", function () {
             .to.deep.equal([[ 5n, 6n, 7n, 8n, 0n, 0n, 0n ], 4n]);
     });
 
-    it("getTotalFee", async function () {
-        const {dca, dcaRouter, dollar, usdt} = await loadFixture(deployTestFixture);
-        await dca.setFee(50);
-        expect(await dca.getTotalFee(100000, 2000)).to.equal(2500);
-        expect(await dcaRouter.getTotalFee(dollar, 100000, 2000)).to.equal(2500);
-        await expect(dcaRouter.getTotalFee(usdt, 100000, 2000))
-            .to.be.revertedWith('DCA_ROUTER_DOLLAR_DCA_NOT_EXIST');
-    });
-
     for (const cName of ["dca", "minter"]) {
         describe("upgrade: " + cName, function () {
+
+            it("impl", async function () {
+                const {dca, minter, owner, alice, bob} = await loadFixture(deployTestFixture);
+                const _c = cName == "dca" ? dca : minter;
+
+                const implAddr = await upgrades.erc1967.getImplementationAddress(_c.target);
+                const impl = _c.attach(implAddr);
+
+                const initArgs = cName == "dca"
+                    ? [zeroAddr, zeroAddr, false, zeroAddr, zeroAddr, zeroAddr, zeroAddr, owner, zeroAddr, 0, 0]
+                    : [zeroAddr, zeroAddr, owner, zeroAddr, zeroAddr, zeroAddr, zeroAddr, 0, 0, 0];
+
+                await expect(impl.initialize(...initArgs))
+                    .to.be.revertedWithCustomError(impl, "InvalidInitialization");
+                await expect(impl.upgradeToAndCall(bob.address, "0x"))
+                    .to.be.revertedWithCustomError(impl, "UUPSUnauthorizedCallContext");
+            });
 
             it("request/revoke", async function() {
                 const {dca, minter, owner, alice, bob} = await loadFixture(deployTestFixture);
