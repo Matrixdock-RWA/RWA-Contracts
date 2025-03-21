@@ -525,8 +525,8 @@ describe("XAUMDCA", function () {
         await expect(dca.withdrawERC20(usdt.target, bob.address, 2345))
         .to.changeTokenBalances(usdt, [dca, bob], [-2345, 2345]);
 
-        // await expect(dca.withdrawERC20(usdt.target, zeroAddr, 111))
-        //     .to.be.revertedWithCustomError(dca, 'ZeroTokenRecipient');
+        await expect(dca.withdrawERC20(usdt.target, zeroAddr, 111))
+            .to.be.revertedWithCustomError(dca, 'ZeroTokenRecipient');
     });
 
     it("withdrawERC721", async function () {
