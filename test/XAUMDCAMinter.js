@@ -198,8 +198,6 @@ describe("XAUMDCAMinter", function () {
     const testCases = [
       [sender.setDCA(alice.address, true), 'OwnableUnauthorizedAccount'],
       [sender.setDCA(alice.address, false), 'OwnableUnauthorizedAccount'],
-      [sender.withdrawERC20(usdt.target, alice.address, 1234), 'OwnableUnauthorizedAccount'],
-      [sender.withdrawERC721(usdt.target, alice.address, 1234), 'OwnableUnauthorizedAccount'],
       [sender.withdrawForRebalance(usdt.target, 1234), 'NotFundOperator'],
       [sender.collectXAUm(alice.address, 1234), 'NotDCA'],
       [sender.setFixedPrice(123, 456), 'NotPriceOperator'],
@@ -223,34 +221,6 @@ describe("XAUMDCAMinter", function () {
     await expect(minter.connect(owner).setDCA(dca2.address, false))
       .to.emit(minter, 'SetDCA').withArgs(dca2.address, false);
     expect(await minter.dcaMap(dca2.address)).to.equal(false);
-  });
-
-  it("withdrawERC20", async function () {
-    const {minter, usdt, alice, bob} = await loadFixture(deployTestFixture);
-    await usdt.connect(alice).transfer(minter, 12345);
-
-    await expect(minter.withdrawERC20(usdt.target, alice.address, 1234))
-      .to.changeTokenBalances(usdt, [minter, alice], [-1234, 1234]);
-    await expect(minter.withdrawERC20(usdt.target, bob.address, 2345))
-      .to.changeTokenBalances(usdt, [minter, bob], [-2345, 2345]);
-    
-    await expect(minter.withdrawERC20(usdt.target, zeroAddr, 111))
-      .to.be.revertedWithCustomError(minter, 'ZeroTokenRecipient');
-  });
-
-  it("withdrawERC721", async function () {
-    const {minter, nft, alice, bob} = await loadFixture(deployTestFixture);
-    await nft.mint(minter, 111);
-    await nft.mint(minter, 222);
-    await nft.mint(minter, 333);
-  
-    await expect(minter.withdrawERC721(nft.target, alice.address, 111))
-      .to.changeTokenBalances(nft, [minter, alice], [-1, 1]);
-    await expect(minter.withdrawERC721(nft.target, bob.address, 222))
-      .to.changeTokenBalances(nft, [minter, bob], [-1, 1]);
-
-    await expect(minter.withdrawERC721(nft.target, zeroAddr, 333))
-      .to.be.revertedWithCustomError(minter, 'ZeroTokenRecipient');
   });
 
   it("withdrawForRebalance", async function () {

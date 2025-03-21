@@ -22,8 +22,6 @@ setMinPrice          | owner         | yes     | revoker
 setMaxPrice          | owner         | yes     | revoker
 setRevoker           | owner         | yes     | owner
 setDCA               | owner         | no      |
-withdrawERC20        | owner         | no      |
-withdrawERC721       | owner         | no      |
 withdrawForRebalance | fundOperator  | no      |
 setFixedPrice        | priceOperator | no      |
 swapForXAUm          | DCA           | no      |
@@ -47,7 +45,6 @@ contract XAUMDCAMinter is DelayedUpgradeable, IXAUMMinter {
     error FixedPriceExpired();
     error NotEnoughSystemXAUm(uint256 have, uint256 need);
     error NotEnoughUserXAUm(address user, uint256 have, uint256 need);
-    error ZeroTokenRecipient();
 
     // events
 
@@ -363,20 +360,6 @@ contract XAUMDCAMinter is DelayedUpgradeable, IXAUMMinter {
     function setDCA(address dca, bool flag) external onlyOwner {
         dcaMap[dca] = flag;
         emit SetDCA(dca, flag);
-    }
-
-    function withdrawERC20(address token, address recipient, uint256 amount) external onlyOwner {
-        if (recipient == address(0)) {
-            revert ZeroTokenRecipient();
-        }
-        IERC20(token).safeTransfer(recipient, amount);
-    }
-
-    function withdrawERC721(address token, address recipient, uint256 tokenId) external onlyOwner {
-        if (recipient == address(0)) {
-            revert ZeroTokenRecipient();
-        }
-        IERC721(token).transferFrom(address(this), recipient, tokenId);
     }
 
     function withdrawForRebalance(address token, uint256 amount) external onlyFundOperator {

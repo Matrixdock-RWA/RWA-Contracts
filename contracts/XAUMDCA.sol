@@ -29,8 +29,6 @@ setMinTradeInterval      | owner    | no      |
 setAdapterWhitelist      | owner    | no      |
 setUserBlacklist         | owner    | no      |
 setPaused                | owner    | no      |
-withdrawERC20            | owner    | no      |
-withdrawERC721           | owner    | no      |
 claimFee                 | owner    | no      |
 createOrder              | router   | no      |
 closeOrder               | router   | no      |
@@ -118,7 +116,6 @@ contract XAUMDCA is PausableUpgradeable, DelayedUpgradeable, ReentrancyGuardUpgr
     event SetRevokerEffected(address newAddr);
 
     error CallFailed(bytes);
-    error ZeroTokenRecipient();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -258,22 +255,6 @@ contract XAUMDCA is PausableUpgradeable, DelayedUpgradeable, ReentrancyGuardUpgr
         } else {
             _unpause();
         }
-    }
-
-    // for emergency use, if someone accidentally sends tokens here
-    function withdrawERC20(address token, address recipient, uint256 amount) public onlyOwner {
-        if (recipient == address(0)) {
-            revert ZeroTokenRecipient();
-        }
-        IERC20(token).safeTransfer(recipient, amount);
-    }
-
-    // for emergency use, if someone accidentally sends tokens here
-    function withdrawERC721(address token, address recipient, uint256 tokenId) public onlyOwner {
-        if (recipient == address(0)) {
-            revert ZeroTokenRecipient();
-        }
-        IERC721(token).transferFrom(address(this), recipient, tokenId);
     }
 
     function createOrder(address user, uint initDollarAmount, uint amountPerTrade, uint64 interval, address receiver) public onlyRouter whenNotPaused nonReentrant {

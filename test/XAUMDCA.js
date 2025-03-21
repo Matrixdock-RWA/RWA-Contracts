@@ -478,8 +478,6 @@ describe("XAUMDCA", function () {
             [sender.setAdapterWhitelist(xaum, true)    , 'OwnableUnauthorizedAccount'],
             [sender.setUserBlacklist(alice, true)      , 'OwnableUnauthorizedAccount'],
             [sender.setPaused(true)                    , 'OwnableUnauthorizedAccount'],
-            [sender.withdrawERC20(usdt, alice, 123)    , 'OwnableUnauthorizedAccount'],
-            [sender.withdrawERC721(usdt, alice, 123)   , 'OwnableUnauthorizedAccount'],
             [sender.claimFee(alice)                    , 'OwnableUnauthorizedAccount'],
             [sender.createOrder(alice, 1, 2, 3, bob)   , 'DCA_NOT_ROUTER'],
             [sender.closeOrder(alice, 1, bob)          , 'DCA_NOT_ROUTER'],
@@ -512,25 +510,6 @@ describe("XAUMDCA", function () {
         expect(await dca.legalAccount()).to.equal(alice.address);
         expect(await dca.minDollarAmount()).to.equal(12345);
         expect(await dca.maxDollarAmount()).to.equal(54321);
-    });
-
-    it("withdrawERC20", async function () {
-        const {dca, xaum, usdt, alice, bob} = await loadFixture(deployTestFixture);
-        await xaum.connect(alice).mint(22222);
-        await xaum.connect(alice).transfer(dca, 12345);
-        await usdt.connect(alice).transfer(dca, 12345);
-
-        await expect(dca.withdrawERC20(xaum.target, alice.address, 1234))
-        .to.changeTokenBalances(xaum, [dca, alice], [-1234, 1234]);
-        await expect(dca.withdrawERC20(usdt.target, bob.address, 2345))
-        .to.changeTokenBalances(usdt, [dca, bob], [-2345, 2345]);
-
-        await expect(dca.withdrawERC20(usdt.target, zeroAddr, 111))
-            .to.be.revertedWithCustomError(dca, 'ZeroTokenRecipient');
-    });
-
-    it("withdrawERC721", async function () {
-        // TODO
     });
 
     it("createOrder: EnforcedPause", async function () {
