@@ -31,6 +31,11 @@ contract MTokenMessagerLZ is MTokenMessagerBase, OApp {
         lzPaused = isPaused;
     }
 
+    // to differentiate from setAllowedPeer in MTokenMessager
+    function lzSetPeer(uint32 _eid, bytes32 _peer) public onlyOwner{
+        setPeer(_eid, _peer);
+    }
+
     // lz OApp receive implementation
     function _lzReceive(
         Origin calldata, // _origin
@@ -90,7 +95,7 @@ contract MTokenMessagerLZ is MTokenMessagerBase, OApp {
 
     // --------------- query functions -----------------
 
-    function calculateSendTokenFeeForLZ(
+    function lzCalculateSendTokenFee(
         uint32 _dstEid, // Destination chain's endpoint ID.
         address sender,
         address recipient,
@@ -110,7 +115,7 @@ contract MTokenMessagerLZ is MTokenMessagerBase, OApp {
         return fee.nativeFee;
     }
 
-    function calculateSendMintBudgetFeeForLZ(
+    function lzCalculateSendMintBudgetFee(
         uint32 _dstEid, // Destination chain's endpoint ID.
         uint112 value,
         bytes calldata _options

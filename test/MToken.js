@@ -1368,25 +1368,25 @@ describe("ALL", function () {
       expect(await mtMsg.owner()).to.equal(bob.address);
     });
 
-    it("setPeer", async function () {
+    it("lzSetPeer", async function () {
       const {mtMsg, owner, alice, bob} = await loadFixture(deployTestFixture);
       const aliceAddr32 = addrToBytes32(alice.address);
       const bobAddr32 = addrToBytes32(bob.address);
       expect(await mtMsg.peers(123)).to.equal(zeroBytes32);
       expect(await mtMsg.peers(456)).to.equal(zeroBytes32);
 
-      await expect(mtMsg.connect(alice).setPeer(123, bobAddr32))
+      await expect(mtMsg.connect(alice).lzSetPeer(123, bobAddr32))
         .to.be.revertedWithCustomError(mtMsg, 'OwnableUnauthorizedAccount')
         .withArgs(alice);
 
-      await expect(mtMsg.setPeer(123, aliceAddr32))
+      await expect(mtMsg.lzSetPeer(123, aliceAddr32))
         .to.emit(mtMsg, "PeerSet").withArgs(123, aliceAddr32);
-      await expect(mtMsg.setPeer(456, bobAddr32))
+      await expect(mtMsg.lzSetPeer(456, bobAddr32))
         .to.emit(mtMsg, "PeerSet").withArgs(456, bobAddr32);
       expect(await mtMsg.peers(123)).to.equal(aliceAddr32);
       expect(await mtMsg.peers(456)).to.equal(bobAddr32);
 
-      await expect(mtMsg.setPeer(123, zeroBytes32))
+      await expect(mtMsg.lzSetPeer(123, zeroBytes32))
         .to.emit(mtMsg, "PeerSet").withArgs(123, zeroBytes32);
       expect(await mtMsg.peers(123)).to.equal(zeroBytes32);
       expect(await mtMsg.peers(456)).to.equal(bobAddr32);
@@ -1434,11 +1434,11 @@ describe("ALL", function () {
       await mt.connect(operator).mintTo(alice.address, 20000, 0);
       await mtMsg.setPeer(123, addrToBytes32(mtMsgSide.target));
 
-      const nativeFee1 = await mtMsg.calculateSendTokenFeeForLZ(
+      const nativeFee1 = await mtMsg.lzCalculateSendTokenFee(
         123, alice.address, bob.address, 20000, "0x0e472a");
       expect(nativeFee1).to.deep.equal(1920000n);
 
-      const nativeFee2 = await mtMsg.calculateSendMintBudgetFeeForLZ(
+      const nativeFee2 = await mtMsg.lzCalculateSendMintBudgetFee(
         123, 50000, "0x0e472a");
       expect(nativeFee2).to.deep.equal(1280000n);
     });

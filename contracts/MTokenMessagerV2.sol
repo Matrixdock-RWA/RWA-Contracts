@@ -10,6 +10,18 @@ import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import "./interfaces/ICCIPClient.sol";
 import "./MTokenMessagerLZ.sol";
 
+/*
+
+   CCIP                                |   LayerZero
+---------------------------------------+--------------------------------
+setAllowedPeer                         | lzSetPeer
+sendTokenToChain                       | lzSendTokenToChain
+sendMintBudgetToChain                  | lzSendMintBudgetToChain
+calculateCCSendTokenFeeAndMessage      | lzCalculateSendTokenFee
+calculateCcSendMintBudgetFeeAndMessage | lzCalculateSendMintBudgetFee
+
+*/
+
 contract MTokenMessagerV2 is CCIPReceiver, MTokenMessagerLZ {
     using Address for address payable;
 
@@ -23,8 +35,8 @@ contract MTokenMessagerV2 is CCIPReceiver, MTokenMessagerLZ {
     error NotInAllowListed(uint64 chainSelector, address messager);
     error InsufficientFee(uint256 required, uint256 actual);
 
-    constructor(address _router, address _ccipClient, address _endpoint, address _initialOwner)
-        CCIPReceiver(_router) MTokenMessagerLZ(_ccipClient, _endpoint, _initialOwner) {
+    constructor(address _ccipRouter, address _ccipClient, address _lzEndpoint, address _initialOwner)
+        CCIPReceiver(_ccipRouter) MTokenMessagerLZ(_ccipClient, _lzEndpoint, _initialOwner) {
 
     }
 
