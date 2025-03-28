@@ -1,6 +1,5 @@
 const { ethers } = require("hardhat");
 
-// npx hardhat run deploy/00-deploy-feed.js --network sepolia
 async function main() {
   const {chainId} = hre.network.config;
   const isHardhat = chainId == 31337;
