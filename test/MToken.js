@@ -1186,7 +1186,7 @@ describe("ALL", function () {
       const {mt, mtMsg, owner, ccipRouter} = await loadFixture(deployTestFixture);
 
       expect(await mtMsg.owner()).to.equal(owner.address);
-      expect(await mtMsg.ccipClient()).to.equal(mt.target);
+      expect(await mtMsg.ccClient()).to.equal(mt.target);
       expect(await mtMsg.getRouter()).to.equal(ccipRouter.target);
     });
 
@@ -1355,7 +1355,7 @@ describe("ALL", function () {
       const {mt, mtMsg, owner, ccipRouter} = await loadFixture(deployTestFixture);
 
       expect(await mtMsg.owner()).to.equal(owner.address);
-      expect(await mtMsg.ccipClient()).to.equal(mt.target);
+      expect(await mtMsg.ccClient()).to.equal(mt.target);
       expect(await mtMsg.getRouter()).to.equal(ccipRouter.target);
     });
 

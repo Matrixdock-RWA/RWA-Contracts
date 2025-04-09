@@ -3,7 +3,7 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PermitUpgradeable.sol";
 import "./DelayedUpgradeable.sol";
-import "./MTokenMessager.sol";
+import "./interfaces/ICCClient.sol";
 // import "hardhat/console.sol";
 
 abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {

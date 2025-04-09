@@ -3,9 +3,9 @@ pragma solidity ^0.8.24;
 
 contract MTokenMessagerBase {
 
-    address public ccipClient;
+    address public immutable ccClient;
 
-    constructor(address _ccipClient){
-        ccipClient = _ccipClient;
+    constructor(address _ccClient){
+        ccClient = _ccClient;
     }
 }

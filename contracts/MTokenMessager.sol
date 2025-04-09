@@ -6,7 +6,7 @@ import {Client} from "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.s
 import {CCIPReceiver} from "@chainlink/contracts-ccip/src/v0.8/ccip/applications/CCIPReceiver.sol";
 import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
 import {OwnerIsCreator} from "@chainlink/contracts-ccip/src/v0.8/shared/access/OwnerIsCreator.sol";
-import "./interfaces/ICCIPClient.sol";
+import {ICCIPClient} from "./interfaces/ICCClient.sol";
 
 contract MTokenMessager is CCIPReceiver, OwnerIsCreator {
     using Address for address payable;

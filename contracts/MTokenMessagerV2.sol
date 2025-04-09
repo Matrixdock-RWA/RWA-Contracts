@@ -5,10 +5,10 @@ import {Address} from "@openzeppelin/contracts/utils/Address.sol";
 import {Client} from "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.sol";
 import {CCIPReceiver} from "@chainlink/contracts-ccip/src/v0.8/ccip/applications/CCIPReceiver.sol";
 import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-
-import "./interfaces/ICCIPClient.sol";
-import "./MTokenMessagerLZ.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {MTokenMessagerBase} from "./MTokenMessagerBase.sol";
+import {MTokenMessagerLZ} from "./MTokenMessagerLZ.sol";
+import {ICCClient} from "./interfaces/ICCClient.sol";
 
 /*
 
@@ -25,7 +25,7 @@ calculateCcSendMintBudgetFeeAndMessage | lzCalculateSendMintBudgetFee
 contract MTokenMessagerV2 is CCIPReceiver, MTokenMessagerLZ {
     using Address for address payable;
 
-    mapping(uint64 => mapping(address => bool)) public allowedPeer;
+    mapping(uint64 chainSelector => mapping(address messager => bool allowed)) public allowedPeer;
 
     event AllowedPeer(uint64 chainSelector, address messager, bool allowed);
     event CCReceive(bytes32 indexed messageID, bytes messageData);
@@ -58,7 +58,7 @@ contract MTokenMessagerV2 is CCIPReceiver, MTokenMessagerLZ {
             revert NotInAllowListed(any2EvmMessage.sourceChainSelector, sender);
         }
 
-        ICCIPClient(ccipClient).ccReceive(any2EvmMessage.data);
+        ICCClient(ccClient).ccReceive(any2EvmMessage.data);
         emit CCReceive(any2EvmMessage.messageId, any2EvmMessage.data);
     }
 
@@ -74,12 +74,12 @@ contract MTokenMessagerV2 is CCIPReceiver, MTokenMessagerLZ {
         view
         returns (uint256 fee, Client.EVM2AnyMessage memory evm2AnyMessage)
     {
-        bytes memory data = ICCIPClient(ccipClient).msgOfCcSendToken(
+        bytes memory data = ICCClient(ccClient).msgOfCcSendToken(
             sender,
             recipient,
             value
         );
-        return
+        (fee, evm2AnyMessage) =
             getFeeAndMessage(
                 destinationChainSelector,
                 messageReceiver,
@@ -98,8 +98,8 @@ contract MTokenMessagerV2 is CCIPReceiver, MTokenMessagerLZ {
         view
         returns (uint256 fee, Client.EVM2AnyMessage memory evm2AnyMessage)
     {
-        bytes memory data = ICCIPClient(ccipClient).msgOfCcSendMintBudget(value);
-        return
+        bytes memory data = ICCClient(ccClient).msgOfCcSendMintBudget(value);
+        (fee, evm2AnyMessage) =
             getFeeAndMessage(
                 destinationChainSelector,
                 messageReceiver,
@@ -118,7 +118,7 @@ contract MTokenMessagerV2 is CCIPReceiver, MTokenMessagerLZ {
         if (!allowedPeer[destinationChainSelector][messageReceiver]) {
             revert NotInAllowListed(destinationChainSelector, messageReceiver);
         }
-        bytes memory data = ICCIPClient(ccipClient).ccSendToken(
+        bytes memory data = ICCClient(ccClient).ccSendToken(
             msg.sender,
             recipient,
             value
@@ -141,7 +141,7 @@ contract MTokenMessagerV2 is CCIPReceiver, MTokenMessagerLZ {
         if (!allowedPeer[destinationChainSelector][messageReceiver]) {
             revert NotInAllowListed(destinationChainSelector, messageReceiver);
         }
-        bytes memory data = ICCIPClient(ccipClient).ccSendMintBudget(value);
+        bytes memory data = ICCClient(ccClient).ccSendMintBudget(value);
         messageId = sendDataToChain(
             destinationChainSelector,
             messageReceiver,
@@ -180,16 +180,11 @@ contract MTokenMessagerV2 is CCIPReceiver, MTokenMessagerLZ {
         bytes calldata extraArgs,
         bytes memory data
     ) internal returns (bytes32 messageId) {
-        Client.EVM2AnyMessage memory evm2AnyMessage = Client.EVM2AnyMessage({
-            receiver: abi.encode(messageReceiver),
-            data: data,
-            tokenAmounts: new Client.EVMTokenAmount[](0),
-            extraArgs: extraArgs,
-            feeToken: address(0)
-        });
-        uint256 fee = IRouterClient(getRouter()).getFee(
+        (uint256 fee, Client.EVM2AnyMessage memory evm2AnyMessage) = getFeeAndMessage(
             destinationChainSelector,
-            evm2AnyMessage
+            messageReceiver,
+            extraArgs,
+            data
         );
         if (msg.value < fee) {
             revert InsufficientFee(fee, msg.value);
