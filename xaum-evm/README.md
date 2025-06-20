@@ -1,4 +1,7 @@
-# RWA-Contracts
+# XAUM-EVM
+
+The EVM version of XAUm smart contracts.
+
 
 ## Format Solidity Code
 
