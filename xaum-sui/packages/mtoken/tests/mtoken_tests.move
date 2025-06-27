@@ -793,61 +793,14 @@ fun set_delay_revoke_ok() {
 }
 
 #[test, expected_failure(abort_code = mtoken::ENotOperator)]
-fun change_mint_budget_req_err_not_operator() {
+fun change_mint_budget_err_not_operator() {
     let mut scenario = init_xaum();
     let _clock = clock::create_for_testing(scenario.ctx());
 
-    // request
-    scenario.next_tx(ALICE);
-    {
-        let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_change_mint_budget(&state, 1234, true, &_clock, scenario.ctx());
-    };
-    abort
-}
-
-#[test, expected_failure(abort_code = mtoken::ENotOperator)]
-fun change_mint_budget_exec_err_not_operator() {
-    let mut scenario = init_xaum();
-    let _clock = clock::create_for_testing(scenario.ctx());
-
-    // request
-    scenario.next_tx(ADMIN);
-    {
-        let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_change_mint_budget(&state, 1234, true, &_clock, scenario.ctx());
-        test_scenario::return_shared(state);
-    };
-
-    // execute
     scenario.next_tx(ALICE);
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        let req = scenario.take_shared<mtoken::ChangeMintBuegetReq>();
-        mtoken::execute_change_mint_budget(&mut state, req, &_clock, scenario.ctx());
-    };
-    abort
-}
-
-#[test, expected_failure(abort_code = mtoken::ENotEffective)]
-fun change_mint_budget_exec_err_not_effective() {
-    let mut scenario = init_xaum();
-    let _clock = clock::create_for_testing(scenario.ctx());
-
-    // request
-    scenario.next_tx(ADMIN);
-    {
-        let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_change_mint_budget(&state, 1234, true, &_clock, scenario.ctx());
-        test_scenario::return_shared(state);
-    };
-
-    // execute
-    scenario.next_tx(ADMIN);
-    {
-        let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        let req = scenario.take_shared<mtoken::ChangeMintBuegetReq>();
-        mtoken::execute_change_mint_budget(&mut state, req, &_clock, scenario.ctx());
+        mtoken::change_mint_budget(&mut state, 123, true, scenario.ctx());
     };
     abort
 }
@@ -857,28 +810,17 @@ fun change_mint_budget_exec_err_overflow() {
     let mut scenario = init_xaum();
     let mut _clock = clock::create_for_testing(scenario.ctx());
 
-    // request
-    scenario.next_tx(ADMIN);
-    {
-        let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_change_mint_budget(
-            &state,
-            18446744073709551615u64,
-            true,
-            &_clock,
-            scenario.ctx(),
-        );
-        test_scenario::return_shared(state);
-    };
-
-    // execute
-    _clock.increment_for_testing(INIT_DELAY * 1000);
     scenario.next_tx(ADMIN);
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         state.set_mint_budget(234);
-        let req = scenario.take_shared<mtoken::ChangeMintBuegetReq>();
-        mtoken::execute_change_mint_budget(&mut state, req, &_clock, scenario.ctx());
+        mtoken::change_mint_budget(
+            &mut state,
+            18446744073709551615u64,
+            true,
+            scenario.ctx(),
+        );
+        test_scenario::return_shared(state);
     };
     abort // arithmetic error
 }
@@ -888,21 +830,11 @@ fun change_mint_budget_exec_err_underflow() {
     let mut scenario = init_xaum();
     let mut _clock = clock::create_for_testing(scenario.ctx());
 
-    // request
-    scenario.next_tx(ADMIN);
-    {
-        let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_change_mint_budget(&state, 12345, false, &_clock, scenario.ctx());
-        test_scenario::return_shared(state);
-    };
-
-    // execute
-    _clock.increment_for_testing(INIT_DELAY * 1000);
     scenario.next_tx(ADMIN);
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        let req = scenario.take_shared<mtoken::ChangeMintBuegetReq>();
-        mtoken::execute_change_mint_budget(&mut state, req, &_clock, scenario.ctx());
+        mtoken::change_mint_budget(&mut state, 12345, false, scenario.ctx());
+        test_scenario::return_shared(state);
     };
     abort // arithmetic error
 }
@@ -912,95 +844,23 @@ fun change_mint_budget_ok() {
     let mut scenario = init_xaum();
     let mut _clock = clock::create_for_testing(scenario.ctx());
 
-    // request +budget
+    // +budget
     scenario.next_tx(ADMIN);
-    {
-        let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_change_mint_budget(&state, 1234, true, &_clock, scenario.ctx());
-        assert_eq(state.mint_budget(), 0);
-        assert_eq(event::num_events(), 1);
-        test_scenario::return_shared(state);
-    };
-
-    // execute +budget
-    scenario.next_tx(ADMIN);
-    _clock.increment_for_testing(INIT_DELAY * 1000);
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        let req = scenario.take_shared<mtoken::ChangeMintBuegetReq>();
-        mtoken::execute_change_mint_budget(&mut state, req, &_clock, scenario.ctx());
+        mtoken::change_mint_budget(&mut state, 1234, true, scenario.ctx());
         assert_eq(state.mint_budget(), 1234);
         assert_eq(event::num_events(), 1);
         test_scenario::return_shared(state);
     };
 
-    // request -budget
+    // -budget
     scenario.next_tx(ADMIN);
-    {
-        let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_change_mint_budget(&state, 234, false, &_clock, scenario.ctx());
-        assert_eq(event::num_events(), 1);
-        test_scenario::return_shared(state);
-    };
-
-    // execute -budget
-    scenario.next_tx(ADMIN);
-    _clock.increment_for_testing(INIT_DELAY * 1000);
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        let req = scenario.take_shared<mtoken::ChangeMintBuegetReq>();
-        mtoken::execute_change_mint_budget(&mut state, req, &_clock, scenario.ctx());
+        mtoken::change_mint_budget(&mut state, 234, false, scenario.ctx());
         assert_eq(state.mint_budget(), 1000);
         assert_eq(event::num_events(), 1);
-        test_scenario::return_shared(state);
-    };
-
-    clock::destroy_for_testing(_clock);
-    scenario.end();
-}
-
-#[test, expected_failure(abort_code = mtoken::ENotRevoker)]
-fun change_mint_budget_revoke_err_not_revoker() {
-    let mut scenario = init_xaum();
-    let mut _clock = clock::create_for_testing(scenario.ctx());
-
-    // request
-    scenario.next_tx(ADMIN);
-    {
-        let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_change_mint_budget(&state, 1234, true, &_clock, scenario.ctx());
-        test_scenario::return_shared(state);
-    };
-
-    // revoke
-    scenario.next_tx(ALICE);
-    {
-        let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        let req = scenario.take_shared<mtoken::ChangeMintBuegetReq>();
-        mtoken::revoke_change_mint_budget(&state, req, scenario.ctx());
-    };
-    abort
-}
-
-#[test]
-fun change_mint_budget_revoke_ok() {
-    let mut scenario = init_xaum();
-    let _clock = clock::create_for_testing(scenario.ctx());
-
-    // request
-    scenario.next_tx(ADMIN);
-    {
-        let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_change_mint_budget(&state, 1234, true, &_clock, scenario.ctx());
-        test_scenario::return_shared(state);
-    };
-
-    // revoke
-    scenario.next_tx(ADMIN);
-    {
-        let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        let req = scenario.take_shared<mtoken::ChangeMintBuegetReq>();
-        mtoken::revoke_change_mint_budget(&state, req, scenario.ctx());
         test_scenario::return_shared(state);
     };
 
@@ -1017,7 +877,7 @@ fun mint_req_err_not_operator() {
     scenario.next_tx(ALICE);
     {
         let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_mint_coin(&state, ALICE, 100, &_clock, scenario.ctx());
+        mtoken::request_mint_to(&state, ALICE, 100, &_clock, scenario.ctx());
     };
     abort
 }
@@ -1031,7 +891,7 @@ fun mint_exec_err_not_operator() {
     scenario.next_tx(ADMIN);
     {
         let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_mint_coin(&state, ALICE, 100, &_clock, scenario.ctx());
+        mtoken::request_mint_to(&state, ALICE, 100, &_clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
 
@@ -1040,7 +900,7 @@ fun mint_exec_err_not_operator() {
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         let req = scenario.take_shared<mtoken::MintReq>();
-        mtoken::execute_mint_coin(&mut state, req, &_clock, scenario.ctx());
+        mtoken::execute_mint_to(&mut state, req, &_clock, scenario.ctx());
     };
     abort
 }
@@ -1054,7 +914,7 @@ fun mint_exec_err_not_effective() {
     scenario.next_tx(ADMIN);
     {
         let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_mint_coin(&state, ALICE, 100, &_clock, scenario.ctx());
+        mtoken::request_mint_to(&state, ALICE, 100, &_clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
 
@@ -1063,7 +923,7 @@ fun mint_exec_err_not_effective() {
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         let req = scenario.take_shared<mtoken::MintReq>();
-        mtoken::execute_mint_coin(&mut state, req, &_clock, scenario.ctx());
+        mtoken::execute_mint_to(&mut state, req, &_clock, scenario.ctx());
     };
     abort
 }
@@ -1077,7 +937,7 @@ fun mint_exec_err_budget_not_enough() {
     scenario.next_tx(ADMIN);
     {
         let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_mint_coin(&state, ALICE, 100, &_clock, scenario.ctx());
+        mtoken::request_mint_to(&state, ALICE, 100, &_clock, scenario.ctx());
         _clock.increment_for_testing(INIT_DELAY * 1000);
         test_scenario::return_shared(state);
     };
@@ -1088,7 +948,7 @@ fun mint_exec_err_budget_not_enough() {
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         let req = scenario.take_shared<mtoken::MintReq>();
-        mtoken::execute_mint_coin(&mut state, req, &_clock, scenario.ctx());
+        mtoken::execute_mint_to(&mut state, req, &_clock, scenario.ctx());
     };
     abort
 }
@@ -1102,7 +962,7 @@ fun mint_ok() {
     let mut _clock = clock::create_for_testing(scenario.ctx());
     {
         let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_mint_coin(&state, ALICE, 100, &_clock, scenario.ctx());
+        mtoken::request_mint_to(&state, ALICE, 100, &_clock, scenario.ctx());
         assert_eq(event::num_events(), 1);
         test_scenario::return_shared(state);
     };
@@ -1115,7 +975,7 @@ fun mint_ok() {
         state.set_mint_budget(10000);
         let req = scenario.take_shared<mtoken::MintReq>();
         let req_id = object::id(&req);
-        mtoken::execute_mint_coin(&mut state, req, &_clock, scenario.ctx());
+        mtoken::execute_mint_to(&mut state, req, &_clock, scenario.ctx());
         assert_eq(event::num_events(), 1);
         assert_eq(
             event::events_by_type<mtoken::MintEvent>().pop_back(),
@@ -1152,7 +1012,7 @@ fun mint_twice_ok() {
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         state.set_mint_budget(1000);
-        mtoken::request_mint_coin(&state, ALICE, 100, &_clock, scenario.ctx());
+        mtoken::request_mint_to(&state, ALICE, 100, &_clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
     _clock.increment_for_testing(INIT_DELAY * 1000);
@@ -1160,7 +1020,7 @@ fun mint_twice_ok() {
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         let req = scenario.take_shared<mtoken::MintReq>();
-        mtoken::execute_mint_coin(&mut state, req, &_clock, scenario.ctx());
+        mtoken::execute_mint_to(&mut state, req, &_clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
 
@@ -1179,7 +1039,7 @@ fun mint_twice_ok() {
     scenario.next_tx(ADMIN);
     {
         let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_mint_coin(&state, ALICE, 80, &_clock, scenario.ctx());
+        mtoken::request_mint_to(&state, ALICE, 80, &_clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
     _clock.increment_for_testing(INIT_DELAY * 1000);
@@ -1187,7 +1047,7 @@ fun mint_twice_ok() {
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         let req = scenario.take_shared<mtoken::MintReq>();
-        mtoken::execute_mint_coin(&mut state, req, &_clock, scenario.ctx());
+        mtoken::execute_mint_to(&mut state, req, &_clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
 
@@ -1226,7 +1086,7 @@ fun mint_revoke_err_not_revoker() {
     scenario.next_tx(ADMIN);
     {
         let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_mint_coin(&state, ALICE, 80, &_clock, scenario.ctx());
+        mtoken::request_mint_to(&state, ALICE, 80, &_clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
 
@@ -1235,7 +1095,7 @@ fun mint_revoke_err_not_revoker() {
     {
         let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         let req = scenario.take_shared<mtoken::MintReq>();
-        mtoken::revoke_mint_coin(&state, req, scenario.ctx());
+        mtoken::revoke_mint_to(&state, req, scenario.ctx());
     };
     abort
 }
@@ -1249,7 +1109,7 @@ fun mint_revoke_ok() {
     scenario.next_tx(ADMIN);
     {
         let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_mint_coin(&state, ALICE, 80, &_clock, scenario.ctx());
+        mtoken::request_mint_to(&state, ALICE, 80, &_clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
 
@@ -1258,7 +1118,7 @@ fun mint_revoke_ok() {
     {
         let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         let req = scenario.take_shared<mtoken::MintReq>();
-        mtoken::revoke_mint_coin(&state, req, scenario.ctx());
+        mtoken::revoke_mint_to(&state, req, scenario.ctx());
         test_scenario::return_shared(state);
     };
 
@@ -1267,7 +1127,7 @@ fun mint_revoke_ok() {
 }
 
 #[test, expected_failure(abort_code = mtoken::ENotOperator)]
-fun burn_err_not_operator() {
+fun redeem_err_not_operator() {
     let mut scenario = init_xaum();
     let _clock = clock::create_for_testing(scenario.ctx());
 
@@ -1276,13 +1136,13 @@ fun burn_err_not_operator() {
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         let to_be_burnt = coin::from_balance(balance::zero<MTOKEN_TESTS>(), scenario.ctx());
-        mtoken::burn_coin(&mut state, to_be_burnt, scenario.ctx());
+        mtoken::redeem(&mut state, to_be_burnt, scenario.ctx());
     };
     abort
 }
 
 #[test]
-fun burn_ok() {
+fun redeem_ok() {
     let mut scenario = init_xaum();
     let mut _clock = clock::create_for_testing(scenario.ctx());
 
@@ -1291,7 +1151,7 @@ fun burn_ok() {
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         state.set_mint_budget(10000);
-        mtoken::request_mint_coin(&state, ADMIN, 100, &_clock, scenario.ctx());
+        mtoken::request_mint_to(&state, ADMIN, 100, &_clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
     _clock.increment_for_testing(INIT_DELAY * 1000);
@@ -1299,7 +1159,7 @@ fun burn_ok() {
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         let req = scenario.take_shared<mtoken::MintReq>();
-        mtoken::execute_mint_coin(&mut state, req, &_clock, scenario.ctx());
+        mtoken::execute_mint_to(&mut state, req, &_clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
 
@@ -1309,11 +1169,11 @@ fun burn_ok() {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         let mut _xaum = scenario.take_from_sender<Coin<MTOKEN_TESTS>>();
         let to_be_burnt = _xaum.split(30, scenario.ctx());
-        mtoken::burn_coin(&mut state, to_be_burnt, scenario.ctx());
+        mtoken::redeem(&mut state, to_be_burnt, scenario.ctx());
         assert_eq(event::num_events(), 1);
         assert_eq(
-            event::events_by_type<mtoken::BurnEvent>().pop_back(),
-            mtoken::new_burn_event(ADMIN, 30),
+            event::events_by_type<mtoken::RedeemEvent>().pop_back(),
+            mtoken::new_redeem_event(ADMIN, 30),
         );
         scenario.return_to_sender(_xaum);
         test_scenario::return_shared(state);
@@ -1439,7 +1299,7 @@ fun transfer_ok() {
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         state.set_mint_budget(10000);
-        mtoken::request_mint_coin(&state, ALICE, 100, &_clock, scenario.ctx());
+        mtoken::request_mint_to(&state, ALICE, 100, &_clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
     _clock.increment_for_testing(INIT_DELAY * 1000);
@@ -1447,7 +1307,7 @@ fun transfer_ok() {
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         let req = scenario.take_shared<mtoken::MintReq>();
-        mtoken::execute_mint_coin(&mut state, req, &_clock, scenario.ctx());
+        mtoken::execute_mint_to(&mut state, req, &_clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
 
@@ -1496,7 +1356,7 @@ fun transfer_ok() {
 //     {
 //         let mut state = scenario.take_shared<State>();
 //         state.mint_budget = 10000;
-//         request_mint_coin(&state, ALICE, 100, &_clock, scenario.ctx());
+//         request_mint_to(&state, ALICE, 100, &_clock, scenario.ctx());
 //         test_scenario::return_shared(state);
 //     };
 //     _clock.increment_for_testing(INIT_DELAY * 1000);
@@ -1504,7 +1364,7 @@ fun transfer_ok() {
 //     {
 //         let mut state = scenario.take_shared<State>();
 //         let req = scenario.take_shared<MintReq>();
-//         execute_mint_coin(&mut state, req, &_clock, scenario.ctx());
+//         execute_mint_to(&mut state, req, &_clock, scenario.ctx());
 //         test_scenario::return_shared(state);
 //     };
 

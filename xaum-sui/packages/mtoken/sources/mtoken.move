@@ -63,8 +63,6 @@ public struct SetDelayEvent has copy, drop {
 public struct ChangeMintBudgetEvent has copy, drop {
     delta: u64,
     is_incr: bool,
-    et: u64,
-    req_id: ID,
 }
 
 public struct MintEvent has copy, drop {
@@ -74,7 +72,7 @@ public struct MintEvent has copy, drop {
     req_id: ID,
 }
 
-public struct BurnEvent has copy, drop {
+public struct RedeemEvent has copy, drop {
     from_address: address,
     amount: u64,
 }
@@ -113,13 +111,6 @@ public struct SetDelayReq has key {
     et: u64,
 }
 
-public struct ChangeMintBuegetReq has key {
-    id: UID,
-    delta: u64,
-    is_incr: bool,
-    et: u64,
-}
-
 public struct MintReq has key {
     id: UID,
     recipient: address,
@@ -153,15 +144,15 @@ set_operator            |   ✓   |          |         | ✓
 set_revoker             |   ✓   |          |         | ✓
 set_delay               |   ✓   |          |         | ✓
 change_mint_budget      |       |   ✓      |         | ✓
-mint_coin               |       |   ✓      |         | ✓
-burn_coin               |       |   ✓      |         |
+mint_to                 |       |   ✓      |         | ✓
+redeem                  |       |   ✓      |         |
 add_to_blocked_list     |       |   ✓      |         |
 remove_from_blocked_list|       |   ✓      |         |
 revoke_set_revoker      |       |   ✓      |         |
 revoke_set_operator     |       |          |   ✓     |
 revoke_set_delay        |       |          |   ✓     |
 revoke_change_budget    |       |          |   ✓     |
-revoke_mint_coin        |       |          |   ✓     |
+revoke_mint_to          |       |          |   ✓     |
 */
 
 #[allow(lint(share_owned))]
@@ -411,59 +402,23 @@ entry fun revoke_set_delay<T>(state: &State<T>, req: SetDelayReq, ctx: &TxContex
     id.delete();
 }
 
-entry fun request_change_mint_budget<T>(
-    state: &State<T>,
-    delta: u64,
-    is_incr: bool,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
+entry fun change_mint_budget<T>(state: &mut State<T>, delta: u64, is_incr: bool, ctx: &TxContext) {
     check_version(state);
     check_operator(state, ctx);
-    let et = get_effective_time(state, clock);
-    let req = ChangeMintBuegetReq { id: object::new(ctx), delta, is_incr, et };
-    let req_id = object::id(&req);
-
-    transfer::share_object(req);
-    event::emit(ChangeMintBudgetEvent { delta, is_incr, et, req_id });
-}
-
-entry fun execute_change_mint_budget<T>(
-    state: &mut State<T>,
-    req: ChangeMintBuegetReq,
-    clock: &Clock,
-    ctx: &TxContext,
-) {
-    check_version(state);
-    check_operator(state, ctx);
-    let req_id = object::id(&req);
-    let ChangeMintBuegetReq { id, delta, is_incr, et } = req;
-    check_effective_time(clock, et);
 
     if (is_incr) {
         state.mint_budget = state.mint_budget + delta;
     } else {
         state.mint_budget = state.mint_budget - delta;
     };
-    id.delete();
-    event::emit(ChangeMintBudgetEvent { delta, is_incr, et: 0, req_id });
-}
 
-entry fun revoke_change_mint_budget<T>(
-    state: &State<T>,
-    req: ChangeMintBuegetReq,
-    ctx: &TxContext,
-) {
-    check_version(state);
-    check_revoker(state, ctx);
-    let ChangeMintBuegetReq { id, .. } = req;
-    id.delete();
+    event::emit(ChangeMintBudgetEvent { delta, is_incr });
 }
 
 // https://docs.sui.io/references/framework/sui-framework/coin#function-mint
 // https://docs.sui.io/references/framework/sui-framework/coin#0x2_coin_mint_and_transfer
 
-entry fun request_mint_coin<T>(
+entry fun request_mint_to<T>(
     state: &State<T>,
     recipient: address,
     amount: u64,
@@ -480,7 +435,7 @@ entry fun request_mint_coin<T>(
     event::emit(MintEvent { to_address: recipient, amount, et, req_id });
 }
 
-entry fun execute_mint_coin<T>(
+entry fun execute_mint_to<T>(
     state: &mut State<T>,
     req: MintReq,
     clock: &Clock,
@@ -502,7 +457,7 @@ entry fun execute_mint_coin<T>(
     event::emit(MintEvent { to_address: recipient, amount, et: 0, req_id });
 }
 
-entry fun revoke_mint_coin<T>(state: &State<T>, req: MintReq, ctx: &TxContext) {
+entry fun revoke_mint_to<T>(state: &State<T>, req: MintReq, ctx: &TxContext) {
     check_version(state);
     check_revoker(state, ctx);
     let MintReq { id, .. } = req;
@@ -510,14 +465,14 @@ entry fun revoke_mint_coin<T>(state: &State<T>, req: MintReq, ctx: &TxContext) {
 }
 
 // https://docs.sui.io/references/framework/sui-framework/coin#0x2_coin_burn
-entry fun burn_coin<T>(state: &mut State<T>, to_be_burnt: Coin<T>, ctx: &TxContext) {
+entry fun redeem<T>(state: &mut State<T>, to_be_burnt: Coin<T>, ctx: &TxContext) {
     check_version(state);
     check_operator(state, ctx);
     let from_address = ctx.sender();
     let amount = to_be_burnt.balance().value();
     coin::burn<T>(&mut state.treasury_cap, to_be_burnt);
     state.mint_budget = state.mint_budget + amount;
-    event::emit(BurnEvent { from_address, amount });
+    event::emit(RedeemEvent { from_address, amount });
 }
 
 // https://github.com/MystenLabs/sui/blob/main/crates/sui-framework/docs/sui-framework/coin.md#0x2_coin_deny_list_v2_add
@@ -633,8 +588,8 @@ public(package) fun new_mint_event(
 }
 
 #[test_only]
-public(package) fun new_burn_event(from_address: address, amount: u64): BurnEvent {
-    BurnEvent { from_address, amount }
+public(package) fun new_redeem_event(from_address: address, amount: u64): RedeemEvent {
+    RedeemEvent { from_address, amount }
 }
 
 #[test_only]
