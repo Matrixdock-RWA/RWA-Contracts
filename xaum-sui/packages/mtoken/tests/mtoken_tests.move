@@ -358,6 +358,59 @@ fun set_owner_ok() {
     scenario.end();
 }
 
+#[test, expected_failure(abort_code = mtoken::ENotRevoker)]
+fun set_owner_revoke_err_not_revoker() {
+    let mut scenario = init_xaum();
+    let _clock = clock::create_for_testing(scenario.ctx());
+
+    // request
+    scenario.next_tx(ADMIN);
+    {
+        let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
+        mtoken::request_transfer_ownership(&state, ALICE, &_clock, scenario.ctx());
+        assert_eq(state.owner(), ADMIN);
+        assert_eq(event::num_events(), 1);
+        test_scenario::return_shared(state);
+    };
+
+    // revoke
+    scenario.next_tx(ALICE);
+    {
+        let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
+        let req = scenario.take_shared<mtoken::TransferOwnershipReq>();
+        mtoken::revoke_transfer_ownership(&state, req, scenario.ctx());
+    };
+    abort
+}
+
+#[test]
+fun set_owner_revoke_ok() {
+    let mut scenario = init_xaum();
+    let _clock = clock::create_for_testing(scenario.ctx());
+
+    // request
+    scenario.next_tx(ADMIN);
+    {
+        let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
+        mtoken::request_transfer_ownership(&state, ALICE, &_clock, scenario.ctx());
+        assert_eq(state.owner(), ADMIN);
+        assert_eq(event::num_events(), 1);
+        test_scenario::return_shared(state);
+    };
+
+    // revoke
+    scenario.next_tx(ADMIN);
+    {
+        let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
+        let req = scenario.take_shared<mtoken::TransferOwnershipReq>();
+        mtoken::revoke_transfer_ownership(&state, req, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+
+    clock::destroy_for_testing(_clock);
+    scenario.end();
+}
+
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_operator_req_err_not_owner() {
     let mut scenario = init_xaum();
@@ -1336,9 +1389,6 @@ fun transfer_ok() {
 // #[expected_failure]
 // fun transfer_err_denied_src() {
 //     let sys = @0x0;
-//
-//
-//
 
 //     let mut scenario = test_scenario::begin(sys);
 //     deny_list::create_for_test(scenario.ctx());

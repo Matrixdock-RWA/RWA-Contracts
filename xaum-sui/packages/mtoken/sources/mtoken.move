@@ -133,26 +133,26 @@ public struct State<phantom T> has key, store {
 // === Public Functions ===
 
 /*
- Ops\Roles\Delayed      | Owner | Operator | Revoker | Delayed
-------------------------+-------+----------+---------+---------
-migrate                 |   ✓   |          |         |
-init_upgrade_cap_id     |   ✓   |          |         |
-update_description      |   ✓   |          |         |
-update_icon_url         |   ✓   |          |         |
-transfer_ownership      |   ✓   |          |         | ✓
-set_operator            |   ✓   |          |         | ✓
-set_revoker             |   ✓   |          |         | ✓
-set_delay               |   ✓   |          |         | ✓
-change_mint_budget      |       |   ✓      |         | ✓
-mint_to                 |       |   ✓      |         | ✓
-redeem                  |       |   ✓      |         |
-add_to_blocked_list     |       |   ✓      |         |
-remove_from_blocked_list|       |   ✓      |         |
-revoke_set_revoker      |       |   ✓      |         |
-revoke_set_operator     |       |          |   ✓     |
-revoke_set_delay        |       |          |   ✓     |
-revoke_change_budget    |       |          |   ✓     |
-revoke_mint_to          |       |          |   ✓     |
+ Ops\Roles\Delayed       | Owner | Operator | Revoker | Delayed
+-------------------------+-------+----------+---------+---------
+migrate                  |   ✓   |          |         |
+init_upgrade_cap_id      |   ✓   |          |         |
+update_description       |   ✓   |          |         |
+update_icon_url          |   ✓   |          |         |
+transfer_ownership       |   ✓   |          |         | ✓
+set_operator             |   ✓   |          |         | ✓
+set_revoker              |   ✓   |          |         | ✓
+set_delay                |   ✓   |          |         | ✓
+change_mint_budget       |       |   ✓      |         | 
+mint_to                  |       |   ✓      |         | ✓
+redeem                   |       |   ✓      |         |
+add_to_blocked_list      |       |   ✓      |         |
+remove_from_blocked_list |       |   ✓      |         |
+revoke_set_revoker       |       |   ✓      |         |
+revoke_set_operator      |       |          |   ✓     |
+revoke_set_delay         |       |          |   ✓     |
+revoke_transfer_ownership|       |          |   ✓     |
+revoke_mint_to           |       |          |   ✓     |
 */
 
 #[allow(lint(share_owned))]
@@ -265,15 +265,16 @@ entry fun execute_transfer_ownership<T>(
     event::emit(TransferOwnershipEvent { old_owner, new_owner, et: 0, req_id });
 }
 
-// entry fun revoke_transfer_ownership(
-//     state: &mut State<T>,
-//     req: TransferOwnershipReq,
-//     ctx: &mut TxContext,
-// ) {
-//     assert!(ctx.sender() == state.revoker, ENotRevoker);
-//     let TransferOwnershipReq { id, new_owner:_, et:_ } = req;
-//     id.delete();
-// }
+entry fun revoke_transfer_ownership<T>(
+    state: &State<T>,
+    req: TransferOwnershipReq,
+    ctx: &TxContext,
+) {
+    check_version(state);
+    check_revoker(state, ctx);
+    let TransferOwnershipReq { id, .. } = req;
+    id.delete();
+}
 
 entry fun request_set_operator<T>(
     state: &State<T>,
