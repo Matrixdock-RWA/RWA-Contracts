@@ -8,12 +8,13 @@ import "./DelayedUpgradeable.sol";
 contract BullionMinter is DelayedUpgradeable {
     using SafeERC20 for IERC20;
 
-    address public poolAccountA;
-    address public poolAccountB;
+    address public poolAccountA; //stable coin pool
+    address public poolAccountB; //rwa pool
     mapping(address token => bool accepted) public acceptedByA;
     mapping(address token => bool accepted) public acceptedByB;
     uint8 constant public prepriceDecimal = 6;
     uint8 constant public slippageDecimal = 6;
+    uint constant public delayMax = 59;
 
     function __Minter_init(
         address _owner,
@@ -76,14 +77,16 @@ contract BullionMinter is DelayedUpgradeable {
         emit SetAcceptedByB(token, accepted);
     }
 
-    function requestToMint(address transferredToken, address forToken, uint amount, uint preprice, uint slippage) external {
+    function requestToMint(address transferredToken, address forToken, uint amount, uint preprice, uint slippage, uint timestamp) external {
         require(acceptedByA[transferredToken], "INVALID_TOKEN_FOR_MINTING");
+        require(block.timestamp <= timestamp + delayMax, "INVALID_TIMESTAMP");
         IERC20(transferredToken).safeTransferFrom(msg.sender, poolAccountA, amount);
         emit MintRequest(transferredToken, forToken, msg.sender, poolAccountA, amount, preprice, slippage);
     }
 
-    function requestToRedeem(address transferredToken, address forToken, uint amount, uint preprice, uint slippage) external {
+    function requestToRedeem(address transferredToken, address forToken, uint amount, uint preprice, uint slippage, uint timestamp) external {
         require(acceptedByB[transferredToken], "INVALID_TOKEN_FOR_REDEEMING");
+        require(block.timestamp <= timestamp + delayMax, "INVALID_TIMESTAMP");
         IERC20(transferredToken).safeTransferFrom(msg.sender, poolAccountB, amount);
         emit RedeemRequest(transferredToken, forToken, msg.sender, poolAccountB, amount, preprice, slippage);
     }
