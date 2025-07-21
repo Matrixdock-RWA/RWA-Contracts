@@ -211,13 +211,17 @@ fun set_owner_req_err_not_owner() {
     scenario.next_tx(ALICE);
     {
         let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_transfer_ownership(&state, BOB, &_clock, scenario.ctx());
+        let upgrade_cap = test_publish(
+            object::id_from_address(state.package_address()),
+            scenario.ctx(),
+        );
+        mtoken::request_transfer_ownership(&state, BOB, upgrade_cap, &_clock, scenario.ctx());
     };
     abort
 }
 
-#[test, expected_failure(abort_code = mtoken::ENotOwner)]
-fun set_owner_exec_err_not_owner() {
+#[test, expected_failure(abort_code = mtoken::ENotNewOwner)]
+fun set_owner_exec_err_not_new_owner() {
     let mut scenario = init_xaum();
     let _clock = clock::create_for_testing(scenario.ctx());
 
@@ -225,17 +229,20 @@ fun set_owner_exec_err_not_owner() {
     scenario.next_tx(ADMIN);
     {
         let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_transfer_ownership(&state, BOB, &_clock, scenario.ctx());
+        let upgrade_cap = test_publish(
+            object::id_from_address(state.package_address()),
+            scenario.ctx(),
+        );
+        mtoken::request_transfer_ownership(&state, ALICE, upgrade_cap, &_clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
 
     // execute
-    scenario.next_tx(ALICE);
+    scenario.next_tx(BOB);
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         let req = scenario.take_shared<mtoken::TransferOwnershipReq>();
-        let upgrade_cap = test_publish(object::id_from_address(@123), scenario.ctx());
-        mtoken::execute_transfer_ownership(&mut state, req, upgrade_cap, &_clock, scenario.ctx());
+        mtoken::execute_transfer_ownership(&mut state, req, &_clock, scenario.ctx());
     };
     abort
 }
@@ -249,17 +256,20 @@ fun set_owner_exec_err_not_effective() {
     scenario.next_tx(ADMIN);
     {
         let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_transfer_ownership(&state, ALICE, &_clock, scenario.ctx());
+        let upgrade_cap = test_publish(
+            object::id_from_address(state.package_address()),
+            scenario.ctx(),
+        );
+        mtoken::request_transfer_ownership(&state, ALICE, upgrade_cap, &_clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
 
     // execute
-    scenario.next_tx(ADMIN);
+    scenario.next_tx(ALICE);
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         let req = scenario.take_shared<mtoken::TransferOwnershipReq>();
-        let upgrade_cap = test_publish(object::id_from_address(@123), scenario.ctx());
-        mtoken::execute_transfer_ownership(&mut state, req, upgrade_cap, &_clock, scenario.ctx());
+        mtoken::execute_transfer_ownership(&mut state, req, &_clock, scenario.ctx());
     };
     abort
 }
@@ -273,25 +283,28 @@ fun set_owner_exec_err_expired() {
     scenario.next_tx(ADMIN);
     {
         let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_transfer_ownership(&state, ALICE, &_clock, scenario.ctx());
+        let upgrade_cap = test_publish(
+            object::id_from_address(state.package_address()),
+            scenario.ctx(),
+        );
+        mtoken::request_transfer_ownership(&state, ALICE, upgrade_cap, &_clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
 
     // execute
     _clock.increment_for_testing(INIT_DELAY * 1000);
     _clock.increment_for_testing(REQ_TTL * 1000);
-    scenario.next_tx(ADMIN);
+    scenario.next_tx(ALICE);
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         let req = scenario.take_shared<mtoken::TransferOwnershipReq>();
-        let upgrade_cap = test_publish(object::id_from_address(@123), scenario.ctx());
-        mtoken::execute_transfer_ownership(&mut state, req, upgrade_cap, &_clock, scenario.ctx());
+        mtoken::execute_transfer_ownership(&mut state, req, &_clock, scenario.ctx());
     };
     abort
 }
 
 #[test, expected_failure(abort_code = mtoken::EUpgradeCapInvalid)]
-fun set_owner_exec_err_upgrade_cap_invalid() {
+fun set_owner_req_err_upgrade_cap_invalid() {
     let mut scenario = init_xaum();
     let mut _clock = clock::create_for_testing(scenario.ctx());
 
@@ -299,18 +312,8 @@ fun set_owner_exec_err_upgrade_cap_invalid() {
     scenario.next_tx(ADMIN);
     {
         let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_transfer_ownership(&state, ALICE, &_clock, scenario.ctx());
-        test_scenario::return_shared(state);
-    };
-
-    // execute
-    _clock.increment_for_testing(INIT_DELAY * 1000);
-    scenario.next_tx(ADMIN);
-    {
-        let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        let req = scenario.take_shared<mtoken::TransferOwnershipReq>();
         let upgrade_cap = test_publish(object::id_from_address(@0x1234), scenario.ctx());
-        mtoken::execute_transfer_ownership(&mut state, req, upgrade_cap, &_clock, scenario.ctx());
+        mtoken::request_transfer_ownership(&state, ALICE, upgrade_cap, &_clock, scenario.ctx());
     };
     abort
 }
@@ -324,7 +327,11 @@ fun set_owner_ok() {
     scenario.next_tx(ADMIN);
     {
         let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_transfer_ownership(&state, ALICE, &_clock, scenario.ctx());
+        let upgrade_cap = test_publish(
+            object::id_from_address(state.package_address()),
+            scenario.ctx(),
+        );
+        mtoken::request_transfer_ownership(&state, ALICE, upgrade_cap, &_clock, scenario.ctx());
         assert_eq(state.owner(), ADMIN);
         assert_eq(event::num_events(), 1);
         test_scenario::return_shared(state);
@@ -332,15 +339,11 @@ fun set_owner_ok() {
 
     // execute
     _clock.increment_for_testing(INIT_DELAY * 1000);
-    scenario.next_tx(ADMIN);
+    scenario.next_tx(ALICE);
     {
         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
         let req = scenario.take_shared<mtoken::TransferOwnershipReq>();
-        let upgrade_cap = test_publish(
-            object::id_from_address(state.package_address()),
-            scenario.ctx(),
-        );
-        mtoken::execute_transfer_ownership(&mut state, req, upgrade_cap, &_clock, scenario.ctx());
+        mtoken::execute_transfer_ownership(&mut state, req, &_clock, scenario.ctx());
         assert_eq(state.owner(), ALICE);
         assert_eq(event::num_events(), 1);
         test_scenario::return_shared(state);
@@ -358,8 +361,8 @@ fun set_owner_ok() {
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = mtoken::ENotRevoker)]
-fun set_owner_revoke_err_not_revoker() {
+#[test, expected_failure(abort_code = mtoken::ENotOwner)]
+fun set_owner_revoke_err_not_owner() {
     let mut scenario = init_xaum();
     let _clock = clock::create_for_testing(scenario.ctx());
 
@@ -367,7 +370,11 @@ fun set_owner_revoke_err_not_revoker() {
     scenario.next_tx(ADMIN);
     {
         let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_transfer_ownership(&state, ALICE, &_clock, scenario.ctx());
+        let upgrade_cap = test_publish(
+            object::id_from_address(state.package_address()),
+            scenario.ctx(),
+        );
+        mtoken::request_transfer_ownership(&state, ALICE, upgrade_cap, &_clock, scenario.ctx());
         assert_eq(state.owner(), ADMIN);
         assert_eq(event::num_events(), 1);
         test_scenario::return_shared(state);
@@ -392,7 +399,11 @@ fun set_owner_revoke_ok() {
     scenario.next_tx(ADMIN);
     {
         let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
-        mtoken::request_transfer_ownership(&state, ALICE, &_clock, scenario.ctx());
+        let upgrade_cap = test_publish(
+            object::id_from_address(state.package_address()),
+            scenario.ctx(),
+        );
+        mtoken::request_transfer_ownership(&state, ALICE, upgrade_cap, &_clock, scenario.ctx());
         assert_eq(state.owner(), ADMIN);
         assert_eq(event::num_events(), 1);
         test_scenario::return_shared(state);
@@ -405,6 +416,14 @@ fun set_owner_revoke_ok() {
         let req = scenario.take_shared<mtoken::TransferOwnershipReq>();
         mtoken::revoke_transfer_ownership(&state, req, scenario.ctx());
         test_scenario::return_shared(state);
+    };
+
+    // check upgrade cap
+    scenario.next_tx(ADMIN);
+    {
+        let _upgrade_cap = scenario.take_from_sender<UpgradeCap>();
+        // assert_eq(object::id(&upgrade_cap), object::id_from_address(@123));
+        scenario.return_to_sender(_upgrade_cap);
     };
 
     clock::destroy_for_testing(_clock);

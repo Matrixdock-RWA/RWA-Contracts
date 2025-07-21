@@ -20,6 +20,7 @@ const ENotRevoker: u64 = 103;
 const ENotEffective: u64 = 104;
 const EDelayTooShort: u64 = 105;
 const EMintBudgetNotEnough: u64 = 106;
+const ENotNewOwner: u64 = 107;
 const EUpgradeCapInvalid: u64 = 108;
 const EReqExpired: u64 = 109;
 
@@ -90,6 +91,7 @@ public struct UnblockEvent has copy, drop {
 public struct TransferOwnershipReq has key {
     id: UID,
     new_owner: address,
+    upgrade_cap: UpgradeCap,
     et: u64,
 }
 
@@ -147,10 +149,10 @@ mint_to                  |       |   ✓      |         | ✓
 redeem                   |       |   ✓      |         |
 add_to_blocked_list      |       |   ✓      |         |
 remove_from_blocked_list |       |   ✓      |         |
+revoke_transfer_ownership|   ✓   |          |         |
 revoke_set_revoker       |   ✓   |          |         |
 revoke_set_operator      |       |          |   ✓     |
 revoke_set_delay         |       |          |   ✓     |
-revoke_transfer_ownership|       |          |   ✓     |
 revoke_mint_to           |       |          |   ✓     |
 */
 
@@ -227,15 +229,18 @@ entry fun update_icon_url<T>(
 entry fun request_transfer_ownership<T>(
     state: &State<T>,
     new_owner: address,
+    upgrade_cap: UpgradeCap,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
     check_version(state);
     check_owner(state, ctx);
+    assert!(upgrade_cap.package().to_address() == state.package_address(), EUpgradeCapInvalid);
+
     let old_owner = state.owner;
     let et = get_effective_time(state, clock);
     let id = object::new(ctx);
-    let req = TransferOwnershipReq { id, new_owner, et };
+    let req = TransferOwnershipReq { id, new_owner, upgrade_cap, et };
 
     event::emit(TransferOwnershipEvent { old_owner, new_owner, et, req_id: object::id(&req) });
     transfer::share_object(req);
@@ -244,21 +249,17 @@ entry fun request_transfer_ownership<T>(
 entry fun execute_transfer_ownership<T>(
     state: &mut State<T>,
     req: TransferOwnershipReq,
-    upgrade_cap: UpgradeCap,
     clock: &Clock,
     ctx: &TxContext,
 ) {
     check_version(state);
-    check_owner(state, ctx);
+    assert!(ctx.sender() == req.new_owner, ENotNewOwner);
     let old_owner = state.owner;
     let req_id = object::id(&req);
-    let TransferOwnershipReq { id, new_owner, et } = req;
+    let TransferOwnershipReq { id, new_owner, upgrade_cap, et } = req;
     check_effective_time(clock, et);
 
-    // transfer UpgradeCap !
-    assert!(upgrade_cap.package().to_address() == state.package_address(), EUpgradeCapInvalid);
     transfer::public_transfer(upgrade_cap, new_owner);
-
     state.owner = new_owner;
     id.delete();
     event::emit(TransferOwnershipEvent { old_owner, new_owner, et: 0, req_id });
@@ -270,8 +271,9 @@ entry fun revoke_transfer_ownership<T>(
     ctx: &TxContext,
 ) {
     check_version(state);
-    check_revoker(state, ctx);
-    let TransferOwnershipReq { id, .. } = req;
+    check_owner(state, ctx);
+    let TransferOwnershipReq { id, upgrade_cap, .. } = req;
+    transfer::public_transfer(upgrade_cap, state.owner);
     id.delete();
 }
 
