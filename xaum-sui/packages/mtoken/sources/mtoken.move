@@ -130,13 +130,12 @@ public struct State<phantom T> has key, store {
     mint_budget: u64,
 }
 
-// === Public Functions ===
+// === Public & Entry Functions ===
 
 /*
  Ops\Roles\Delayed       | Owner | Operator | Revoker | Delayed
 -------------------------+-------+----------+---------+---------
 migrate                  |   ✓   |          |         |
-init_upgrade_cap_id      |   ✓   |          |         |
 update_description       |   ✓   |          |         |
 update_icon_url          |   ✓   |          |         |
 transfer_ownership       |   ✓   |          |         | ✓
@@ -148,7 +147,7 @@ mint_to                  |       |   ✓      |         | ✓
 redeem                   |       |   ✓      |         |
 add_to_blocked_list      |       |   ✓      |         |
 remove_from_blocked_list |       |   ✓      |         |
-revoke_set_revoker       |       |   ✓      |         |
+revoke_set_revoker       |   ✓   |          |         |
 revoke_set_operator      |       |          |   ✓     |
 revoke_set_delay         |       |          |   ✓     |
 revoke_transfer_ownership|       |          |   ✓     |
@@ -355,7 +354,7 @@ entry fun execute_set_revoker<T>(
 
 entry fun revoke_set_revoker<T>(state: &State<T>, req: SetRevokerReq, ctx: &TxContext) {
     check_version(state);
-    check_operator(state, ctx);
+    check_owner(state, ctx);
     let SetRevokerReq { id, .. } = req;
     id.delete();
 }

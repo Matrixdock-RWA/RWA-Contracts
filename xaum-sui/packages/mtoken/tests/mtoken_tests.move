@@ -642,8 +642,8 @@ fun set_revoker_ok() {
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = mtoken::ENotOperator)]
-fun set_revoker_revoke_err_not_operator() {
+#[test, expected_failure(abort_code = mtoken::ENotOwner)]
+fun set_revoker_revoke_err_not_owner() {
     let mut scenario = init_xaum();
     let _clock = clock::create_for_testing(scenario.ctx());
 
