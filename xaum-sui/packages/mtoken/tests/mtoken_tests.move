@@ -352,9 +352,11 @@ fun set_owner_ok() {
     // check upgrade cap
     scenario.next_tx(ALICE);
     {
-        let _upgrade_cap = scenario.take_from_sender<UpgradeCap>();
-        // assert_eq(object::id(&upgrade_cap), object::id_from_address(@123));
-        scenario.return_to_sender(_upgrade_cap);
+        let state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
+        let upgrade_cap = scenario.take_from_sender<UpgradeCap>();
+        assert_eq(upgrade_cap.package(), object::id_from_address(state.package_address()));
+        scenario.return_to_sender(upgrade_cap);
+        test_scenario::return_shared(state);
     };
 
     clock::destroy_for_testing(_clock);
@@ -1404,46 +1406,40 @@ fun transfer_ok() {
     scenario.end();
 }
 
-// #[test]
-// #[expected_failure]
+// #[test, expected_failure]
 // fun transfer_err_denied_src() {
-//     let sys = @0x0;
-
-//     let mut scenario = test_scenario::begin(sys);
-//     deny_list::create_for_test(scenario.ctx());
-
-//
-//     scenario.next_tx(ADMIN);
-//     {
-//         let witness = XAUM {};
-//         init(witness, scenario.ctx());
-//     };
+//     let mut scenario = init_xaum();
 //     let mut _clock = clock::create_for_testing(scenario.ctx());
+
+//     scenario.next_tx(SYS);
+//     {
+//         deny_list::create_for_test(scenario.ctx());
+//     };
 
 //     // mint
 //     scenario.next_tx(ADMIN);
 //     {
-//         let mut state = scenario.take_shared<State>();
-//         state.mint_budget = 10000;
-//         request_mint_to(&state, ALICE, 100, &_clock, scenario.ctx());
+//         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
+//         state.set_mint_budget(10000);
+//         mtoken::request_mint_to(&state, ALICE, 100, &_clock, scenario.ctx());
 //         test_scenario::return_shared(state);
 //     };
 //     _clock.increment_for_testing(INIT_DELAY * 1000);
 //     scenario.next_tx(ADMIN);
 //     {
-//         let mut state = scenario.take_shared<State>();
-//         let req = scenario.take_shared<MintReq>();
-//         execute_mint_to(&mut state, req, &_clock, scenario.ctx());
+//         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
+//         let req = scenario.take_shared<mtoken::MintReq>();
+//         mtoken::execute_mint_to(&mut state, req, &_clock, scenario.ctx());
 //         test_scenario::return_shared(state);
 //     };
 
 //     // add in deny_list
 //     scenario.next_tx(ADMIN);
 //     {
-//         let mut state = scenario.take_shared<State>();
+//         let mut state = scenario.take_shared<mtoken::State<MTOKEN_TESTS>>();
 //         let mut _deny_list = scenario.take_shared<DenyList>();
-//         add_to_blocked_list(&mut state, ALICE, &mut _deny_list, scenario.ctx());
-//         add_to_blocked_list(&mut state, BOB, &mut _deny_list, scenario.ctx());
+//         mtoken::add_to_blocked_list(&mut state, ALICE, &mut _deny_list, scenario.ctx());
+//         mtoken::add_to_blocked_list(&mut state, BOB, &mut _deny_list, scenario.ctx());
 //         test_scenario::return_shared(state);
 //         test_scenario::return_shared(_deny_list);
 //     };

@@ -270,12 +270,12 @@ fun check_owner(state: &State, ctx: &TxContext) {
     assert!(ctx.sender() == state.owner, ENotOwner);
 }
 
+// === Test Functions ===
+
 #[test_only]
 public(package) fun create_minter(ctx: &mut TxContext) {
     init(ctx)
 }
-
-// === Test Functions ===
 
 #[test_only]
 public(package) fun new_mint_request_event(
@@ -301,4 +301,9 @@ public(package) fun new_redeem_request_event(
     slippage: u64,
 ): RedeemRequest {
     RedeemRequest { transferred_token, for_token, requestor, pool, amount, preprice, slippage }
+}
+
+#[test_only]
+public(package) fun set_version(state: &mut State, version: u64) {
+    state.version = version;
 }

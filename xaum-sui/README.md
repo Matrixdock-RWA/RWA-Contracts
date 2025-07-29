@@ -38,7 +38,7 @@ To generate and inspect test coverage reports:
 cd packages/mtoken
 sui move test --coverage
 sui move coverage summary --test
-sui move coverage source --module xaum
+sui move coverage source --module mtoken
 ```
 
 Learn more: [Sui Move CLI - Coverage](https://docs.sui.io/references/cli/move#get-test-coverage-for-a-module)

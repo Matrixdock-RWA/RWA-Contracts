@@ -7,6 +7,7 @@ use sui::address;
 use sui::clock;
 use sui::coin;
 use sui::event;
+use sui::package::{test_publish, UpgradeCap};
 use sui::sui::SUI;
 use sui::test_scenario as ts;
 use sui::test_utils::assert_eq;
@@ -15,9 +16,40 @@ const OWNER: address = @0xAD;
 const ALICE: address = @0xA;
 const POOLA: address = @0xB;
 const POOLB: address = @0xC;
+const BOB: address = @0xD;
 const VERSION: u64 = 1;
 
 public struct USDT has drop {}
+
+#[test]
+fun test_transfer_ownership() {
+    let mut ts = ts::begin(@0x0);
+    {
+        ts.next_tx(OWNER);
+        minter::create_minter(ts.ctx());
+    };
+    {
+        ts.next_tx(OWNER);
+        let mut state: minter::State = ts.take_shared();
+        let upgrade_cap = test_publish(
+            object::id_from_address(state.package_address()),
+            ts.ctx(),
+        );
+        let upgrade_cap_id = object::id(&upgrade_cap);
+        assert!(state.package_address() == @0x0);
+        minter::transfer_ownership(&mut state, BOB, upgrade_cap, ts.ctx());
+        ts::return_shared(state);
+
+        ts.next_tx(BOB);
+        let state: minter::State = ts.take_shared();
+        assert!(state.owner() == BOB);
+        let upgrade_cap = ts.take_from_sender<UpgradeCap>();
+        assert_eq(object::id(&upgrade_cap), upgrade_cap_id);
+        ts.return_to_sender(upgrade_cap);
+        ts::return_shared(state);
+    };
+    ts.end();
+}
 
 #[test]
 fun test_minter() {
@@ -192,6 +224,46 @@ fun invalid_token_for_mint_request() {
     abort
 }
 
+#[test, expected_failure(abort_code = minter::EInsufficientBalance)]
+fun insufficient_token_balance_for_mint_request() {
+    let mut ts = ts::begin(@0x0);
+    {
+        ts.next_tx(OWNER);
+        minter::create_minter(ts.ctx());
+    };
+    {
+        ts.next_tx(OWNER);
+        let mut state: minter::State = ts.take_shared();
+        minter::set_pool_account_a(&mut state, POOLA, ts.ctx());
+        minter::set_accepted_by_a(
+            &mut state,
+            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+            true,
+            ts.ctx(),
+        );
+        ts::return_shared(state);
+    };
+    {
+        ts.next_tx(ALICE);
+        let state: minter::State = ts.take_shared();
+        let mut usdt = coin::mint_for_testing<USDT>(1000, ts.ctx());
+        let mut _clock = clock::create_for_testing(ts.ctx());
+        _clock.set_for_testing(1000 * 1000);
+        minter::request_to_mint<USDT>(
+            &state,
+            &mut usdt,
+            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+            1001,
+            10,
+            5,
+            999,
+            &_clock,
+            ts.ctx(),
+        );
+    };
+    abort
+}
+
 #[test, expected_failure(abort_code = minter::EInvalidTimestamp)]
 fun invalid_timestamp_for_mint_request() {
     let mut ts = ts::begin(@0x0);
@@ -281,4 +353,483 @@ fun invalid_token_for_mint_when_remove_accepted_token() {
         );
     };
     abort
+}
+
+#[test, expected_failure(abort_code = minter::EInvalidTokenForRedeem)]
+fun invalid_token_for_redeem_request() {
+    let mut ts = ts::begin(@0x0);
+    {
+        ts.next_tx(OWNER);
+        minter::create_minter(ts.ctx());
+    };
+    {
+        ts.next_tx(OWNER);
+        let mut state: minter::State = ts.take_shared();
+        minter::set_pool_account_b(&mut state, POOLA, ts.ctx());
+        minter::set_accepted_by_b(
+            &mut state,
+            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+            true,
+            ts.ctx(),
+        );
+        ts::return_shared(state);
+    };
+    {
+        ts.next_tx(ALICE);
+        let state: minter::State = ts.take_shared();
+        let mut usdt = coin::mint_for_testing<USDT>(1000, ts.ctx());
+        let mut _clock = clock::create_for_testing(ts.ctx());
+        _clock.set_for_testing(1000 * 1000);
+        minter::request_to_redeem<USDT>(
+            &state,
+            &mut usdt,
+            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+            100,
+            10,
+            5,
+            999,
+            &_clock,
+            ts.ctx(),
+        );
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = minter::EInvalidTimestamp)]
+fun invalid_timestamp_for_redeem_request() {
+    let mut ts = ts::begin(@0x0);
+    {
+        ts.next_tx(OWNER);
+        minter::create_minter(ts.ctx());
+    };
+    {
+        ts.next_tx(OWNER);
+        let mut state: minter::State = ts.take_shared();
+        minter::set_pool_account_b(&mut state, POOLA, ts.ctx());
+        minter::set_accepted_by_b(
+            &mut state,
+            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+            true,
+            ts.ctx(),
+        );
+        ts::return_shared(state);
+    };
+    {
+        ts.next_tx(ALICE);
+        let state: minter::State = ts.take_shared();
+        let mut sui = coin::mint_for_testing<SUI>(1000, ts.ctx());
+        let mut _clock = clock::create_for_testing(ts.ctx());
+        _clock.set_for_testing(1000 * 1000);
+        minter::request_to_redeem<SUI>(
+            &state,
+            &mut sui,
+            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+            100,
+            10,
+            5,
+            900,
+            &_clock,
+            ts.ctx(),
+        );
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = minter::EInsufficientBalance)]
+fun insufficient_token_balance_for_redeem_request() {
+    let mut ts = ts::begin(@0x0);
+    {
+        ts.next_tx(OWNER);
+        minter::create_minter(ts.ctx());
+    };
+    {
+        ts.next_tx(OWNER);
+        let mut state: minter::State = ts.take_shared();
+        minter::set_pool_account_b(&mut state, POOLA, ts.ctx());
+        minter::set_accepted_by_b(
+            &mut state,
+            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+            true,
+            ts.ctx(),
+        );
+        ts::return_shared(state);
+    };
+    {
+        ts.next_tx(ALICE);
+        let state: minter::State = ts.take_shared();
+        let mut sui = coin::mint_for_testing<SUI>(1000, ts.ctx());
+        let mut _clock = clock::create_for_testing(ts.ctx());
+        _clock.set_for_testing(1000 * 1000);
+        minter::request_to_redeem<SUI>(
+            &state,
+            &mut sui,
+            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+            1001,
+            10,
+            5,
+            999,
+            &_clock,
+            ts.ctx(),
+        );
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = minter::ENotOwner)]
+fun migrate_err_not_owner() {
+    let mut scenario = ts::begin(@0x0);
+    scenario.next_tx(OWNER);
+    {
+        minter::create_minter(scenario.ctx());
+    };
+
+    // migrate
+    scenario.next_tx(ALICE);
+    {
+        let mut state = scenario.take_shared<minter::State>();
+        minter::migrate(&mut state, scenario.ctx());
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = minter::EWrongVersion)]
+fun migrate_err_wrong_version() {
+    let mut scenario = ts::begin(@0x0);
+    scenario.next_tx(OWNER);
+    {
+        minter::create_minter(scenario.ctx());
+    };
+
+    // migrate
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<minter::State>();
+        state.set_version(2);
+        minter::migrate(&mut state, scenario.ctx());
+    };
+    abort
+}
+
+#[test]
+fun migrate_ok() {
+    let mut scenario = ts::begin(@0x0);
+    scenario.next_tx(OWNER);
+    {
+        minter::create_minter(scenario.ctx());
+    };
+
+    // migrate
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<minter::State>();
+        state.set_version(0);
+        minter::migrate(&mut state, scenario.ctx());
+        assert_eq(state.version(), VERSION);
+        ts::return_shared(state);
+    };
+
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = minter::ENotOwner)]
+fun set_owner_req_err_not_owner() {
+    let mut scenario = ts::begin(@0x0);
+    scenario.next_tx(OWNER);
+    {
+        minter::create_minter(scenario.ctx());
+    };
+
+    scenario.next_tx(ALICE);
+    {
+        let mut state = scenario.take_shared<minter::State>();
+        let upgrade_cap = test_publish(
+            object::id_from_address(state.package_address()),
+            scenario.ctx(),
+        );
+        minter::transfer_ownership(&mut state, ALICE, upgrade_cap, scenario.ctx());
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = minter::EUpgradeCapInvalid)]
+fun set_owner_req_err_upgrade_cap_invalid() {
+    let mut scenario = ts::begin(@0x0);
+    scenario.next_tx(OWNER);
+    {
+        minter::create_minter(scenario.ctx());
+    };
+
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<minter::State>();
+        let upgrade_cap = test_publish(object::id_from_address(@0x1234), scenario.ctx());
+        minter::transfer_ownership(&mut state, ALICE, upgrade_cap, scenario.ctx());
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = minter::ENotOwner)]
+fun set_accepted_token_by_a_err_not_owner() {
+    let mut scenario = ts::begin(@0x0);
+    scenario.next_tx(OWNER);
+    {
+        minter::create_minter(scenario.ctx());
+    };
+
+    scenario.next_tx(ALICE);
+    {
+        let mut state = scenario.take_shared<minter::State>();
+        minter::set_accepted_by_a(
+            &mut state,
+            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+            true,
+            scenario.ctx(),
+        );
+    };
+    abort
+}
+
+#[test]
+fun set_owner_ok() {
+    let mut scenario = ts::begin(@0x0);
+    scenario.next_tx(OWNER);
+    {
+        minter::create_minter(scenario.ctx());
+    };
+
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<minter::State>();
+        let upgrade_cap = test_publish(
+            object::id_from_address(state.package_address()),
+            scenario.ctx(),
+        );
+        minter::transfer_ownership(&mut state, ALICE, upgrade_cap, scenario.ctx());
+        ts::return_shared(state);
+    };
+
+    // check upgrade cap
+    scenario.next_tx(ALICE);
+    {
+        let state = scenario.take_shared<minter::State>();
+        let upgrade_cap = scenario.take_from_sender<UpgradeCap>();
+        assert_eq(upgrade_cap.package(), object::id_from_address(state.package_address()));
+        scenario.return_to_sender(upgrade_cap);
+        ts::return_shared(state);
+    };
+    scenario.end();
+}
+
+#[test]
+fun set_accepted_token_by_a_ok() {
+    let mut scenario = ts::begin(@0x0);
+    scenario.next_tx(OWNER);
+    {
+        minter::create_minter(scenario.ctx());
+    };
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<minter::State>();
+        minter::set_accepted_by_a(
+            &mut state,
+            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+            true,
+            scenario.ctx(),
+        );
+        minter::set_accepted_by_a(
+            &mut state,
+            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+            false,
+            scenario.ctx(),
+        );
+        ts::return_shared(state);
+    };
+    scenario.next_tx(OWNER);
+    {
+        let state = scenario.take_shared<minter::State>();
+        assert!(
+            state.accepted_by_a(
+                address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+            ),
+        );
+        assert!(
+            !state.accepted_by_a(
+                address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+            ),
+        );
+        ts::return_shared(state);
+    };
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<minter::State>();
+        minter::set_accepted_by_a(
+            &mut state,
+            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+            false,
+            scenario.ctx(),
+        );
+        minter::set_accepted_by_a(
+            &mut state,
+            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+            true,
+            scenario.ctx(),
+        );
+        ts::return_shared(state);
+    };
+    scenario.next_tx(OWNER);
+    {
+        let state = scenario.take_shared<minter::State>();
+        assert!(
+            !state.accepted_by_a(
+                address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+            ),
+        );
+        assert!(
+            state.accepted_by_a(
+                address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+            ),
+        );
+        ts::return_shared(state);
+    };
+    // reenter
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<minter::State>();
+        minter::set_accepted_by_a(
+            &mut state,
+            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+            false,
+            scenario.ctx(),
+        );
+        minter::set_accepted_by_a(
+            &mut state,
+            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+            true,
+            scenario.ctx(),
+        );
+        ts::return_shared(state);
+    };
+    scenario.next_tx(OWNER);
+    {
+        let state = scenario.take_shared<minter::State>();
+        assert!(
+            !state.accepted_by_a(
+                address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+            ),
+        );
+        assert!(
+            state.accepted_by_a(
+                address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+            ),
+        );
+        ts::return_shared(state);
+    };
+    scenario.end();
+}
+
+#[test]
+fun set_accepted_token_by_b_ok() {
+    let mut scenario = ts::begin(@0x0);
+    scenario.next_tx(OWNER);
+    {
+        minter::create_minter(scenario.ctx());
+    };
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<minter::State>();
+        minter::set_accepted_by_b(
+            &mut state,
+            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+            true,
+            scenario.ctx(),
+        );
+        minter::set_accepted_by_b(
+            &mut state,
+            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+            false,
+            scenario.ctx(),
+        );
+        ts::return_shared(state);
+    };
+    scenario.next_tx(OWNER);
+    {
+        let state = scenario.take_shared<minter::State>();
+        assert!(
+            state.accepted_by_b(
+                address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+            ),
+        );
+        assert!(
+            !state.accepted_by_b(
+                address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+            ),
+        );
+        ts::return_shared(state);
+    };
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<minter::State>();
+        minter::set_accepted_by_b(
+            &mut state,
+            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+            false,
+            scenario.ctx(),
+        );
+        minter::set_accepted_by_b(
+            &mut state,
+            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+            true,
+            scenario.ctx(),
+        );
+        ts::return_shared(state);
+    };
+    scenario.next_tx(OWNER);
+    {
+        let state = scenario.take_shared<minter::State>();
+        assert!(
+            !state.accepted_by_b(
+                address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+            ),
+        );
+        assert!(
+            state.accepted_by_b(
+                address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+            ),
+        );
+        ts::return_shared(state);
+    };
+    // reenter
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<minter::State>();
+        minter::set_accepted_by_b(
+            &mut state,
+            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+            false,
+            scenario.ctx(),
+        );
+        minter::set_accepted_by_b(
+            &mut state,
+            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+            true,
+            scenario.ctx(),
+        );
+        ts::return_shared(state);
+    };
+    scenario.next_tx(OWNER);
+    {
+        let state = scenario.take_shared<minter::State>();
+        assert!(
+            !state.accepted_by_b(
+                address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+            ),
+        );
+        assert!(
+            state.accepted_by_b(
+                address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+            ),
+        );
+        ts::return_shared(state);
+    };
+    scenario.end();
 }
