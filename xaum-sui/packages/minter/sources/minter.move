@@ -178,7 +178,7 @@ entry fun set_accepted_by_b(state: &mut State, token: address, accepted: bool, c
 
 // === Public Functions ===
 
-public entry fun request_to_mint<T>(
+public fun request_to_mint<T>(
     state: &State,
     transferred_token: &mut Coin<T>,
     for_token: address,
@@ -209,7 +209,7 @@ public entry fun request_to_mint<T>(
     });
 }
 
-public entry fun request_to_redeem<T>(
+public fun request_to_redeem<T>(
     state: &State,
     transferred_token: &mut Coin<T>,
     for_token: address,
