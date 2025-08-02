@@ -3,7 +3,6 @@ module minter::minter_tests;
 
 use minter::minter;
 use std::type_name;
-use sui::address;
 use sui::clock;
 use sui::coin;
 use sui::event;
@@ -74,28 +73,26 @@ fun test_minter() {
     {
         ts.next_tx(OWNER);
         let mut state: minter::State = ts.take_shared();
-        minter::set_accepted_by_a(
+        minter::set_accepted_by_a<USDT>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
             true,
             ts.ctx(),
         );
-        minter::set_accepted_by_b(
+        minter::set_accepted_by_b<SUI>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
             true,
             ts.ctx(),
         );
         assert!(
             minter::accepted_by_a(
                 &state,
-                address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+                type_name::get<USDT>(),
             ),
         );
         assert!(
             minter::accepted_by_b(
                 &state,
-                address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+                type_name::get<SUI>(),
             ),
         );
         ts::return_shared(state);
@@ -106,10 +103,9 @@ fun test_minter() {
         let mut usdt = coin::mint_for_testing<USDT>(1000, ts.ctx());
         let mut _clock = clock::create_for_testing(ts.ctx());
         _clock.set_for_testing(1000 * 1000);
-        minter::request_to_mint<USDT>(
+        minter::request_to_mint<USDT, SUI>(
             &state,
             &mut usdt,
-            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
             100,
             10,
             5,
@@ -122,8 +118,8 @@ fun test_minter() {
         assert_eq(
             event::events_by_type<minter::MintRequest>().pop_back(),
             minter::new_mint_request_event(
-                address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
-                address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+                type_name::get<USDT>(),
+                type_name::get<SUI>(),
                 ALICE,
                 POOLA,
                 100,
@@ -147,10 +143,9 @@ fun test_minter() {
         let mut sui = coin::mint_for_testing<SUI>(1000, ts.ctx());
         let mut _clock = clock::create_for_testing(ts.ctx());
         _clock.set_for_testing(1000 * 1000);
-        minter::request_to_redeem<SUI>(
+        minter::request_to_redeem<SUI, USDT>(
             &state,
             &mut sui,
-            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
             100,
             10,
             5,
@@ -163,8 +158,8 @@ fun test_minter() {
         assert_eq(
             event::events_by_type<minter::RedeemRequest>().pop_back(),
             minter::new_redeem_request_event(
-                address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
-                address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+                type_name::get<SUI>(),
+                type_name::get<USDT>(),
                 ALICE,
                 POOLB,
                 100,
@@ -196,9 +191,8 @@ fun invalid_token_for_mint_request() {
         ts.next_tx(OWNER);
         let mut state: minter::State = ts.take_shared();
         minter::set_pool_account_a(&mut state, POOLA, ts.ctx());
-        minter::set_accepted_by_a(
+        minter::set_accepted_by_a<USDT>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
             true,
             ts.ctx(),
         );
@@ -210,10 +204,9 @@ fun invalid_token_for_mint_request() {
         let mut sui = coin::mint_for_testing<SUI>(1000, ts.ctx());
         let mut _clock = clock::create_for_testing(ts.ctx());
         _clock.set_for_testing(1000 * 1000);
-        minter::request_to_mint<SUI>(
+        minter::request_to_mint<SUI, USDT>(
             &state,
             &mut sui,
-            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
             100,
             10,
             5,
@@ -236,9 +229,8 @@ fun insufficient_token_balance_for_mint_request() {
         ts.next_tx(OWNER);
         let mut state: minter::State = ts.take_shared();
         minter::set_pool_account_a(&mut state, POOLA, ts.ctx());
-        minter::set_accepted_by_a(
+        minter::set_accepted_by_a<USDT>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
             true,
             ts.ctx(),
         );
@@ -250,10 +242,9 @@ fun insufficient_token_balance_for_mint_request() {
         let mut usdt = coin::mint_for_testing<USDT>(1000, ts.ctx());
         let mut _clock = clock::create_for_testing(ts.ctx());
         _clock.set_for_testing(1000 * 1000);
-        minter::request_to_mint<USDT>(
+        minter::request_to_mint<USDT, SUI>(
             &state,
             &mut usdt,
-            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
             1001,
             10,
             5,
@@ -276,9 +267,8 @@ fun invalid_timestamp_for_mint_request() {
         ts.next_tx(OWNER);
         let mut state: minter::State = ts.take_shared();
         minter::set_pool_account_a(&mut state, POOLA, ts.ctx());
-        minter::set_accepted_by_a(
+        minter::set_accepted_by_a<USDT>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
             true,
             ts.ctx(),
         );
@@ -290,10 +280,9 @@ fun invalid_timestamp_for_mint_request() {
         let mut usdt = coin::mint_for_testing<USDT>(1000, ts.ctx());
         let mut _clock = clock::create_for_testing(ts.ctx());
         _clock.set_for_testing(1000 * 1000);
-        minter::request_to_mint<USDT>(
+        minter::request_to_mint<USDT, SUI>(
             &state,
             &mut usdt,
-            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
             100,
             10,
             5,
@@ -316,9 +305,8 @@ fun invalid_token_for_mint_when_remove_accepted_token() {
         ts.next_tx(OWNER);
         let mut state: minter::State = ts.take_shared();
         minter::set_pool_account_a(&mut state, POOLA, ts.ctx());
-        minter::set_accepted_by_a(
+        minter::set_accepted_by_a<USDT>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
             true,
             ts.ctx(),
         );
@@ -327,9 +315,8 @@ fun invalid_token_for_mint_when_remove_accepted_token() {
     {
         ts.next_tx(OWNER);
         let mut state: minter::State = ts.take_shared();
-        minter::set_accepted_by_a(
+        minter::set_accepted_by_a<USDT>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
             false,
             ts.ctx(),
         );
@@ -341,10 +328,9 @@ fun invalid_token_for_mint_when_remove_accepted_token() {
         let mut usdt = coin::mint_for_testing<USDT>(1000, ts.ctx());
         let mut _clock = clock::create_for_testing(ts.ctx());
         _clock.set_for_testing(1000 * 1000);
-        minter::request_to_mint<USDT>(
+        minter::request_to_mint<USDT, SUI>(
             &state,
             &mut usdt,
-            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
             100,
             10,
             5,
@@ -367,9 +353,8 @@ fun invalid_token_for_redeem_request() {
         ts.next_tx(OWNER);
         let mut state: minter::State = ts.take_shared();
         minter::set_pool_account_b(&mut state, POOLA, ts.ctx());
-        minter::set_accepted_by_b(
+        minter::set_accepted_by_b<SUI>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
             true,
             ts.ctx(),
         );
@@ -381,10 +366,9 @@ fun invalid_token_for_redeem_request() {
         let mut usdt = coin::mint_for_testing<USDT>(1000, ts.ctx());
         let mut _clock = clock::create_for_testing(ts.ctx());
         _clock.set_for_testing(1000 * 1000);
-        minter::request_to_redeem<USDT>(
+        minter::request_to_redeem<USDT, USDT>(
             &state,
             &mut usdt,
-            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
             100,
             10,
             5,
@@ -407,9 +391,8 @@ fun invalid_timestamp_for_redeem_request() {
         ts.next_tx(OWNER);
         let mut state: minter::State = ts.take_shared();
         minter::set_pool_account_b(&mut state, POOLA, ts.ctx());
-        minter::set_accepted_by_b(
+        minter::set_accepted_by_b<SUI>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
             true,
             ts.ctx(),
         );
@@ -421,10 +404,9 @@ fun invalid_timestamp_for_redeem_request() {
         let mut sui = coin::mint_for_testing<SUI>(1000, ts.ctx());
         let mut _clock = clock::create_for_testing(ts.ctx());
         _clock.set_for_testing(1000 * 1000);
-        minter::request_to_redeem<SUI>(
+        minter::request_to_redeem<SUI, USDT>(
             &state,
             &mut sui,
-            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
             100,
             10,
             5,
@@ -447,9 +429,8 @@ fun insufficient_token_balance_for_redeem_request() {
         ts.next_tx(OWNER);
         let mut state: minter::State = ts.take_shared();
         minter::set_pool_account_b(&mut state, POOLA, ts.ctx());
-        minter::set_accepted_by_b(
+        minter::set_accepted_by_b<SUI>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
             true,
             ts.ctx(),
         );
@@ -461,10 +442,9 @@ fun insufficient_token_balance_for_redeem_request() {
         let mut sui = coin::mint_for_testing<SUI>(1000, ts.ctx());
         let mut _clock = clock::create_for_testing(ts.ctx());
         _clock.set_for_testing(1000 * 1000);
-        minter::request_to_redeem<SUI>(
+        minter::request_to_redeem<SUI, USDT>(
             &state,
             &mut sui,
-            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
             1001,
             10,
             5,
@@ -662,9 +642,8 @@ fun set_accepted_token_by_a_err_not_owner() {
     scenario.next_tx(ALICE);
     {
         let mut state = scenario.take_shared<minter::State>();
-        minter::set_accepted_by_a(
+        minter::set_accepted_by_a<USDT>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
             true,
             scenario.ctx(),
         );
@@ -714,15 +693,13 @@ fun set_accepted_token_by_a_ok() {
     scenario.next_tx(OWNER);
     {
         let mut state = scenario.take_shared<minter::State>();
-        minter::set_accepted_by_a(
+        minter::set_accepted_by_a<USDT>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
             true,
             scenario.ctx(),
         );
-        minter::set_accepted_by_a(
+        minter::set_accepted_by_a<SUI>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
             false,
             scenario.ctx(),
         );
@@ -733,12 +710,12 @@ fun set_accepted_token_by_a_ok() {
         let state = scenario.take_shared<minter::State>();
         assert!(
             state.accepted_by_a(
-                address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+                type_name::get<USDT>(),
             ),
         );
         assert!(
             !state.accepted_by_a(
-                address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+                type_name::get<SUI>(),
             ),
         );
         ts::return_shared(state);
@@ -746,15 +723,13 @@ fun set_accepted_token_by_a_ok() {
     scenario.next_tx(OWNER);
     {
         let mut state = scenario.take_shared<minter::State>();
-        minter::set_accepted_by_a(
+        minter::set_accepted_by_a<USDT>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
             false,
             scenario.ctx(),
         );
-        minter::set_accepted_by_a(
+        minter::set_accepted_by_a<SUI>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
             true,
             scenario.ctx(),
         );
@@ -765,12 +740,12 @@ fun set_accepted_token_by_a_ok() {
         let state = scenario.take_shared<minter::State>();
         assert!(
             !state.accepted_by_a(
-                address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+                type_name::get<USDT>(),
             ),
         );
         assert!(
             state.accepted_by_a(
-                address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+                type_name::get<SUI>(),
             ),
         );
         ts::return_shared(state);
@@ -779,15 +754,13 @@ fun set_accepted_token_by_a_ok() {
     scenario.next_tx(OWNER);
     {
         let mut state = scenario.take_shared<minter::State>();
-        minter::set_accepted_by_a(
+        minter::set_accepted_by_a<USDT>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
             false,
             scenario.ctx(),
         );
-        minter::set_accepted_by_a(
+        minter::set_accepted_by_a<SUI>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
             true,
             scenario.ctx(),
         );
@@ -798,12 +771,12 @@ fun set_accepted_token_by_a_ok() {
         let state = scenario.take_shared<minter::State>();
         assert!(
             !state.accepted_by_a(
-                address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+                type_name::get<USDT>(),
             ),
         );
         assert!(
             state.accepted_by_a(
-                address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+                type_name::get<SUI>(),
             ),
         );
         ts::return_shared(state);
@@ -821,15 +794,13 @@ fun set_accepted_token_by_b_ok() {
     scenario.next_tx(OWNER);
     {
         let mut state = scenario.take_shared<minter::State>();
-        minter::set_accepted_by_b(
+        minter::set_accepted_by_b<USDT>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
             true,
             scenario.ctx(),
         );
-        minter::set_accepted_by_b(
+        minter::set_accepted_by_b<SUI>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
             false,
             scenario.ctx(),
         );
@@ -840,12 +811,12 @@ fun set_accepted_token_by_b_ok() {
         let state = scenario.take_shared<minter::State>();
         assert!(
             state.accepted_by_b(
-                address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+                type_name::get<USDT>(),
             ),
         );
         assert!(
             !state.accepted_by_b(
-                address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+                type_name::get<SUI>(),
             ),
         );
         ts::return_shared(state);
@@ -853,15 +824,13 @@ fun set_accepted_token_by_b_ok() {
     scenario.next_tx(OWNER);
     {
         let mut state = scenario.take_shared<minter::State>();
-        minter::set_accepted_by_b(
+        minter::set_accepted_by_b<USDT>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
             false,
             scenario.ctx(),
         );
-        minter::set_accepted_by_b(
+        minter::set_accepted_by_b<SUI>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
             true,
             scenario.ctx(),
         );
@@ -872,12 +841,12 @@ fun set_accepted_token_by_b_ok() {
         let state = scenario.take_shared<minter::State>();
         assert!(
             !state.accepted_by_b(
-                address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+                type_name::get<USDT>(),
             ),
         );
         assert!(
             state.accepted_by_b(
-                address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+                type_name::get<SUI>(),
             ),
         );
         ts::return_shared(state);
@@ -886,15 +855,13 @@ fun set_accepted_token_by_b_ok() {
     scenario.next_tx(OWNER);
     {
         let mut state = scenario.take_shared<minter::State>();
-        minter::set_accepted_by_b(
+        minter::set_accepted_by_b<USDT>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
             false,
             scenario.ctx(),
         );
-        minter::set_accepted_by_b(
+        minter::set_accepted_by_b<SUI>(
             &mut state,
-            address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
             true,
             scenario.ctx(),
         );
@@ -905,12 +872,12 @@ fun set_accepted_token_by_b_ok() {
         let state = scenario.take_shared<minter::State>();
         assert!(
             !state.accepted_by_b(
-                address::from_ascii_bytes(type_name::get<USDT>().get_address().as_bytes()),
+                type_name::get<USDT>(),
             ),
         );
         assert!(
             state.accepted_by_b(
-                address::from_ascii_bytes(type_name::get<SUI>().get_address().as_bytes()),
+                type_name::get<SUI>(),
             ),
         );
         ts::return_shared(state);

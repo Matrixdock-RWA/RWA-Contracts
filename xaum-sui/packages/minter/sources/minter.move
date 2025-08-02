@@ -1,6 +1,6 @@
 module minter::minter;
 
-use std::type_name;
+use std::type_name::{Self, TypeName};
 use sui::address;
 use sui::clock::Clock;
 use sui::coin::{Self, Coin};
@@ -42,18 +42,18 @@ public struct SetPoolAccountB has copy, drop {
 }
 
 public struct SetAcceptedByA has copy, drop {
-    token: address,
+    token: TypeName,
     accepted: bool,
 }
 
 public struct SetAcceptedByB has copy, drop {
-    token: address,
+    token: TypeName,
     accepted: bool,
 }
 
 public struct MintRequest has copy, drop {
-    transferred_token: address,
-    for_token: address,
+    transferred_token: TypeName,
+    for_token: TypeName,
     requestor: address,
     pool: address,
     amount: u64,
@@ -62,8 +62,8 @@ public struct MintRequest has copy, drop {
 }
 
 public struct RedeemRequest has copy, drop {
-    transferred_token: address,
-    for_token: address,
+    transferred_token: TypeName,
+    for_token: TypeName,
     requestor: address,
     pool: address,
     amount: u64,
@@ -80,8 +80,8 @@ public struct State has key {
     owner: address,
     pool_account_a: address, //stable coin pool
     pool_account_b: address, //rwa pool
-    accepted_by_a: table::Table<address, bool>,
-    accepted_by_b: table::Table<address, bool>,
+    accepted_by_a: table::Table<TypeName, bool>,
+    accepted_by_b: table::Table<TypeName, bool>,
 }
 
 // === Initialization ===
@@ -94,8 +94,8 @@ fun init(ctx: &mut TxContext) {
         owner,
         pool_account_a: owner,
         pool_account_b: owner,
-        accepted_by_a: table::new<address, bool>(ctx),
-        accepted_by_b: table::new<address, bool>(ctx),
+        accepted_by_a: table::new<TypeName, bool>(ctx),
+        accepted_by_b: table::new<TypeName, bool>(ctx),
     };
     transfer::share_object(state);
 }
@@ -146,9 +146,10 @@ entry fun set_pool_account_b(state: &mut State, pool_account_b: address, ctx: &T
     event::emit(SetPoolAccountB { pool_account_b });
 }
 
-entry fun set_accepted_by_a(state: &mut State, token: address, accepted: bool, ctx: &TxContext) {
+entry fun set_accepted_by_a<T>(state: &mut State, accepted: bool, ctx: &TxContext) {
     check_version(state);
     check_owner(state, ctx);
+    let token = type_name::get<T>();
     if (state.accepted_by_a.contains(token)) {
         if (!accepted) {
             state.accepted_by_a.remove(token);
@@ -161,9 +162,10 @@ entry fun set_accepted_by_a(state: &mut State, token: address, accepted: bool, c
     event::emit(SetAcceptedByA { token, accepted });
 }
 
-entry fun set_accepted_by_b(state: &mut State, token: address, accepted: bool, ctx: &TxContext) {
+entry fun set_accepted_by_b<T>(state: &mut State, accepted: bool, ctx: &TxContext) {
     check_version(state);
     check_owner(state, ctx);
+    let token = type_name::get<T>();
     if (state.accepted_by_b.contains(token)) {
         if (!accepted) {
             state.accepted_by_b.remove(token);
@@ -178,10 +180,9 @@ entry fun set_accepted_by_b(state: &mut State, token: address, accepted: bool, c
 
 // === Public Functions ===
 
-public fun request_to_mint<T>(
+public fun request_to_mint<T, F>(
     state: &State,
     transferred_token: &mut Coin<T>,
-    for_token: address,
     amount: u64,
     preprice: u64,
     slippage: u64,
@@ -190,8 +191,8 @@ public fun request_to_mint<T>(
     ctx: &mut TxContext,
 ) {
     check_version(state);
-    let ta = address::from_ascii_bytes(type_name::get<T>().get_address().as_bytes());
-    assert!(state.accepted_by_a.contains(ta), EInvalidTokenForMint);
+    let tn = type_name::get<T>();
+    assert!(state.accepted_by_a.contains(tn), EInvalidTokenForMint);
     let now = clock.timestamp_ms() / 1000;
     assert!(now <= timestamp + DELAY_MAX, EInvalidTimestamp);
     let balance = transferred_token.value();
@@ -199,8 +200,8 @@ public fun request_to_mint<T>(
     let out = coin::split<T>(transferred_token, amount, ctx);
     transfer::public_transfer(out, state.pool_account_a);
     event::emit(MintRequest {
-        transferred_token: ta,
-        for_token,
+        transferred_token: tn,
+        for_token: type_name::get<F>(),
         requestor: ctx.sender(),
         pool: state.pool_account_a,
         amount,
@@ -209,10 +210,9 @@ public fun request_to_mint<T>(
     });
 }
 
-public fun request_to_redeem<T>(
+public fun request_to_redeem<T, F>(
     state: &State,
     transferred_token: &mut Coin<T>,
-    for_token: address,
     amount: u64,
     preprice: u64,
     slippage: u64,
@@ -221,8 +221,8 @@ public fun request_to_redeem<T>(
     ctx: &mut TxContext,
 ) {
     check_version(state);
-    let ta = address::from_ascii_bytes(type_name::get<T>().get_address().as_bytes());
-    assert!(state.accepted_by_b.contains(ta), EInvalidTokenForRedeem);
+    let tn = type_name::get<T>();
+    assert!(state.accepted_by_b.contains(tn), EInvalidTokenForRedeem);
     let now = clock.timestamp_ms() / 1000;
     assert!(now <= timestamp + DELAY_MAX, EInvalidTimestamp);
     let balance = transferred_token.value();
@@ -230,8 +230,8 @@ public fun request_to_redeem<T>(
     let out = coin::split(transferred_token, amount, ctx);
     transfer::public_transfer(out, state.pool_account_b);
     event::emit(RedeemRequest {
-        transferred_token: ta,
-        for_token,
+        transferred_token: tn,
+        for_token: type_name::get<F>(),
         requestor: ctx.sender(),
         pool: state.pool_account_b,
         amount,
@@ -262,11 +262,11 @@ public fun pool_account_b(state: &State): address {
     state.pool_account_b
 }
 
-public fun accepted_by_a(state: &State, token: address): bool {
+public fun accepted_by_a(state: &State, token: TypeName): bool {
     state.accepted_by_a.contains(token)
 }
 
-public fun accepted_by_b(state: &State, token: address): bool {
+public fun accepted_by_b(state: &State, token: TypeName): bool {
     state.accepted_by_b.contains(token)
 }
 
@@ -293,8 +293,8 @@ public(package) fun create_minter(ctx: &mut TxContext) {
 
 #[test_only]
 public(package) fun new_mint_request_event(
-    transferred_token: address,
-    for_token: address,
+    transferred_token: TypeName,
+    for_token: TypeName,
     requestor: address,
     pool: address,
     amount: u64,
@@ -306,8 +306,8 @@ public(package) fun new_mint_request_event(
 
 #[test_only]
 public(package) fun new_redeem_request_event(
-    transferred_token: address,
-    for_token: address,
+    transferred_token: TypeName,
+    for_token: TypeName,
     requestor: address,
     pool: address,
     amount: u64,
