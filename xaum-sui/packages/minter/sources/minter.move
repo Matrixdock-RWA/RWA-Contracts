@@ -11,6 +11,7 @@ use sui::table;
 // === Errors ===
 const EWrongVersion: u64 = 100;
 const ENotOwner: u64 = 101;
+const EUpgradeCapIdNotNone: u64 = 102;
 const EUpgradeCapInvalid: u64 = 108;
 
 const EInvalidTokenForMint: u64 = 200;
@@ -75,6 +76,7 @@ public struct RedeemRequest has copy, drop {
 public struct State has key {
     id: UID,
     version: u64,
+    upgrade_cap_id: Option<ID>,
     owner: address,
     pool_account_a: address, //stable coin pool
     pool_account_b: address, //rwa pool
@@ -88,6 +90,7 @@ fun init(ctx: &mut TxContext) {
     let state = State {
         id: object::new(ctx),
         version: VERSION,
+        upgrade_cap_id: option::none(),
         owner,
         pool_account_a: owner,
         pool_account_b: owner,
@@ -99,6 +102,13 @@ fun init(ctx: &mut TxContext) {
 
 // === Owner Functions ===
 
+entry fun init_upgrade_cap_id(state: &mut State, upgrade_cap: &UpgradeCap, ctx: &TxContext) {
+    check_owner(state, ctx);
+    assert!(state.upgrade_cap_id.is_none(), EUpgradeCapIdNotNone);
+    assert!(upgrade_cap.package().to_address() == state.package_address(), EUpgradeCapInvalid);
+    state.upgrade_cap_id = option::some(object::id(upgrade_cap));
+}
+
 entry fun transfer_ownership(
     state: &mut State,
     new_owner: address,
@@ -109,7 +119,7 @@ entry fun transfer_ownership(
     check_owner(state, ctx);
     let old_owner = state.owner;
     // transfer UpgradeCap !
-    assert!(upgrade_cap.package().to_address() == state.package_address(), EUpgradeCapInvalid);
+    assert!(state.upgrade_cap_id.contains(&object::id(&upgrade_cap)), EUpgradeCapInvalid);
     transfer::public_transfer(upgrade_cap, new_owner);
 
     state.owner = new_owner;
@@ -234,6 +244,10 @@ public entry fun request_to_redeem<T>(
 
 public fun version(state: &State): u64 {
     state.version
+}
+
+public fun upgrade_cap_id(state: &State): Option<ID> {
+    state.upgrade_cap_id
 }
 
 public fun owner(state: &State): address {

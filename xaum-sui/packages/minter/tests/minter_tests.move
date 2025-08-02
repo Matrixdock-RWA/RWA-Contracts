@@ -32,11 +32,12 @@ fun test_transfer_ownership() {
         ts.next_tx(OWNER);
         let mut state: minter::State = ts.take_shared();
         let upgrade_cap = test_publish(
-            object::id_from_address(state.package_address()),
+            state.package_address().to_id(),
             ts.ctx(),
         );
         let upgrade_cap_id = object::id(&upgrade_cap);
         assert!(state.package_address() == @0x0);
+        minter::init_upgrade_cap_id(&mut state, &upgrade_cap, ts.ctx());
         minter::transfer_ownership(&mut state, BOB, upgrade_cap, ts.ctx());
         ts::return_shared(state);
 
@@ -532,7 +533,7 @@ fun migrate_ok() {
 }
 
 #[test, expected_failure(abort_code = minter::ENotOwner)]
-fun set_owner_req_err_not_owner() {
+fun init_upgrade_cap_id_err_not_owner() {
     let mut scenario = ts::begin(@0x0);
     scenario.next_tx(OWNER);
     {
@@ -542,17 +543,14 @@ fun set_owner_req_err_not_owner() {
     scenario.next_tx(ALICE);
     {
         let mut state = scenario.take_shared<minter::State>();
-        let upgrade_cap = test_publish(
-            object::id_from_address(state.package_address()),
-            scenario.ctx(),
-        );
-        minter::transfer_ownership(&mut state, ALICE, upgrade_cap, scenario.ctx());
+        let upgrade_cap = test_publish(object::id_from_address(@0x1234), scenario.ctx());
+        minter::init_upgrade_cap_id(&mut state, &upgrade_cap, scenario.ctx());
     };
     abort
 }
 
 #[test, expected_failure(abort_code = minter::EUpgradeCapInvalid)]
-fun set_owner_req_err_upgrade_cap_invalid() {
+fun init_upgrade_cap_id_err_not_matching() {
     let mut scenario = ts::begin(@0x0);
     scenario.next_tx(OWNER);
     {
@@ -563,7 +561,92 @@ fun set_owner_req_err_upgrade_cap_invalid() {
     {
         let mut state = scenario.take_shared<minter::State>();
         let upgrade_cap = test_publish(object::id_from_address(@0x1234), scenario.ctx());
+        minter::init_upgrade_cap_id(&mut state, &upgrade_cap, scenario.ctx());
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = minter::EUpgradeCapIdNotNone)]
+fun init_upgrade_cap_id_err_not_none() {
+    let mut scenario = ts::begin(@0x0);
+    scenario.next_tx(OWNER);
+    {
+        minter::create_minter(scenario.ctx());
+    };
+
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<minter::State>();
+        let upgrade_cap = test_publish(
+            state.package_address().to_id(),
+            scenario.ctx(),
+        );
+        minter::init_upgrade_cap_id(&mut state, &upgrade_cap, scenario.ctx()); // ok
+        minter::init_upgrade_cap_id(&mut state, &upgrade_cap, scenario.ctx()); // error!
+    };
+    abort
+}
+
+#[test]
+fun init_upgrade_cap_id_ok() {
+    let mut scenario = ts::begin(@0x0);
+    scenario.next_tx(OWNER);
+    {
+        minter::create_minter(scenario.ctx());
+    };
+
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<minter::State>();
+        let upgrade_cap = test_publish(
+            state.package_address().to_id(),
+            scenario.ctx(),
+        );
+        minter::init_upgrade_cap_id(&mut state, &upgrade_cap, scenario.ctx()); // ok
+        assert_eq(state.upgrade_cap_id(), option::some(object::id(&upgrade_cap)));
+        transfer::public_share_object(upgrade_cap);
+        ts::return_shared(state);
+    };
+
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = minter::ENotOwner)]
+fun set_owner_err_not_owner() {
+    let mut scenario = ts::begin(@0x0);
+    scenario.next_tx(OWNER);
+    {
+        minter::create_minter(scenario.ctx());
+    };
+
+    scenario.next_tx(ALICE);
+    {
+        let mut state = scenario.take_shared<minter::State>();
+        let upgrade_cap = test_publish(
+            state.package_address().to_id(),
+            scenario.ctx(),
+        );
         minter::transfer_ownership(&mut state, ALICE, upgrade_cap, scenario.ctx());
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = minter::EUpgradeCapInvalid)]
+fun set_owner_err_upgrade_cap_invalid() {
+    let mut scenario = ts::begin(@0x0);
+    scenario.next_tx(OWNER);
+    {
+        minter::create_minter(scenario.ctx());
+    };
+
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<minter::State>();
+        let upgrade_cap = test_publish(object::id_from_address(@0x1234), scenario.ctx());
+        minter::init_upgrade_cap_id(&mut state, &upgrade_cap, scenario.ctx());
+
+        let upgrade_cap2 = test_publish(object::id_from_address(@0x1234), scenario.ctx());
+        minter::transfer_ownership(&mut state, ALICE, upgrade_cap2, scenario.ctx());
     };
     abort
 }
@@ -601,9 +684,10 @@ fun set_owner_ok() {
     {
         let mut state = scenario.take_shared<minter::State>();
         let upgrade_cap = test_publish(
-            object::id_from_address(state.package_address()),
+            state.package_address().to_id(),
             scenario.ctx(),
         );
+        minter::init_upgrade_cap_id(&mut state, &upgrade_cap, scenario.ctx());
         minter::transfer_ownership(&mut state, ALICE, upgrade_cap, scenario.ctx());
         ts::return_shared(state);
     };
@@ -613,7 +697,7 @@ fun set_owner_ok() {
     {
         let state = scenario.take_shared<minter::State>();
         let upgrade_cap = scenario.take_from_sender<UpgradeCap>();
-        assert_eq(upgrade_cap.package(), object::id_from_address(state.package_address()));
+        assert_eq(upgrade_cap.package(), state.package_address().to_id());
         scenario.return_to_sender(upgrade_cap);
         ts::return_shared(state);
     };

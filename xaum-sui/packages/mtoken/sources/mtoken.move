@@ -23,6 +23,7 @@ const EMintBudgetNotEnough: u64 = 106;
 const ENotNewOwner: u64 = 107;
 const EUpgradeCapInvalid: u64 = 108;
 const EReqExpired: u64 = 109;
+const EUpgradeCapIdNotNone: u64 = 110;
 
 // === Constants ===
 
@@ -123,6 +124,7 @@ public struct MintReq has key {
 public struct State<phantom T> has key, store {
     id: UID,
     version: u64,
+    upgrade_cap_id: Option<ID>,
     treasury_cap: TreasuryCap<T>,
     deny_cap: DenyCapV2<T>,
     owner: address,
@@ -137,6 +139,7 @@ public struct State<phantom T> has key, store {
 /*
  Ops\Roles\Delayed       | Owner | Operator | Revoker | Delayed
 -------------------------+-------+----------+---------+---------
+init_upgrade_cap_id      |   ✓   |          |         |
 migrate                  |   ✓   |          |         |
 update_description       |   ✓   |          |         |
 update_icon_url          |   ✓   |          |         |
@@ -184,6 +187,7 @@ public fun create_coin<T: drop>(
     let state = State {
         id: object::new(ctx),
         version: VERSION,
+        upgrade_cap_id: option::none(),
         treasury_cap: treasury_cap,
         deny_cap: deny_cap,
         owner: owner,
@@ -196,6 +200,13 @@ public fun create_coin<T: drop>(
     // https://docs.sui.io/concepts/object-ownership/shared
     transfer::public_share_object(metadata);
     transfer::public_share_object(state);
+}
+
+entry fun init_upgrade_cap_id<T>(state: &mut State<T>, upgrade_cap: &UpgradeCap, ctx: &TxContext) {
+    check_owner(state, ctx);
+    assert!(state.upgrade_cap_id.is_none(), EUpgradeCapIdNotNone);
+    assert!(upgrade_cap.package().to_address() == state.package_address(), EUpgradeCapInvalid);
+    state.upgrade_cap_id = option::some(object::id(upgrade_cap));
 }
 
 entry fun migrate<T>(state: &mut State<T>, ctx: &TxContext) {
@@ -235,7 +246,7 @@ entry fun request_transfer_ownership<T>(
 ) {
     check_version(state);
     check_owner(state, ctx);
-    assert!(upgrade_cap.package().to_address() == state.package_address(), EUpgradeCapInvalid);
+    assert!(state.upgrade_cap_id.contains(&object::id(&upgrade_cap)), EUpgradeCapInvalid);
 
     let old_owner = state.owner;
     let et = get_effective_time(state, clock);
@@ -507,6 +518,10 @@ entry fun remove_from_blocked_list<T>(
 
 public fun version<T>(state: &State<T>): u64 {
     state.version
+}
+
+public fun upgrade_cap_id<T>(state: &State<T>): Option<ID> {
+    state.upgrade_cap_id
 }
 
 public fun owner<T>(state: &State<T>): address {
