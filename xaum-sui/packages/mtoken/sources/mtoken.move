@@ -8,6 +8,7 @@ use sui::address;
 use sui::clock::Clock;
 use sui::coin::{Self, TreasuryCap, DenyCapV2, Coin, CoinMetadata};
 use sui::deny_list::DenyList;
+use sui::dynamic_object_field as dof;
 use sui::event;
 use sui::package::UpgradeCap;
 use sui::url::Url;
@@ -121,12 +122,13 @@ public struct MintReq has key {
     et: u64,
 }
 
+public struct TreasuryCapKey has copy, drop, store {}
+public struct DenyCapKey has copy, drop, store {}
+
 public struct State<phantom T> has key, store {
     id: UID,
     version: u64,
     upgrade_cap_id: Option<ID>,
-    treasury_cap: TreasuryCap<T>,
-    deny_cap: DenyCapV2<T>,
     owner: address,
     operator: address,
     revoker: address,
@@ -184,18 +186,18 @@ public fun create_coin<T: drop>(
     );
 
     let owner = ctx.sender();
-    let state = State {
+    let mut state = State<T> {
         id: object::new(ctx),
         version: VERSION,
         upgrade_cap_id: option::none(),
-        treasury_cap: treasury_cap,
-        deny_cap: deny_cap,
         owner: owner,
         operator: owner,
         revoker: owner,
         delay: init_delay,
         mint_budget: 0,
     };
+    dof::add(&mut state.id, TreasuryCapKey {}, treasury_cap);
+    dof::add(&mut state.id, DenyCapKey {}, deny_cap);
 
     // https://docs.sui.io/concepts/object-ownership/shared
     transfer::public_share_object(metadata);
@@ -223,7 +225,7 @@ entry fun update_description<T>(
 ) {
     check_version(state);
     check_owner(state, ctx);
-    coin::update_description(&state.treasury_cap, metadata, new_description);
+    coin::update_description(state.borrow_treasury_cap(), metadata, new_description);
 }
 
 entry fun update_icon_url<T>(
@@ -234,7 +236,7 @@ entry fun update_icon_url<T>(
 ) {
     check_version(state);
     check_owner(state, ctx);
-    coin::update_icon_url(&state.treasury_cap, metadata, new_url);
+    coin::update_icon_url(state.borrow_treasury_cap(), metadata, new_url);
 }
 
 entry fun request_transfer_ownership<T>(
@@ -464,7 +466,7 @@ entry fun execute_mint_to<T>(
     assert!(state.mint_budget >= amount, EMintBudgetNotEnough);
     state.mint_budget = state.mint_budget - amount;
 
-    let minted_coin = coin::mint<T>(&mut state.treasury_cap, amount, ctx);
+    let minted_coin = coin::mint<T>(state.borrow_treasury_cap_mut(), amount, ctx);
     transfer::public_transfer(minted_coin, recipient);
     id.delete();
     event::emit(MintEvent { to_address: recipient, amount, et: 0, req_id });
@@ -483,7 +485,7 @@ entry fun redeem<T>(state: &mut State<T>, to_be_burnt: Coin<T>, ctx: &TxContext)
     check_operator(state, ctx);
     let from_address = ctx.sender();
     let amount = to_be_burnt.balance().value();
-    coin::burn<T>(&mut state.treasury_cap, to_be_burnt);
+    coin::burn<T>(state.borrow_treasury_cap_mut(), to_be_burnt);
     state.mint_budget = state.mint_budget + amount;
     event::emit(RedeemEvent { from_address, amount });
 }
@@ -497,7 +499,7 @@ entry fun add_to_blocked_list<T>(
 ) {
     check_version(state);
     check_operator(state, ctx);
-    coin::deny_list_v2_add(deny_list, &mut state.deny_cap, user_address, ctx);
+    coin::deny_list_v2_add(deny_list, state.borrow_deny_cap_mut(), user_address, ctx);
     event::emit(BlockEvent { user_address });
 }
 
@@ -510,7 +512,7 @@ entry fun remove_from_blocked_list<T>(
 ) {
     check_version(state);
     check_operator(state, ctx);
-    coin::deny_list_v2_remove(deny_list, &mut state.deny_cap, user_address, ctx);
+    coin::deny_list_v2_remove(deny_list, state.borrow_deny_cap_mut(), user_address, ctx);
     event::emit(UnblockEvent { user_address });
 }
 
@@ -549,7 +551,7 @@ public fun package_address<T>(_state: &State<T>): address {
 }
 
 public fun total_supply<T>(state: &State<T>): u64 {
-    coin::total_supply<T>(&state.treasury_cap)
+    coin::total_supply<T>(state.borrow_treasury_cap())
 }
 
 // === Private Functions ===
@@ -580,6 +582,18 @@ fun check_operator<T>(state: &State<T>, ctx: &TxContext) {
 
 fun check_revoker<T>(state: &State<T>, ctx: &TxContext) {
     assert!(ctx.sender() == state.revoker, ENotRevoker);
+}
+
+fun borrow_treasury_cap<T>(state: &State<T>): &TreasuryCap<T> {
+    dof::borrow(&state.id, TreasuryCapKey {})
+}
+
+fun borrow_treasury_cap_mut<T>(state: &mut State<T>): &mut TreasuryCap<T> {
+    dof::borrow_mut(&mut state.id, TreasuryCapKey {})
+}
+
+fun borrow_deny_cap_mut<T>(state: &mut State<T>): &mut DenyCapV2<T> {
+    dof::borrow_mut(&mut state.id, DenyCapKey {})
 }
 
 // === Test Functions ===

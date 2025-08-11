@@ -3,11 +3,10 @@ module xaum::xaum;
 use mtoken::mtoken;
 use sui::url;
 
-// TODO: fix me
 const DECIMALS: u8 = 9;
 const SYMBOL: vector<u8> = b"XAUM";
 const NAME: vector<u8> = b"Matrixdock Gold";
-const DESCRIPTION: vector<u8> = b"Matrixdock Gold"; // TODO
+const DESCRIPTION: vector<u8> = b"Matrixdock Gold (XAUm) is a standardized token deployed on multiple chains, with a 1:1 peg to 1 troy oz. fine weight of high grade LBMA gold. The total supply of XAUm will always be equal to the amount of underlying assets stored in highly secured and reputable vaults.";
 const ICON_URL: vector<u8> = b"https://app.matrixdock.com/images/xaum/xaum-64x64-icon.png";
 const ALLOW_GLOBAL_PAUSE: bool = true;
 const INIT_DELAY: u64 = 0;
