@@ -20,7 +20,7 @@ version = "0.1.0"
 # Override = { local = "../conflicting/version", override = true }
 
 [addresses]
-mtoken = "0x"
+mtoken = "0xfcc3a7785cee55c4e9e7a34efc865cd3dd3671544c914c756d56c27b9792413a"
 
 # Named addresses will be accessible in Move as `@name`. They're also exported:
 # for example, `std = "0x1"` is exported by the Standard Library.
