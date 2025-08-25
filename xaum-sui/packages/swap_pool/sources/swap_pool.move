@@ -10,7 +10,6 @@ use pyth::price_identifier;
 use pyth::price_info::{Self, PriceInfoObject};
 use pyth::pyth;
 use std::type_name::{Self, TypeName};
-use std::u64;
 use sui::address;
 use sui::bag;
 use sui::balance::{Self, Balance};
@@ -47,8 +46,8 @@ const ORACLE_PRICE_MAX_AGE: u64 = 60;
 const TWAP_INTERVAL: u64 = 7200;
 const XAUM_DECIMAL: u8 = 9;
 const USDC_DECIMAL: u8 = 6;
-const MMT_PRICE_DECIMAL: u8 = 192;
-
+const MMT_PRICE_DECIMAL: u8 = 64 + 64; // mmt sqrt price is q64.
+const PYTH_XAUM_USD_PRICE_ID: vector<u8> = x"d7db067954e28f51a96fd50c6d51775094025ced2d60af61ec9803e553471c88";
 // === Events ===
 
 public struct TransferOwnership has copy, drop {
@@ -161,10 +160,10 @@ fun init(ctx: &mut TxContext) {
         operator: owner,
         coin_holder: owner,
         xaum: option::none(),
-        xaum_price_oracle_feed_id: option::none(),
+        xaum_price_oracle_feed_id: option::some(PYTH_XAUM_USD_PRICE_ID),
         dex_pool: option::none(),
-        price_factor_weekday: PRICE_FACTOR_BASE,
-        price_factor_weekend: PRICE_FACTOR_BASE,
+        price_factor_weekday: 0,
+        price_factor_weekend: 0,
         weekday_start_time: 0,
         weekday_duration: 0,
         price_deviation_ratio: 0,
@@ -403,7 +402,7 @@ public fun swap<InCoinType, XAUM, PairTokenType>(
         let dex_price =
             get_twap_price_from_dex<XAUM, PairTokenType>(
                 oracle_dex_pool,
-                oracle_price_decimal as u8,
+                oracle_price_decimal,
                 clock,
             ) as u64;
         assert!(
@@ -415,8 +414,9 @@ public fun swap<InCoinType, XAUM, PairTokenType>(
             EOraclePriceTooHigh,
         );
     };
+    let price_adjusted = price_adjust(state, price, clock);
     let amount_out =
-        amount_in * u64::pow(10, (XAUM_DECIMAL + (oracle_price_decimal as u8) - coin_in_decimal)) / price;
+        amount_in * 10u64.pow(XAUM_DECIMAL + oracle_price_decimal - coin_in_decimal) / price_adjusted;
     assert!(amount_out <= get_balance_amount<XAUM>(state), EInvalidAmountOut);
     let coin_out = coin::take(get_balance_mut<XAUM>(&mut state.balances), amount_out, ctx);
     event::emit(Swap { sender: ctx.sender(), coin_in: coin_in_tn, amount_in, amount_out });
@@ -425,61 +425,76 @@ public fun swap<InCoinType, XAUM, PairTokenType>(
 
 // === View Functions ===
 
-public fun get_twap_price_from_dex<X, Y>(
-    pool: &Pool<X, Y>,
+public fun get_twap_price_from_dex<XAUM, Y>(
+    pool: &Pool<XAUM, Y>,
     pyth_oracle_price_decimal: u8,
     clock: &Clock,
 ): u256 {
-    let mut seconds_ago = vector::empty<u64>();
-    seconds_ago.push_back(TWAP_INTERVAL);
-    seconds_ago.push_back(0); // current time
-    let (mut tick_cumulative, _cumulative_liquidity) = pool::observe(pool, seconds_ago, clock);
+    let seconds_ago = vector[TWAP_INTERVAL, 0];
+    let (tick_cumulative, _cumulative_liquidity) = pool::observe(pool, seconds_ago, clock);
     assert!(vector::length(&tick_cumulative) == 2, EInvalidTickCumulativeLength);
+    // (tick_cumulative[1] - tick_cumulative[0]) / TWAP_INTERVAL
     let tick_avg = i64::div(
-        i64::sub(vector::pop_back(&mut tick_cumulative), vector::pop_back(&mut tick_cumulative)),
+        i64::sub(tick_cumulative[1], tick_cumulative[0]),
         i64::from(TWAP_INTERVAL),
     );
-    let tick_ave_i32 = if (mmt_v3::i64::is_neg(tick_avg)) {
+    let tick_avg_i32 = if (mmt_v3::i64::is_neg(tick_avg)) {
         i32::neg_from(i64::abs_u64(tick_avg) as u32)
     } else {
         i32::from(i64::abs_u64(tick_avg) as u32)
     };
-    let sqrt_price_x96 = tick_math::get_sqrt_price_at_tick(tick_ave_i32);
-    // token0 is xaum. todo: check if token0 is xaum.
-    10u256.pow(XAUM_DECIMAL - USDC_DECIMAL + pyth_oracle_price_decimal) * (sqrt_price_x96 as u256) * (sqrt_price_x96 as u256) / (1u256 << MMT_PRICE_DECIMAL)
+    let sqrt_price_x96 = tick_math::get_sqrt_price_at_tick(tick_avg_i32);
+    // token0 is xaum.
+    let price = (sqrt_price_x96 as u256) * (sqrt_price_x96 as u256);
+    10u256.pow(XAUM_DECIMAL - USDC_DECIMAL + pyth_oracle_price_decimal) * price / (1u256 << MMT_PRICE_DECIMAL)
 }
 
+// https://docs.pyth.network/price-feeds/use-real-time-data/sui#write-contract-code
 public fun get_price_from_oracle(
     state: &State,
     price_info_object: &PriceInfoObject,
     clock: &Clock,
-): (u64, u64) {
+): (u64, u8) {
+    // Make sure the price is not older than max_age seconds
     let price_struct = pyth::get_price_no_older_than(
         price_info_object,
         clock,
         ORACLE_PRICE_MAX_AGE,
     );
+
+    // Check the price feed ID
     let price_info = price_info::get_price_info_from_price_info_object(price_info_object);
     let price_id = price_identifier::get_bytes(&price_info::get_price_identifier(&price_info));
     assert!(state.xaum_price_oracle_feed_id.contains(&price_id), EInvalidOraclePriceId);
 
+    // Extract the price, decimal, and timestamp from the price struct and use them.
     let decimal_i64 = price::get_expo(&price_struct);
-    let decimal_u64 = i64_pyth::get_magnitude_if_negative(&decimal_i64);
     let price_i64 = price::get_price(&price_struct);
-    let price_u64 = i64_pyth::get_magnitude_if_positive(&price_i64);
 
-    let (price, decimal) = if (in_weekday(state, clock)) {
-        (
-            price_u64 * (state.price_factor_weekday + PRICE_FACTOR_BASE) / PRICE_FACTOR_BASE,
-            decimal_u64,
-        )
-    } else {
-        (
-            price_u64 * (state.price_factor_weekend + PRICE_FACTOR_BASE) / PRICE_FACTOR_BASE,
-            decimal_u64,
-        )
-    };
-    (price, decimal)
+    let decimal_u8 = i64_pyth::get_magnitude_if_negative(&decimal_i64) as u8;
+    let price_u64 = i64_pyth::get_magnitude_if_positive(&price_i64);
+    (price_u64, decimal_u8)
+}
+
+public fun get_price(state: &State, price_info_object: &PriceInfoObject, clock: &Clock): (u64, u8) {
+    let (price_u64, decimal_u8) = get_price_from_oracle(state, price_info_object, clock);
+    let price = price_adjust(state, price_u64, clock);
+    (price, decimal_u8)
+}
+
+public fun get_amount_out<InCoinType, XAUM>(
+    state: &State,
+    amount_in: u64,
+    price_info_object: &PriceInfoObject,
+    clock: &Clock,
+): u64 {
+    check_version(state);
+    let (_coin_in_tn, coin_in_decimal) = check_coin<InCoinType>(state);
+    let (price, oracle_price_decimal) = get_price(state, price_info_object, clock);
+    let amount_out =
+        amount_in * 10u64.pow(XAUM_DECIMAL + oracle_price_decimal - coin_in_decimal) / price;
+    assert!(amount_out <= get_balance_amount<XAUM>(state), EInvalidAmountOut);
+    amount_out
 }
 
 public fun get_balance_amount<T>(state: &State): u64 {
@@ -499,6 +514,15 @@ public fun package_address(_state: &State): address {
 fun in_weekday(state: &State, clock: &Clock): bool {
     let timestamp = clock.timestamp_ms() / 1000;
     (timestamp - state.weekday_start_time) % ONE_WEEK_SECOND < state.weekday_duration
+}
+
+fun price_adjust(state: &State, price: u64, clock: &Clock): u64 {
+    let price_adjusted = if (in_weekday(state, clock)) {
+        price * (state.price_factor_weekday + PRICE_FACTOR_BASE) / PRICE_FACTOR_BASE
+    } else {
+        price * (state.price_factor_weekend + PRICE_FACTOR_BASE) / PRICE_FACTOR_BASE
+    };
+    price_adjusted
 }
 
 fun merge_coin_into_balances<T>(state: &mut State, coin: Coin<T>) {
@@ -543,6 +567,11 @@ public(package) fun init_for_testing(ctx: &mut TxContext) {
 }
 
 #[test_only]
+public fun upgrade_cap_id(state: &State): Option<ID> {
+    state.upgrade_cap_id
+}
+
+#[test_only]
 public fun operator(state: &State): address {
     state.operator
 }
@@ -570,4 +599,39 @@ public fun xaum_price_oracle_feed_id(state: &State): Option<vector<u8>> {
 #[test_only]
 public fun dex_pool(state: &State): Option<ID> {
     state.dex_pool
+}
+
+#[test_only]
+public fun price_factor_weekday(state: &State): u64 {
+    state.price_factor_weekday
+}
+
+#[test_only]
+public fun price_factor_weekend(state: &State): u64 {
+    state.price_factor_weekend
+}
+
+#[test_only]
+public fun weekday_start_time(state: &State): u64 {
+    state.weekday_start_time
+}
+
+#[test_only]
+public fun weekday_duration(state: &State): u64 {
+    state.weekday_duration
+}
+
+#[test_only]
+public fun price_deviation_ratio(state: &State): u64 {
+    state.price_deviation_ratio
+}
+
+#[test_only]
+public fun price_check(state: &State): bool {
+    state.price_check
+}
+
+#[test_only]
+public fun is_cap_in_user_whitelist(state: &State, cap: &SwapCap): bool {
+    state.user_whitelist.contains(object::id(cap))
 }
