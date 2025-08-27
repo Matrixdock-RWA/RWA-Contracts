@@ -47,7 +47,8 @@ const TWAP_INTERVAL: u64 = 7200;
 const XAUM_DECIMAL: u8 = 9;
 const USDC_DECIMAL: u8 = 6;
 const MMT_PRICE_DECIMAL: u8 = 64 + 64; // mmt sqrt price is q64.
-const PYTH_XAUM_USD_PRICE_ID: vector<u8> = x"d7db067954e28f51a96fd50c6d51775094025ced2d60af61ec9803e553471c88";
+const PYTH_XAUM_USD_PRICE_ID: vector<u8> =
+    x"d7db067954e28f51a96fd50c6d51775094025ced2d60af61ec9803e553471c88";
 // === Events ===
 
 public struct TransferOwnership has copy, drop {
@@ -385,42 +386,21 @@ public fun swap<InCoinType, XAUM, PairTokenType>(
     clock: &Clock,
     ctx: &mut TxContext,
 ): Coin<XAUM> {
-    check_version(state);
-    let coin_out_tn = type_name::get<XAUM>();
-    assert!(state.xaum.contains(&coin_out_tn), EInvalidCoinOutType);
-    assert!(state.user_whitelist.contains(object::id(user_cap)), EUserNotInWhitelist);
-    let (coin_in_tn, coin_in_decimal) = check_coin<InCoinType>(state);
-    let balance = coin_in.value();
-    assert!(balance >= amount_in && amount_in > 0, EInvalidAmountIn);
-
-    let coin_received = coin::split<InCoinType>(coin_in, amount_in, ctx);
-    merge_coin_into_balances(state, coin_received);
-
-    let (price, oracle_price_decimal) = get_price_from_oracle(state, price_info_object, clock);
-    if (state.price_check) {
-        assert!(state.dex_pool.contains(&object::id(oracle_dex_pool)), EInvalidDexPool);
-        let dex_price =
-            get_twap_price_from_dex<XAUM, PairTokenType>(
-                oracle_dex_pool,
-                oracle_price_decimal,
-                clock,
-            ) as u64;
-        assert!(
-            dex_price * (PRICE_FACTOR_BASE - state.price_deviation_ratio) / PRICE_FACTOR_BASE <= price,
-            EOraclePriceTooLow,
-        );
-        assert!(
-            dex_price * (PRICE_FACTOR_BASE + state.price_deviation_ratio) / PRICE_FACTOR_BASE >= price,
-            EOraclePriceTooHigh,
-        );
-    };
-    let price_adjusted = price_adjust(state, price, clock);
-    let amount_out =
-        amount_in * 10u64.pow(XAUM_DECIMAL + oracle_price_decimal - coin_in_decimal) / price_adjusted;
-    assert!(amount_out <= get_balance_amount<XAUM>(state), EInvalidAmountOut);
-    let coin_out = coin::take(get_balance_mut<XAUM>(&mut state.balances), amount_out, ctx);
-    event::emit(Swap { sender: ctx.sender(), coin_in: coin_in_tn, amount_in, amount_out });
-    coin_out
+    let (price_adjusted, price_decimal) = get_swap_price<XAUM, PairTokenType>(
+        state,
+        price_info_object,
+        oracle_dex_pool,
+        clock,
+    );
+    swap_at_price<InCoinType, XAUM>(
+        state,
+        user_cap,
+        coin_in,
+        amount_in,
+        price_adjusted,
+        price_decimal,
+        ctx,
+    )
 }
 
 // === View Functions ===
@@ -510,6 +490,62 @@ public fun package_address(_state: &State): address {
 }
 
 // === Private Functions ===
+
+fun swap_at_price<InCoinType, XAUM>(
+    state: &mut State,
+    user_cap: &SwapCap,
+    coin_in: &mut Coin<InCoinType>,
+    amount_in: u64,
+    price_adjusted: u64,
+    price_decimal: u8,
+    ctx: &mut TxContext,
+): Coin<XAUM> {
+    check_version(state);
+    let coin_out_tn = type_name::get<XAUM>();
+    assert!(state.xaum.contains(&coin_out_tn), EInvalidCoinOutType);
+    assert!(state.user_whitelist.contains(object::id(user_cap)), EUserNotInWhitelist);
+    let (coin_in_tn, coin_in_decimal) = check_coin<InCoinType>(state);
+    let balance = coin_in.value();
+    assert!(balance >= amount_in && amount_in > 0, EInvalidAmountIn);
+
+    let coin_received = coin::split<InCoinType>(coin_in, amount_in, ctx);
+    merge_coin_into_balances(state, coin_received);
+
+    let amount_out =
+        amount_in * 10u64.pow(XAUM_DECIMAL + price_decimal - coin_in_decimal) / price_adjusted;
+    assert!(amount_out <= get_balance_amount<XAUM>(state), EInvalidAmountOut);
+    let coin_out = coin::take(get_balance_mut<XAUM>(&mut state.balances), amount_out, ctx);
+    event::emit(Swap { sender: ctx.sender(), coin_in: coin_in_tn, amount_in, amount_out });
+    coin_out
+}
+
+fun get_swap_price<XAUM, PairTokenType>(
+    state: &State,
+    price_info_object: &PriceInfoObject,
+    oracle_dex_pool: &Pool<XAUM, PairTokenType>,
+    clock: &Clock,
+): (u64, u8) {
+    let (price, oracle_price_decimal) = get_price_from_oracle(state, price_info_object, clock);
+    if (state.price_check) {
+        assert!(state.dex_pool.contains(&object::id(oracle_dex_pool)), EInvalidDexPool);
+        let dex_price =
+            get_twap_price_from_dex<XAUM, PairTokenType>(
+                oracle_dex_pool,
+                oracle_price_decimal,
+                clock,
+            ) as u64;
+        assert!(
+            dex_price * (PRICE_FACTOR_BASE - state.price_deviation_ratio) / PRICE_FACTOR_BASE <= price,
+            EOraclePriceTooLow,
+        );
+        assert!(
+            dex_price * (PRICE_FACTOR_BASE + state.price_deviation_ratio) / PRICE_FACTOR_BASE >= price,
+            EOraclePriceTooHigh,
+        );
+    };
+    let price_adjusted = price_adjust(state, price, clock);
+    (price_adjusted, oracle_price_decimal)
+}
 
 fun in_weekday(state: &State, clock: &Clock): bool {
     let timestamp = clock.timestamp_ms() / 1000;
@@ -634,4 +670,25 @@ public fun price_check(state: &State): bool {
 #[test_only]
 public fun is_cap_in_user_whitelist(state: &State, cap: &SwapCap): bool {
     state.user_whitelist.contains(object::id(cap))
+}
+
+#[test_only]
+public fun swap_at_price_for_testing<InCoinType, XAUM>(
+    state: &mut State,
+    user_cap: &SwapCap,
+    coin_in: &mut Coin<InCoinType>,
+    amount_in: u64,
+    price_adjusted: u64,
+    price_decimal: u8,
+    ctx: &mut TxContext,
+): Coin<XAUM> {
+    swap_at_price<InCoinType, XAUM>(
+        state,
+        user_cap,
+        coin_in,
+        amount_in,
+        price_adjusted,
+        price_decimal,
+        ctx,
+    )
 }

@@ -2,6 +2,7 @@
 module swap_pool::swap_pool_tests;
 
 use std::type_name;
+use sui::coin;
 use sui::package::{test_publish, UpgradeCap};
 use sui::test_scenario;
 use sui::test_utils::assert_eq;
@@ -440,3 +441,222 @@ fun withdraw_err_not_operator() {
 
 #[test]
 fun withdraw_ok() {}
+
+#[test, expected_failure(abort_code = swap_pool::EInvalidCoinOutType)]
+fun swap_err_invalid_coin_out() {
+    let mut scenario = init_swap_pool();
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<State>();
+        swap_pool::add_user_whitelist(&mut state, OWNER, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<State>();
+        let swap_cap = scenario.take_from_sender<SwapCap>();
+        let mut coin_in = coin::zero<USDC>(scenario.ctx());
+        let _coin_out = swap_pool::swap_at_price_for_testing<USDC, XAUM>(
+            &mut state,
+            &swap_cap,
+            &mut coin_in,
+            100,
+            123,
+            9u8,
+            scenario.ctx(),
+        );
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = swap_pool::EUserNotInWhitelist)]
+fun swap_err_invalid_swap_cap() {
+    let mut scenario = init_swap_pool();
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<State>();
+        swap_pool::set_xaum<XAUM>(&mut state, scenario.ctx());
+        swap_pool::add_user_whitelist(&mut state, OWNER, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<State>();
+        let swap_cap = scenario.take_from_sender<SwapCap>();
+        swap_pool::update_user_whitelist(&mut state, object::id(&swap_cap), false, scenario.ctx());
+        scenario.return_to_sender(swap_cap);
+        test_scenario::return_shared(state);
+    };
+
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<State>();
+        let swap_cap = scenario.take_from_sender<SwapCap>();
+        let mut coin_in = coin::zero<USDC>(scenario.ctx());
+        let _coin_out = swap_pool::swap_at_price_for_testing<USDC, XAUM>(
+            &mut state,
+            &swap_cap,
+            &mut coin_in,
+            100,
+            123,
+            9u8,
+            scenario.ctx(),
+        );
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = swap_pool::ECoinNotInWhitelist)]
+fun swap_err_invalid_coin_in() {
+    let mut scenario = init_swap_pool();
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<State>();
+        swap_pool::set_xaum<XAUM>(&mut state, scenario.ctx());
+        swap_pool::add_user_whitelist(&mut state, ALICE, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+
+    scenario.next_tx(ALICE);
+    {
+        let mut state = scenario.take_shared<State>();
+        let swap_cap = scenario.take_from_sender<SwapCap>();
+        let mut coin_in = coin::zero<USDC>(scenario.ctx());
+        let _coin_out = swap_pool::swap_at_price_for_testing<USDC, XAUM>(
+            &mut state,
+            &swap_cap,
+            &mut coin_in,
+            100,
+            123,
+            9u8,
+            scenario.ctx(),
+        );
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = swap_pool::EInvalidAmountIn)]
+fun swap_err_invalid_amt_in() {
+    let mut scenario = init_swap_pool();
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<State>();
+        swap_pool::set_xaum<XAUM>(&mut state, scenario.ctx());
+        swap_pool::add_user_whitelist(&mut state, ALICE, scenario.ctx());
+        swap_pool::set_coin_whitelist<USDC>(&mut state, true, 6u8, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+
+    scenario.next_tx(ALICE);
+    {
+        let mut state = scenario.take_shared<State>();
+        let swap_cap = scenario.take_from_sender<SwapCap>();
+        let mut coin_in = coin::mint_for_testing<USDC>(100, scenario.ctx());
+        let _coin_out = swap_pool::swap_at_price_for_testing<USDC, XAUM>(
+            &mut state,
+            &swap_cap,
+            &mut coin_in,
+            101,
+            123,
+            9u8,
+            scenario.ctx(),
+        );
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = swap_pool::EInvalidAmountOut)]
+fun swap_err_not_enough_xaum() {
+    let mut scenario = init_swap_pool();
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<State>();
+        swap_pool::set_xaum<XAUM>(&mut state, scenario.ctx());
+        swap_pool::add_user_whitelist(&mut state, ALICE, scenario.ctx());
+        swap_pool::set_coin_whitelist<USDC>(&mut state, true, 6u8, scenario.ctx());
+
+        let xaum = coin::mint_for_testing<XAUM>(100, scenario.ctx());
+        transfer::public_transfer(xaum, object::id(&state).to_address());
+        test_scenario::return_shared(state);
+    };
+
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<State>();
+        let xaum_receiver = test_scenario::most_recent_receiving_ticket<sui::coin::Coin<XAUM>>(
+            &object::id(&state),
+        );
+        swap_pool::accept_payment<XAUM>(&mut state, xaum_receiver, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+
+    scenario.next_tx(ALICE);
+    {
+        let mut state = scenario.take_shared<State>();
+        let swap_cap = scenario.take_from_sender<SwapCap>();
+        let mut coin_in = coin::mint_for_testing<USDC>(200, scenario.ctx());
+        let _coin_out = swap_pool::swap_at_price_for_testing<USDC, XAUM>(
+            &mut state,
+            &swap_cap,
+            &mut coin_in,
+            150,
+            100,
+            6u8,
+            scenario.ctx(),
+        );
+    };
+    abort
+}
+
+#[test]
+fun swap_ok() {
+    let mut scenario = init_swap_pool();
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<State>();
+        swap_pool::set_xaum<XAUM>(&mut state, scenario.ctx());
+        swap_pool::add_user_whitelist(&mut state, ALICE, scenario.ctx());
+        swap_pool::set_coin_whitelist<USDC>(&mut state, true, 6u8, scenario.ctx());
+
+        // deposit 10 XAUm
+        let xaum = coin::mint_for_testing<XAUM>(10_000_000_000, scenario.ctx());
+        transfer::public_transfer(xaum, object::id(&state).to_address());
+        test_scenario::return_shared(state);
+    };
+
+    scenario.next_tx(OWNER);
+    {
+        let mut state = scenario.take_shared<State>();
+        let xaum_receiver = test_scenario::most_recent_receiving_ticket<sui::coin::Coin<XAUM>>(
+            &object::id(&state),
+        );
+        swap_pool::accept_payment<XAUM>(&mut state, xaum_receiver, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+
+    scenario.next_tx(ALICE);
+    {
+        let mut state = scenario.take_shared<State>();
+        let swap_cap = scenario.take_from_sender<SwapCap>();
+        let mut coin_in = coin::mint_for_testing<USDC>(8000_000_000, scenario.ctx()); // 8000 USDC
+        let coin_out = swap_pool::swap_at_price_for_testing<USDC, XAUM>(
+            &mut state,
+            &swap_cap,
+            &mut coin_in,
+            6000_000_000, // 6000 USDC
+            3000_000_000, // 3000 USDC/XAUm
+            6u8,
+            scenario.ctx(),
+        );
+        assert_eq(coin_in.value(), 2000_000_000); // 2000 USDC left
+        assert_eq(coin_out.value(), 2_000_000_000); // 2 XAUm got
+        transfer::public_transfer(coin_in, ALICE);
+        transfer::public_transfer(coin_out, ALICE);
+        scenario.return_to_sender(swap_cap);
+        test_scenario::return_shared(state);
+    };
+
+    scenario.end();
+}
