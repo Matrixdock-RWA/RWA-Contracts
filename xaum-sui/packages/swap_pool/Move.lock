@@ -2,7 +2,7 @@
 
 [move]
 version = 3
-manifest_digest = "6EAC3D4BEFD8704FB5EF9ACC06BC09487FE0AB0275999A35F65E23955665A22F"
+manifest_digest = "100A2873894275565A28C6A7E2AE3054C78E21DD626E0FF756E6F2E76589E548"
 deps_digest = "52B406A7A21811BEF51751CF88DA0E76DAEFFEAC888D4F4060B1A72BBE7D8D35"
 dependencies = [
   { id = "Bridge", name = "Bridge" },
@@ -29,7 +29,7 @@ source = { git = "https://github.com/MystenLabs/sui.git", rev = "af5297b292c3", 
 
 [[move.package]]
 id = "Pyth"
-source = { git = "https://github.com/pyth-network/pyth-crosschain.git", rev = "sui-contract-mainnet", subdir = "target_chains/sui/contracts" }
+source = { git = "https://github.com/pyth-network/pyth-crosschain.git", rev = "3bd1262dcba9518a6901aa6a15f04072799bfb37", subdir = "target_chains/sui/contracts" }
 
 dependencies = [
   { id = "Sui", name = "Sui" },
@@ -78,6 +78,7 @@ flavor = "sui"
 
 [env.mainnet]
 chain-id = "35834a8a"
-original-published-id = "0xb0af46a60fdf9d291c88e01f0c34c6817bc3449fbf0fd76f7be537b72ed5788d"
-latest-published-id = "0xb0af46a60fdf9d291c88e01f0c34c6817bc3449fbf0fd76f7be537b72ed5788d"
+original-published-id = "0xac8c9214002aaffa967706f4740306119faeeca9e6f614c002c2803f9712c57a"
+latest-published-id = "0xac8c9214002aaffa967706f4740306119faeeca9e6f614c002c2803f9712c57a"
 published-version = "1"
+

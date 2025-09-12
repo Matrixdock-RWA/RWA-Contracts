@@ -2,6 +2,7 @@
 module swap_pool::swap_pool_tests;
 
 use std::type_name;
+use sui::clock;
 use sui::coin;
 use sui::package::{test_publish, UpgradeCap};
 use sui::test_scenario;
@@ -325,10 +326,11 @@ fun set_price_factor_ok() {
 #[test, expected_failure(abort_code = swap_pool::ENotOwner)]
 fun set_weekday_param_err_not_owner() {
     let mut scenario = init_swap_pool();
+    let _clock = clock::create_for_testing(scenario.ctx());
     scenario.next_tx(ALICE);
     {
         let mut state = scenario.take_shared<State>();
-        swap_pool::set_weekday_param(&mut state, 123, 456, scenario.ctx());
+        swap_pool::set_weekday_param(&mut state, 123, 456, &_clock, scenario.ctx());
     };
     abort
 }
@@ -336,14 +338,17 @@ fun set_weekday_param_err_not_owner() {
 #[test]
 fun set_weekday_param_ok() {
     let mut scenario = init_swap_pool();
+    let mut _clock = clock::create_for_testing(scenario.ctx());
+    _clock.increment_for_testing(1000000);
     scenario.next_tx(OWNER);
     {
         let mut state = scenario.take_shared<State>();
-        swap_pool::set_weekday_param(&mut state, 123, 456, scenario.ctx());
+        swap_pool::set_weekday_param(&mut state, 123, 456, &_clock, scenario.ctx());
         assert_eq(state.weekday_start_time(), 123);
         assert_eq(state.weekday_duration(), 456);
         test_scenario::return_shared(state);
     };
+    clock::destroy_for_testing(_clock);
     scenario.end();
 }
 

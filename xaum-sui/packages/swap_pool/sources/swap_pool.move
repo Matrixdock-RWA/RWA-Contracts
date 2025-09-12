@@ -10,6 +10,7 @@ use pyth::price_identifier;
 use pyth::price_info::{Self, PriceInfoObject};
 use pyth::pyth;
 use std::type_name::{Self, TypeName};
+use std::u64;
 use sui::address;
 use sui::bag;
 use sui::balance::{Self, Balance};
@@ -37,12 +38,21 @@ const EUserNotInWhitelist: u64 = 112;
 const EInvalidTickCumulativeLength: u64 = 113;
 const EInvalidDexPool: u64 = 114;
 const EInvalidOraclePriceId: u64 = 115;
+const EInvalidPriceDeviationRatio: u64 = 116;
+const EInvalidOraclePrice: u64 = 117;
+const EInvalidDecimalConfiguration: u64 = 118;
+const EInvalidOraclePriceDecimal: u64 = 119;
+const EInvalidPriceFactor: u64 = 120;
+const EInvalidWeekdayStartTime: u64 = 121;
+const EAmountOutTooLarge: u64 = 122;
 
 // === Constants ===
 const VERSION: u64 = 1;
 const PRICE_FACTOR_BASE: u64 = 10000;
+const PYTH_XAUM_USD_PRICE_DECIMAL: u8 = 8;
+const MAX_ORACLE_PRICE_ALLOWED: u64 = 184467440737095; // set to u64::MAX / 100_000 to prevent overflow when price from pyth multiply (priceFactor + PRICE_FACTOR_BASE), which is max 200_000.
 const ONE_WEEK_SECOND: u64 = 7 * 24 * 3600;
-const ORACLE_PRICE_MAX_AGE: u64 = 60;
+const ORACLE_PRICE_MAX_AGE: u64 = 90;
 const TWAP_INTERVAL: u64 = 7200;
 const XAUM_DECIMAL: u8 = 9;
 const USDC_DECIMAL: u8 = 6;
@@ -229,6 +239,7 @@ entry fun set_xaum<T>(state: &mut State, ctx: &TxContext) {
 entry fun set_coin_whitelist<T>(state: &mut State, accepted: bool, decimal: u8, ctx: &TxContext) {
     check_version(state);
     check_owner(state, ctx);
+    assert!(decimal <= XAUM_DECIMAL + PYTH_XAUM_USD_PRICE_DECIMAL, EInvalidDecimalConfiguration); // prevent underflow
     let coin = type_name::get<T>();
     if (state.coin_whitelist.contains(coin)) {
         if (!accepted) {
@@ -266,6 +277,7 @@ entry fun set_dex_pool(state: &mut State, new_dex_pool: ID, ctx: &TxContext) {
 entry fun set_price_factor(state: &mut State, weekday: u64, weekend: u64, ctx: &TxContext) {
     check_version(state);
     check_owner(state, ctx);
+    assert!(weekday <= PRICE_FACTOR_BASE && weekend <= PRICE_FACTOR_BASE, EInvalidPriceFactor);
     state.price_factor_weekday = weekday;
     state.price_factor_weekend = weekend;
     event::emit(SetPriceFactor { weekday, weekend });
@@ -275,10 +287,13 @@ entry fun set_weekday_param(
     state: &mut State,
     weekday_start_time: u64,
     weekday_duration: u64,
+    clock: &Clock,
     ctx: &TxContext,
 ) {
     check_version(state);
     check_owner(state, ctx);
+    let timestamp = clock.timestamp_ms() / 1000;
+    assert!(weekday_start_time <= timestamp, EInvalidWeekdayStartTime);
     state.weekday_start_time = weekday_start_time;
     state.weekday_duration = weekday_duration;
     event::emit(SetWeekdayParam { weekday_start_time, weekday_duration });
@@ -291,6 +306,7 @@ entry fun set_price_deviation_ratio(
 ) {
     check_version(state);
     check_owner(state, ctx);
+    assert!(new_price_deviation_ratio < PRICE_FACTOR_BASE, EInvalidPriceDeviationRatio);
     let old_price_deviation_ratio = state.price_deviation_ratio;
     state.price_deviation_ratio = new_price_deviation_ratio;
     event::emit(SetPriceDeviationRatio { old_price_deviation_ratio, new_price_deviation_ratio });
@@ -451,9 +467,12 @@ public fun get_price_from_oracle(
     let decimal_i64 = price::get_expo(&price_struct);
     let price_i64 = price::get_price(&price_struct);
 
-    let decimal_u8 = i64_pyth::get_magnitude_if_negative(&decimal_i64) as u8;
+    // xaum-usd price from pyth should be positive and decimal should be negative and decimal always 8.
+    let decimal_u64 = i64_pyth::get_magnitude_if_negative(&decimal_i64);
+    assert!(decimal_u64 == PYTH_XAUM_USD_PRICE_DECIMAL as u64, EInvalidOraclePriceDecimal); // ensure oracle price decimal is as expected
     let price_u64 = i64_pyth::get_magnitude_if_positive(&price_i64);
-    (price_u64, decimal_u8)
+    assert!(price_u64 < MAX_ORACLE_PRICE_ALLOWED, EInvalidOraclePrice); // Prevent overflow
+    (price_u64, decimal_u64 as u8)
 }
 
 public fun get_price(state: &State, price_info_object: &PriceInfoObject, clock: &Clock): (u64, u8) {
@@ -470,9 +489,11 @@ public fun get_amount_out<InCoinType, XAUM>(
 ): u64 {
     check_version(state);
     let (_coin_in_tn, coin_in_decimal) = check_coin<InCoinType>(state);
-    let (price, oracle_price_decimal) = get_price(state, price_info_object, clock);
-    let amount_out =
-        amount_in * 10u64.pow(XAUM_DECIMAL + oracle_price_decimal - coin_in_decimal) / price;
+    let (price_adjusted, oracle_price_decimal) = get_price(state, price_info_object, clock);
+    let multiplier = 10u64.pow(XAUM_DECIMAL + oracle_price_decimal - coin_in_decimal);
+    let amount_out_u128 = (amount_in as u128) * (multiplier as u128) / (price_adjusted as u128);
+    assert!(amount_out_u128 < (u64::max_value!() as u128), EAmountOutTooLarge); // prevent overflow
+    let amount_out = amount_out_u128 as u64;
     assert!(amount_out <= get_balance_amount<XAUM>(state), EInvalidAmountOut);
     amount_out
 }
@@ -510,9 +531,10 @@ fun swap_at_price<InCoinType, XAUM>(
 
     let coin_received = coin::split<InCoinType>(coin_in, amount_in, ctx);
     merge_coin_into_balances(state, coin_received);
-
-    let amount_out =
-        amount_in * 10u64.pow(XAUM_DECIMAL + price_decimal - coin_in_decimal) / price_adjusted;
+    let multiplier = 10u64.pow(XAUM_DECIMAL + price_decimal - coin_in_decimal);
+    let amount_out_u128 = (amount_in as u128) * (multiplier as u128) / (price_adjusted as u128);
+    assert!(amount_out_u128 < (u64::max_value!() as u128), EAmountOutTooLarge); // prevent overflow
+    let amount_out = amount_out_u128 as u64;
     assert!(amount_out <= get_balance_amount<XAUM>(state), EInvalidAmountOut);
     let coin_out = coin::take(get_balance_mut<XAUM>(&mut state.balances), amount_out, ctx);
     event::emit(Swap { sender: ctx.sender(), coin_in: coin_in_tn, amount_in, amount_out });
@@ -528,18 +550,17 @@ fun get_swap_price<XAUM, PairTokenType>(
     let (price, oracle_price_decimal) = get_price_from_oracle(state, price_info_object, clock);
     if (state.price_check) {
         assert!(state.dex_pool.contains(&object::id(oracle_dex_pool)), EInvalidDexPool);
-        let dex_price =
-            get_twap_price_from_dex<XAUM, PairTokenType>(
-                oracle_dex_pool,
-                oracle_price_decimal,
-                clock,
-            ) as u64;
+        let dex_price = get_twap_price_from_dex<XAUM, PairTokenType>(
+            oracle_dex_pool,
+            oracle_price_decimal,
+            clock,
+        );
         assert!(
-            dex_price * (PRICE_FACTOR_BASE - state.price_deviation_ratio) / PRICE_FACTOR_BASE <= price,
+            dex_price * ((PRICE_FACTOR_BASE - state.price_deviation_ratio) as u256) / (PRICE_FACTOR_BASE as u256) <= (price as u256),
             EOraclePriceTooLow,
         );
         assert!(
-            dex_price * (PRICE_FACTOR_BASE + state.price_deviation_ratio) / PRICE_FACTOR_BASE >= price,
+            dex_price * ((PRICE_FACTOR_BASE + state.price_deviation_ratio) as u256) / (PRICE_FACTOR_BASE as u256) >= (price as u256),
             EOraclePriceTooHigh,
         );
     };
