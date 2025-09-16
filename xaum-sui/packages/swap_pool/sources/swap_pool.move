@@ -45,6 +45,7 @@ const EInvalidOraclePriceDecimal: u64 = 119;
 const EInvalidPriceFactor: u64 = 120;
 const EInvalidWeekdayStartTime: u64 = 121;
 const EAmountOutTooLarge: u64 = 122;
+const EInvalidWhitelistCoin: u64 = 123;
 
 // === Constants ===
 const VERSION: u64 = 1;
@@ -239,6 +240,7 @@ entry fun set_xaum<T>(state: &mut State, ctx: &TxContext) {
 entry fun set_coin_whitelist<T>(state: &mut State, accepted: bool, decimal: u8, ctx: &TxContext) {
     check_version(state);
     check_owner(state, ctx);
+    assert!(type_name::get<T>() != state.xaum.borrow(), EInvalidWhitelistCoin);
     assert!(decimal <= XAUM_DECIMAL + PYTH_XAUM_USD_PRICE_DECIMAL, EInvalidDecimalConfiguration); // prevent underflow
     let coin = type_name::get<T>();
     if (state.coin_whitelist.contains(coin)) {
