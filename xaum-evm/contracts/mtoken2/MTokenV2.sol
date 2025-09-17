@@ -2,11 +2,11 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PermitUpgradeable.sol";
-import "./DelayedUpgradeable.sol";
-import "./interfaces/ICCClient.sol";
+import "../DelayedUpgradeable.sol";
+import "../interfaces/ICCClient.sol";
 // import "hardhat/console.sol";
 
-abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
+abstract contract MTokenBaseV2 is ERC20PermitUpgradeable, DelayedUpgradeable {
     // every chain has its own mintBudget, operator can move mintBudget from one chain to another
     uint112 public mintBudget;
 
@@ -54,10 +54,15 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
     address public fallbackFeed;
     address public nextFallbackFeed;
     uint64 public etNextFallbackFeed; //effective time
+
+    // like messager, but for 32bytes address
+    address public messager2;
+    address public nextMessager2;
+    uint64 public etNextMessager2; //effective time
 }
 
 // this contract will be deployed on EVM-compatible chains other than Ethereum
-contract MToken is MTokenBase, ICCIPClient {
+contract MTokenV2 is MTokenBaseV2, ICCIPClient {
     uint64 constant MIN_DELAY = 1 hours;
 
     uint constant TagSendToken = 2;
@@ -71,6 +76,8 @@ contract MToken is MTokenBase, ICCIPClient {
     event SetRevokerEffected(address newAddr);
     event SetMessagerRequest(address oldAddr, address newAddr, uint64 et);
     event SetMessagerEffected(address newAddr);
+    event SetMessager2Request(address oldAddr, address newAddr, uint64 et);
+    event SetMessager2Effected(address newAddr);
     event BlockPlaced(address indexed _user);
     event BlockReleased(address indexed _user);
     event CCSendToken(
@@ -78,9 +85,19 @@ contract MToken is MTokenBase, ICCIPClient {
         address indexed receiver,
         uint value
     );
+    event CCSendToken32(
+        address indexed sender,
+        bytes32 indexed receiver,
+        uint value
+    );
     event CCSendMintBudget(uint112 value);
     event CCReceiveToken(
         address indexed sender,
+        address indexed receiver,
+        uint value
+    );
+    event CCReceiveToken32(
+        bytes32 indexed sender,
         address indexed receiver,
         uint value
     );
@@ -94,6 +111,7 @@ contract MToken is MTokenBase, ICCIPClient {
     error NotRevoker(address);
     error NotNftContract(address);
     error NotMessager(address);
+    error NotMessager2(address);
     error NotOperatorNorNft(address);
     error MintBudgetNotEnough(uint budget, uint amount);
     error TransferToContract();
@@ -131,6 +149,13 @@ contract MToken is MTokenBase, ICCIPClient {
     modifier onlyMessager() {
         if (msg.sender != messager) {
             revert NotMessager(msg.sender);
+        }
+        _;
+    }
+
+    modifier onlyMessager2() {
+        if (msg.sender != messager2) {
+            revert NotMessager2(msg.sender);
         }
         _;
     }
@@ -212,6 +237,19 @@ contract MToken is MTokenBase, ICCIPClient {
         }
     }
 
+    function setMessager2(address _messager2) public onlyOwner {
+        _checkZeroAddress(_messager2);
+        uint64 et = etNextMessager2;
+        if (_messager2 == nextMessager2 && et != 0 && et < block.timestamp) {
+            messager2 = _messager2;
+            emit SetMessager2Effected(_messager2);
+        } else {
+            nextMessager2 = _messager2;
+            etNextMessager2 = uint64(block.timestamp) + delay;
+            emit SetMessager2Request(messager2, _messager2, etNextMessager2);
+        }
+    }
+
     // init nftContract. can only be called once
     function setNFTContract(address _nftContract) public onlyOwner {
         _checkZeroAddress(_nftContract);
@@ -265,6 +303,10 @@ contract MToken is MTokenBase, ICCIPClient {
 
     function revokeNextMessager() public onlyRevoker {
         etNextMessager = 0;
+    }
+
+    function revokeNextMessager2() public onlyRevoker {
+        etNextMessager2 = 0;
     }
 
     function revokeNextRevoker() public onlyRevoker {
@@ -378,6 +420,17 @@ contract MToken is MTokenBase, ICCIPClient {
         return abi.encode(TagSendToken, abi.encode(sender, receiver, value));
     }
 
+    // 32 bytes address version
+    function msgOfCcSendToken32(
+        address sender,
+        bytes32 receiver,
+        uint256 value
+    ) public view returns (bytes memory message) {
+        _checkBlocked(sender);
+        // _checkBlocked(receiver);
+        return abi.encode(TagSendToken, abi.encode(sender, receiver, value));
+    }
+
     // called by the messager contract to initialize a cross-chain token transfer
     function ccSendToken(
         address sender,
@@ -393,6 +446,21 @@ contract MToken is MTokenBase, ICCIPClient {
         return msgOfCcSendToken(sender, receiver, value);
     }
 
+    // 32 bytes address version
+    function ccSendToken32(
+        address sender,
+        bytes32 receiver,
+        uint256 value
+    ) public onlyMessager2 returns (bytes memory message) {
+        if (disableCcSend) {
+            revert CcSendDisabled();
+        }
+        _checkZeroValue(value);
+        _burn(sender, value);
+        emit CCSendToken32(sender, receiver, value);
+        return msgOfCcSendToken32(sender, receiver, value);
+    }
+
     function msgOfCcSendMintBudget(
         uint112 value
     ) public view returns (bytes memory message) {
@@ -404,6 +472,19 @@ contract MToken is MTokenBase, ICCIPClient {
     function ccSendMintBudget(
         uint112 value
     ) public onlyMessager returns (bytes memory message) {
+        return _ccSendMintBudget(value);
+    }
+
+    // 32 bytes address version
+    function ccSendMintBudget32(
+        uint112 value
+    ) public onlyMessager2 returns (bytes memory message) {
+        return _ccSendMintBudget(value);
+    }
+
+    function _ccSendMintBudget(
+        uint112 value
+    ) private returns (bytes memory message) {
         _checkOperator(tx.origin);
         _checkZeroValue(value);
         message = msgOfCcSendMintBudget(value);
@@ -422,6 +503,16 @@ contract MToken is MTokenBase, ICCIPClient {
         emit CCReceiveToken(sender, receiver, value);
     }
 
+    // 32 bytes address version
+    function ccReceiveToken32(bytes memory message) internal {
+        (bytes32 sender, address receiver, uint value) = abi.decode(
+            message,
+            (bytes32, address, uint)
+        );
+        _mint(receiver, value);
+        emit CCReceiveToken32(sender, receiver, value);
+    }
+
     // finish a cross-chain mint-budget transfer
     function ccReceiveMintBudget(bytes memory message) internal {
         uint112 value = abi.decode(message, (uint112));
@@ -434,6 +525,18 @@ contract MToken is MTokenBase, ICCIPClient {
         (uint tag, bytes memory data) = abi.decode(message, (uint, bytes));
         if (tag == TagSendToken) {
             ccReceiveToken(data);
+        } else if (tag == TagSendMintBudget) {
+            ccReceiveMintBudget(data);
+        } else {
+            revert InvalidMsg(tag);
+        }
+    }
+
+    // 32 bytes address version
+    function ccReceive32(bytes calldata message) public onlyMessager2 {
+        (uint tag, bytes memory data) = abi.decode(message, (uint, bytes));
+        if (tag == TagSendToken) {
+            ccReceiveToken32(data);
         } else if (tag == TagSendMintBudget) {
             ccReceiveMintBudget(data);
         } else {

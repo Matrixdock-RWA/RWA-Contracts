@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.24;
 
-import "./MToken.sol";
+import "./MTokenV2.sol";
 
 // this contract will be deployed on L2s
-contract MTokenSide is MToken {
+contract MTokenSideV2 is MTokenV2 {
     function initialize(
         string memory name,
         string memory symbol,

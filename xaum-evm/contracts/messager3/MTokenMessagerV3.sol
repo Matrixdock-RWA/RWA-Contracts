@@ -6,9 +6,9 @@ import {Client} from "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.s
 import {CCIPReceiver} from "@chainlink/contracts-ccip/src/v0.8/ccip/applications/CCIPReceiver.sol";
 import {IRouterClient} from "@chainlink/contracts-ccip/src/v0.8/ccip/interfaces/IRouterClient.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {MTokenMessagerBase} from "./MTokenMessagerBase.sol";
-import {MTokenMessagerLZ} from "./MTokenMessagerLZ.sol";
-import {ICCClient} from "./interfaces/ICCClient.sol";
+import {MTokenMessagerBase} from "../MTokenMessagerBase.sol";
+import {MTokenMessagerLZV2} from "./MTokenMessagerLZV2.sol";
+import {ICCClientV2} from "../interfaces/ICCClientV2.sol";
 
 /*
 
@@ -22,28 +22,35 @@ calculateCcSendMintBudgetFeeAndMessage | lzCalculateSendMintBudgetFee
 
 */
 
-contract MTokenMessagerV2 is CCIPReceiver, MTokenMessagerLZ {
+// 32bytes address version
+contract MTokenMessagerV3 is CCIPReceiver, MTokenMessagerLZV2 {
     using Address for address payable;
 
-    mapping(uint64 chainSelector => mapping(address messager => bool allowed)) public allowedPeer;
+    mapping(uint64 chainSelector => mapping(bytes32 messager => bool allowed))
+        public allowedPeer;
 
-    event AllowedPeer(uint64 chainSelector, address messager, bool allowed);
+    event AllowedPeer(uint64 chainSelector, bytes32 messager, bool allowed);
     event CCReceive(bytes32 indexed messageID, bytes messageData);
     event CCSendToken(bytes32 indexed messageID, bytes messageData);
     event CCSendMintBudget(bytes32 indexed messageID, bytes messageData);
 
-    error NotInAllowListed(uint64 chainSelector, address messager);
+    error NotInAllowListed(uint64 chainSelector, bytes32 messager);
     error InsufficientFee(uint256 required, uint256 actual);
 
-    constructor(address _ccipRouter, address _ccipClient, address _lzEndpoint, address _initialOwner)
-        CCIPReceiver(_ccipRouter) MTokenMessagerLZ(_ccipClient, _lzEndpoint, _initialOwner) {
-
-    }
+    constructor(
+        address _ccipRouter,
+        address _ccipClient,
+        address _lzEndpoint,
+        address _initialOwner
+    )
+        CCIPReceiver(_ccipRouter)
+        MTokenMessagerLZV2(_ccipClient, _lzEndpoint, _initialOwner)
+    {}
 
     // CCIP related config.
     function setAllowedPeer(
         uint64 chainSelector,
-        address messager,
+        bytes32 messager,
         bool allowed
     ) external onlyOwner {
         allowedPeer[chainSelector][messager] = allowed;
@@ -53,20 +60,20 @@ contract MTokenMessagerV2 is CCIPReceiver, MTokenMessagerLZ {
     function _ccipReceive(
         Client.Any2EVMMessage memory any2EvmMessage
     ) internal override {
-        address sender = abi.decode(any2EvmMessage.sender, (address));
+        bytes32 sender = abi.decode(any2EvmMessage.sender, (bytes32));
         if (!allowedPeer[any2EvmMessage.sourceChainSelector][sender]) {
             revert NotInAllowListed(any2EvmMessage.sourceChainSelector, sender);
         }
 
-        ICCClient(ccClient).ccReceive(any2EvmMessage.data);
+        ICCClientV2(ccClient).ccReceive32(any2EvmMessage.data);
         emit CCReceive(any2EvmMessage.messageId, any2EvmMessage.data);
     }
 
     function calculateCCSendTokenFeeAndMessage(
         uint64 destinationChainSelector,
-        address messageReceiver,
+        bytes32 messageReceiver,
         address sender,
-        address recipient,
+        bytes32 recipient,
         uint value,
         bytes calldata extraArgs
     )
@@ -74,23 +81,22 @@ contract MTokenMessagerV2 is CCIPReceiver, MTokenMessagerLZ {
         view
         returns (uint256 fee, Client.EVM2AnyMessage memory evm2AnyMessage)
     {
-        bytes memory data = ICCClient(ccClient).msgOfCcSendToken(
+        bytes memory data = ICCClientV2(ccClient).msgOfCcSendToken32(
             sender,
             recipient,
             value
         );
-        (fee, evm2AnyMessage) =
-            getFeeAndMessage(
-                destinationChainSelector,
-                messageReceiver,
-                extraArgs,
-                data
-            );
+        (fee, evm2AnyMessage) = getFeeAndMessage(
+            destinationChainSelector,
+            messageReceiver,
+            extraArgs,
+            data
+        );
     }
 
     function calculateCcSendMintBudgetFeeAndMessage(
         uint64 destinationChainSelector,
-        address messageReceiver,
+        bytes32 messageReceiver,
         uint112 value,
         bytes calldata extraArgs
     )
@@ -98,27 +104,26 @@ contract MTokenMessagerV2 is CCIPReceiver, MTokenMessagerLZ {
         view
         returns (uint256 fee, Client.EVM2AnyMessage memory evm2AnyMessage)
     {
-        bytes memory data = ICCClient(ccClient).msgOfCcSendMintBudget(value);
-        (fee, evm2AnyMessage) =
-            getFeeAndMessage(
-                destinationChainSelector,
-                messageReceiver,
-                extraArgs,
-                data
-            );
+        bytes memory data = ICCClientV2(ccClient).msgOfCcSendMintBudget(value);
+        (fee, evm2AnyMessage) = getFeeAndMessage(
+            destinationChainSelector,
+            messageReceiver,
+            extraArgs,
+            data
+        );
     }
 
     function sendTokenToChain(
         uint64 destinationChainSelector,
-        address messageReceiver,
-        address recipient,
+        bytes32 messageReceiver,
+        bytes32 recipient,
         uint value,
         bytes calldata extraArgs
     ) external payable returns (bytes32 messageId) {
         if (!allowedPeer[destinationChainSelector][messageReceiver]) {
             revert NotInAllowListed(destinationChainSelector, messageReceiver);
         }
-        bytes memory data = ICCClient(ccClient).ccSendToken(
+        bytes memory data = ICCClientV2(ccClient).ccSendToken32(
             msg.sender,
             recipient,
             value
@@ -134,14 +139,14 @@ contract MTokenMessagerV2 is CCIPReceiver, MTokenMessagerLZ {
 
     function sendMintBudgetToChain(
         uint64 destinationChainSelector,
-        address messageReceiver,
+        bytes32 messageReceiver,
         uint112 value,
         bytes calldata extraArgs
     ) external payable returns (bytes32 messageId) {
         if (!allowedPeer[destinationChainSelector][messageReceiver]) {
             revert NotInAllowListed(destinationChainSelector, messageReceiver);
         }
-        bytes memory data = ICCClient(ccClient).ccSendMintBudget(value);
+        bytes memory data = ICCClientV2(ccClient).ccSendMintBudget32(value);
         messageId = sendDataToChain(
             destinationChainSelector,
             messageReceiver,
@@ -153,7 +158,7 @@ contract MTokenMessagerV2 is CCIPReceiver, MTokenMessagerLZ {
 
     function getFeeAndMessage(
         uint64 destinationChainSelector,
-        address messageReceiver,
+        bytes32 messageReceiver,
         bytes calldata extraArgs,
         bytes memory data
     )
@@ -176,16 +181,19 @@ contract MTokenMessagerV2 is CCIPReceiver, MTokenMessagerLZ {
 
     function sendDataToChain(
         uint64 destinationChainSelector,
-        address messageReceiver,
+        bytes32 messageReceiver,
         bytes calldata extraArgs,
         bytes memory data
     ) internal returns (bytes32 messageId) {
-        (uint256 fee, Client.EVM2AnyMessage memory evm2AnyMessage) = getFeeAndMessage(
-            destinationChainSelector,
-            messageReceiver,
-            extraArgs,
-            data
-        );
+        (
+            uint256 fee,
+            Client.EVM2AnyMessage memory evm2AnyMessage
+        ) = getFeeAndMessage(
+                destinationChainSelector,
+                messageReceiver,
+                extraArgs,
+                data
+            );
         if (msg.value < fee) {
             revert InsufficientFee(fee, msg.value);
         }
