@@ -11,19 +11,12 @@ SwapPool use SwapCap to limit only whilelisted user can swap XAUM token.
 | USDC Type                            | 0xdba34672e30cb065b1f93e3ab55318768fd6fef66c15942c9f7cb846e2f900e7::usdc::USDC   |
 | MMT OracleDexPool id (XAUM/USDC MMT) | 0xc5bdc685b8006071938b5cb94103dc873c9946578d717c9b5b67fc264ff941e0                |
 
-## Deployed SwapPool Infos:
+## Mainnet Prod SwapPool Infos:
 
 | Param             | Value                                                              |
 |-------------------|--------------------------------------------------------------------|
-| SwapPool Package  | 0xb0af46a60fdf9d291c88e01f0c34c6817bc3449fbf0fd76f7be537b72ed5788d |
-| SwapPool State id | 0x623de521b9f1b1a8a0a344a8f0872578483818a40df2ba09672b9dbaab1f9d07                                                                  |
-| UpgradeCap id     | 0x3491bfdb06ebe259889aefcf8172930b15fb3c0a897fe5f9ec3c82647d06f2af                                                                  |
+| SwapPool Package  | 0x443ab6e1662cc575e99f368dc661dbc94ee12fbf43dd4c09538ae465b7a7acac |
+| SwapPool State id | 0x6c8ba72b252b243bc3c7839046ff1284c15dc3cee506fc4838a0b68f42675ffb                                                                  |
+| UpgradeCap id     | 0xf0c7612d79bb9e54289786d344c0333e5c6062d3f1de396ac1ad12019a75afce                                                                  |
 
-After changing ORACLE_PRICE_MAX_AGE to 90s
-
-| Param             | Value                                                              |
-|-------------------|--------------------------------------------------------------------|
-| SwapPool Package  | 0xac8c9214002aaffa967706f4740306119faeeca9e6f614c002c2803f9712c57a |
-| SwapPool State id | 0xd0b41488bce2d88f10be93cbeb383eca56732b9584ad5de54e92998d4af1b30b                                                                  |
-| UpgradeCap id     | 0xdf5e736aada4ef3b4a2eb726f5569d377fa4e3ca422920b24b430a5b19598212                                                                  |
 
