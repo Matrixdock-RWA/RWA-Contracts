@@ -7,8 +7,6 @@ const { expect } = require("chai");
 
 const zeroAddr = '0x0000000000000000000000000000000000000000';
 const zeroBytes32 = '0x0000000000000000000000000000000000000000000000000000000000000000';
-const fakeSolanaAddr = '0xadb988d4ab4fc55dd7069344c325e327706e1ec41f0c3db007ce32b29a4fe6ee';
-const fakeSolanaAddr2 = '0x471fe8fd552fb23b3c72c774340f553e92c37e9f79b48fd9d363a491ecd65a7b';
 
 function addrToBytes32(addr) {
   return addr.toLowerCase()
@@ -60,34 +58,6 @@ async function sign712Pack(signer, nftAddr, ownerAddr, amt, bullionId, deadline)
   return [r, s, v];
 }
 
-function verify712Pack(nftAddr, ownerAddr, amt, bullionId, deadline, sig, extraArgs) {
-  const domain = {
-    name: extraArgs?.domainName || 'BNFT',
-    version: '1',
-    chainId: extraArgs?.chainId || 31337,
-    verifyingContract: nftAddr,
-  };
-
-  const types = {
-    Pack: [
-      { name: 'owner', type: 'address' },
-      { name: 'amount', type: 'uint256' },
-      { name: 'bullion', type: 'uint256' },
-      { name: 'deadline', type: 'uint256' },
-    ],
-  };
-
-  const pack = {
-    owner: ownerAddr,
-    amount: amt,
-    bullion: bullionId,
-    deadline: deadline,
-  };
-
-  const addr = ethers.verifyTypedData(domain, types, pack, sig);
-  return addr;
-}
-
 
 describe("ALL", function () {
 
@@ -98,13 +68,13 @@ describe("ALL", function () {
     const reserveFeed = await FallbackReserveFeed.deploy(owner.address);
     await reserveFeed.setReserve(100000000);
 
-    const MTokenMain = await ethers.getContractFactory("MTokenMainV2");
+    const MTokenMain = await ethers.getContractFactory("MTokenMain");
     const mt = await upgrades.deployProxy(MTokenMain, 
       ["MTokenMain", "MTM", owner.address, operator.address, reserveFeed.target],
       {kind: "uups"}
     );
 
-    const MTokenSide = await ethers.getContractFactory("MTokenSideV2");
+    const MTokenSide = await ethers.getContractFactory("MTokenSide");
     const mtSide = await upgrades.deployProxy(MTokenSide,
       ["MTokenSide", "MTS", owner.address, operator.address],
       {kind: "uups"}
@@ -126,14 +96,9 @@ describe("ALL", function () {
     const mtMsg = await MTokenMessager.deploy(ccipRouter, mt, lzEndpoint, owner);
     const mtMsgSide = await MTokenMessager.deploy(ccipRouter, mtSide, lzEndpoint, owner);
 
-    const MTokenMessagerV3 = await ethers.getContractFactory("MTokenMessagerV3");
-    const mtMsgV3 = await MTokenMessagerV3.deploy(ccipRouter, mt, lzEndpoint, owner);
-    const mtMsgSideV3 = await MTokenMessagerV3.deploy(ccipRouter, mtSide, lzEndpoint, owner);
-
     return {
       reserveFeed, ccipRouter, lzEndpoint, // fake
       mt, mtSide, nft, mtMsg, mtMsgSide, // contracts
-      mtMsgV3, mtMsgSideV3, // 32 bytes address version
       owner, operator, packSigner, fakeNft, alice, bob,
     };
   }
@@ -142,7 +107,6 @@ describe("ALL", function () {
     let testCases = [ 
       {c: "mt",  field: "delay",       zeroVal: 0,        initVal: 0,        newVal: 12345},
       {c: "mt",  field: "messager",    zeroVal: zeroAddr, initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000001"},
-      {c: "mt",  field: "messager2",   zeroVal: zeroAddr, initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000001"},
       {c: "mt",  field: "revoker",     zeroVal: zeroAddr, initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000005"},
       {c: "mt",  field: "operator",    zeroVal: zeroAddr, initVal: "opAddr", newVal: "0x0000000000000000000000000000000000000002"},
       {c: "mt",  field: "reserveFeed", zeroVal: zeroAddr, initVal: "rfAddr", newVal: "0x0000000000000000000000000000000000000003"},
@@ -332,7 +296,6 @@ describe("ALL", function () {
 
       const testCases = [
         mt.connect(owner).setMessager(zeroAddr),
-        mt.connect(owner).setMessager2(zeroAddr),
         mt.connect(owner).setNFTContract(zeroAddr),
         mt.connect(owner).setRevoker(zeroAddr),
         mt.connect(owner).setOperator(zeroAddr),
@@ -372,10 +335,6 @@ describe("ALL", function () {
         ["NotMessager", mt.connect(alice).ccSendToken(alice.address, bob.address, 123)],
         ["NotMessager", mt.connect(alice).ccSendMintBudget(123)],
         ["NotMessager", mt.connect(alice).ccReceive("0x1234")],
-        // onlyMessager2
-        ["NotMessager2", mt.connect(alice).ccSendToken32(alice.address, addrToBytes32(bob.address), 123)],
-        ["NotMessager2", mt.connect(alice).ccSendMintBudget32(123)],
-        ["NotMessager2", mt.connect(alice).ccReceive32("0x1234")],
         // onlyRevoker
         ["NotRevoker", mt.connect(alice).revokeRequest(ethers.keccak256("0x1234"))],
         ["NotRevoker", mt.connect(alice).revokeNextDelay()],
@@ -507,25 +466,6 @@ describe("ALL", function () {
       }
     });
 
-    it("mintTo: blocked", async function () {
-      const { mt, owner, operator, fakeNft, alice } = await loadFixture(deployTestFixture);
-      await mt.setDelay(10000);
-      await mt.setDelay(10000);
-      await mt.connect(operator).increaseMintBudget(50000);
-      await mt.setNFTContract(fakeNft);
-      const _op = operator;
-
-      // block alice
-      await mt.connect(operator).addToBlockedList(alice.address);
-      expect(await mt.isBlocked(alice.address)).to.equal(true);
-
-      // mintTo
-      await mt.connect(_op).mintTo(alice.address, 10001, 1)
-      await time.increase(10000);
-      await expect(mt.connect(_op).mintTo(alice.address, 10001, 1))
-        .to.changeTokenBalances(mt, [zeroAddr, alice.address], [0, 10001]);
-    });
-
     it("revokeRequest", async function() {
       const { mt, owner, operator, alice, bob } = await loadFixture(deployTestFixture);
       await mt.setRevoker(bob.address);
@@ -606,7 +546,7 @@ describe("ALL", function () {
     });
 
     it("msgOfCcSendToken", async function () {
-      const { mt, operator, alice, bob } = await loadFixture(deployTestFixture);
+      const { mt, owner, operator, alice, bob } = await loadFixture(deployTestFixture);
       await mt.connect(operator).addToBlockedList(alice.address);
 
       await expect(mt.msgOfCcSendToken(alice.address, bob.address, 123))
@@ -628,31 +568,8 @@ describe("ALL", function () {
       );
     });
 
-    it("msgOfCcSendToken32", async function () {
-      const { mt, operator, alice, bob } = await loadFixture(deployTestFixture);
-      await mt.connect(operator).addToBlockedList(alice.address);
-
-      await expect(mt.msgOfCcSendToken32(alice.address, fakeSolanaAddr, 123))
-        .to.be.revertedWithCustomError(mt, "BlockedAccount")
-        .withArgs(alice.address);
-      // await expect(mt.msgOfCcSendToken32(bob.address, alice.address, 123))
-      //   .to.be.revertedWithCustomError(mt, "BlockedAccount")
-      //   .withArgs(alice.address);
-
-      await mt.connect(operator).removeFromBlockedList(alice.address);
-      expect(await mt.msgOfCcSendToken32(bob.address, fakeSolanaAddr, 0x123)).to.equal(
-        "0x" + 
-        "0000000000000000000000000000000000000000000000000000000000000002" +
-        "0000000000000000000000000000000000000000000000000000000000000040" +
-        "0000000000000000000000000000000000000000000000000000000000000060" +
-        "0000000000000000000000009965507d1a55bcc2695c58ba16fb37d819b0a4dc" + 
-        fakeSolanaAddr.replace("0x", "") + // 32 bytes
-        "0000000000000000000000000000000000000000000000000000000000000123"
-      );
-    });
-
     it("msgOfCcSendMintBudget", async function () {
-      const { mt, operator } = await loadFixture(deployTestFixture);
+      const { mt, owner, operator, alice, bob } = await loadFixture(deployTestFixture);
       await mt.connect(operator).increaseMintBudget(50000);
 
       await expect(mt.msgOfCcSendMintBudget(50001))
@@ -692,32 +609,8 @@ describe("ALL", function () {
         .to.changeTokenBalances(mt, [alice.address], [-456]);
     });
 
-    it("ccSendToken32", async function () {
-      const { mt, owner, operator, alice } = await loadFixture(deployTestFixture);
-      await mt.connect(operator).increaseMintBudget(50000);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-      await mt.setMessager2(owner);
-      await mt.setMessager2(owner);
-
-      await mt.setDisableCcSend(true);
-      await expect(mt.ccSendToken32(alice.address, fakeSolanaAddr, 0))
-        .to.be.revertedWithCustomError(mt, "CcSendDisabled");
-
-      await mt.setDisableCcSend(false);
-      await expect(mt.ccSendToken32(alice.address, fakeSolanaAddr, 0))
-        .to.be.revertedWithCustomError(mt, "ZeroValue");
-    
-      await expect(mt.ccSendToken32(alice.address, fakeSolanaAddr, 123))
-        .to.emit(mt, "CCSendToken32")
-        .withArgs(alice.address, fakeSolanaAddr, 123);
-
-      await expect(mt.ccSendToken32(alice.address, fakeSolanaAddr, 456))
-        .to.changeTokenBalances(mt, [alice.address], [-456]);
-    });
-
     it("ccSendMintBudget", async function () {
-      const { mt, operator } = await loadFixture(deployTestFixture);
+      const { mt, owner, operator, alice, bob } = await loadFixture(deployTestFixture);
       await mt.connect(operator).increaseMintBudget(50000);
       await mt.setMessager(operator);
       await mt.setMessager(operator);
@@ -736,28 +629,8 @@ describe("ALL", function () {
       expect(await mt.mintBudget()).to.equal(10000);
     });
 
-    it("ccSendMintBudget32", async function () {
-      const { mt, operator } = await loadFixture(deployTestFixture);
-      await mt.connect(operator).increaseMintBudget(50000);
-      await mt.setMessager2(operator);
-      await mt.setMessager2(operator);
-
-      await expect(mt.connect(operator).ccSendMintBudget32(0))
-        .to.be.revertedWithCustomError(mt, "ZeroValue");
-    
-      await expect(mt.connect(operator).ccSendMintBudget32(10000))
-        .to.emit(mt, "CCSendMintBudget")
-        .withArgs(10000);
-      expect(await mt.mintBudget()).to.equal(40000);
-
-      await expect(mt.connect(operator).ccSendMintBudget32(30000))
-        .to.emit(mt, "CCSendMintBudget")
-        .withArgs(30000);
-      expect(await mt.mintBudget()).to.equal(10000);
-    });
-
     it("ccReceiveToken", async function () {
-      const { mt, owner, alice, bob } = await loadFixture(deployTestFixture);
+      const { mt, owner, operator, alice, bob } = await loadFixture(deployTestFixture);
       await mt.setMessager(owner);
       await mt.setMessager(owner);
 
@@ -775,28 +648,8 @@ describe("ALL", function () {
         .to.emit(mt, "CCReceiveToken").withArgs(alice.address, bob.address, 0x123);
     });
 
-    it("ccReceiveToken32", async function () {
-      const { mt, owner, bob } = await loadFixture(deployTestFixture);
-      await mt.setMessager2(owner);
-      await mt.setMessager2(owner);
-
-      const msg = "0x"
-        + "0000000000000000000000000000000000000000000000000000000000000002"
-        + "0000000000000000000000000000000000000000000000000000000000000040"
-        + "0000000000000000000000000000000000000000000000000000000000000060"
-        + fakeSolanaAddr.replace("0x", "") // sender
-        + bob.address.replace("0x", "000000000000000000000000") // receiver
-        + "0000000000000000000000000000000000000000000000000000000000000123"
-        ;
-
-      await expect(mt.ccReceive32(msg))
-        .to.emit(mt, "Transfer").withArgs(zeroAddr, bob.address, 0x123)
-        .to.emit(mt, "CCReceiveToken32").withArgs(fakeSolanaAddr, bob.address, 0x123);
-
-    });
-
     it("ccReceiveMintBudget", async function () {
-      const { mt, owner } = await loadFixture(deployTestFixture);
+      const { mt, owner, operator, alice, bob } = await loadFixture(deployTestFixture);
       await mt.setMessager(owner);
       await mt.setMessager(owner);
 
@@ -813,7 +666,7 @@ describe("ALL", function () {
     });
 
     it("ccReceive: InvalidTag", async function () {
-      const { mt, owner } = await loadFixture(deployTestFixture);
+      const { mt, owner, operator, alice, bob } = await loadFixture(deployTestFixture);
       await mt.setMessager(owner);
       await mt.setMessager(owner);
 
@@ -825,23 +678,6 @@ describe("ALL", function () {
         ;
 
       await expect(mt.ccReceive(msg))
-        .to.be.revertedWithCustomError(mt, "InvalidMsg")
-        .withArgs(4);
-    });
-
-    it("ccReceive32: InvalidTag", async function () {
-      const { mt, owner } = await loadFixture(deployTestFixture);
-      await mt.setMessager2(owner);
-      await mt.setMessager2(owner);
-
-      const msg = "0x"
-        + "0000000000000000000000000000000000000000000000000000000000000004"
-        + "0000000000000000000000000000000000000000000000000000000000000040"
-        + "0000000000000000000000000000000000000000000000000000000000000020"
-        + "000000000000000000000000000000000000000000000000000000000000c34f"
-        ;
-
-      await expect(mt.ccReceive32(msg))
         .to.be.revertedWithCustomError(mt, "InvalidMsg")
         .withArgs(4);
     });
@@ -1327,50 +1163,6 @@ describe("ALL", function () {
           .withArgs(alice.address);
       });
 
-      it("verify712Pack", async function() {
-        const { nft, alice } = await loadFixture(deployTestFixture);
-
-        const [r, s, v] = await sign712Pack(alice, nft.target, alice.address, 12345, 888, 9999999999);
-        const addr = verify712Pack(nft.target, alice.address, 12345, 888, 9999999999, {r, s, v});
-        expect(addr).to.equal(alice.address);
-      });
-
-      it("verify712Pack: sepolia tx1", async function() {
-        // https://sepolia.etherscan.io/tx/0x26b1fd021790b16158b18cd4d86de1dac90bb5f7068b5ec8724d07da9260c6d6
-        const addr = verify712Pack(
-          "0x984e2ae5cAfbd94175CDb9359f375382446fbdC0", 
-          "0x3323e6E8601a8E036AA5b8c738C8C65a48218d6c",
-          "0x15779a9de6eeb00000",      // amount
-          "0xde0b6b3a7640000",         // bullionId
-          "0x591520393e66d6f87e40000", // deadline
-          {
-            r: "0x3362b2064c10799c76bf0a3def044e612056aa566c8e1c58411f91d971d99278", 
-            s: "0x39cbcdb4e278d66de1225c62ae07a259908889861167e6da473fc09a3a802658", 
-            v: "0x1c",
-          },
-          {chainId: 11155111}, // sepolia chainid
-          );
-        expect(addr).to.equal('0x489b3Ac25Eb4c523ed2006f64F3ce42FF0b2a1a5');
-      });
-
-      it("verify712Pack: sepolia tx2", async function() {
-        // https://sepolia.etherscan.io/tx/0x103705d4af32470fc168256600a3a221f0f5ff83818e0745fb86350765e7aa0c
-        const addr = verify712Pack(
-          "0x984e2ae5cAfbd94175CDb9359f375382446fbdC0", 
-          "0x3323e6E8601a8E036AA5b8c738C8C65a48218d6c",
-          "0x15779a9de6eeb00000", // amount
-          "0xde0b6b3a7640000",    // bullionId
-          "0x66b57ab3",           // deadline
-          {
-            r: "0x37ad6012edf7b58f8eed3f33fb58b719eec6be3cbd1d973f463613b554d128c1", 
-            s: "0x53caa1fdb7ef051f168f0679774da34d089755da77fc6c04d2fbce4051ba747f", 
-            v: "0x1c",
-          },
-          {chainId: 11155111}, // sepolia chainid
-          );
-        expect(addr).to.equal('0x94F5D7A58B95243D5981e4DB5aCa2eBABAB375A2');
-      });
-
       it("OK", async function () {
         const { mt, nft, operator, alice, bob } = await loadFixture(deployTestFixture);
         await mt.setNFTContract(nft.target);
@@ -1399,7 +1191,7 @@ describe("ALL", function () {
     });
 
     it("setAllowedPeer", async function () {
-      const {mtMsg, alice, bob} = await loadFixture(deployTestFixture);
+      const {mtMsg, owner, alice, bob} = await loadFixture(deployTestFixture);
       expect(await mtMsg.allowedPeer(123, alice.address)).to.equal(false);
       expect(await mtMsg.allowedPeer(456, bob.address)).to.equal(false);
 
@@ -1424,7 +1216,7 @@ describe("ALL", function () {
     });
 
     it("error: NotInAllowListed", async function () {
-      const {mtMsg, ccipRouter, alice, bob} = await loadFixture(deployTestFixture);
+      const {mtMsg, owner, ccipRouter, alice, bob} = await loadFixture(deployTestFixture);
 
       await expect(mtMsg.connect(alice).sendTokenToChain(123, mtMsg.target, bob.address, 10000, "0x12"))
         .to.be.revertedWithCustomError(mtMsg, "NotInAllowListed")
@@ -1435,14 +1227,14 @@ describe("ALL", function () {
         .withArgs(123, mtMsg.target);
 
       const msgId = ethers.keccak256("0x1234");
-      const sender32 = addrToBytes32(mtMsg.target);
+      const sender32 = mtMsg.target.replace("0x", "0x000000000000000000000000");
       await expect(ccipRouter.callCcipReceive(mtMsg, [msgId, 123, sender32, "0xda7a", []]))
         .to.be.revertedWithCustomError(mtMsg, "NotInAllowListed")
         .withArgs(123, mtMsg.target);
     });
 
     it("calcFee", async function () {
-      const {mt, mtMsg, operator, alice, bob} = await loadFixture(deployTestFixture);
+      const {mt, mtSide, mtMsg, ccipRouter, owner, operator, alice, bob} = await loadFixture(deployTestFixture);
       await mt.connect(operator).increaseMintBudget(50000);
 
       const [fee1, msg1] = await mtMsg.calculateCCSendTokenFeeAndMessage(
@@ -1458,7 +1250,7 @@ describe("ALL", function () {
 
     it("sendTokenToChain", async function () {
       const {mt, mtSide, mtMsg, mtMsgSide, ccipRouter, 
-        operator, alice, bob} = await loadFixture(deployTestFixture);
+        owner, operator, alice, bob} = await loadFixture(deployTestFixture);
       await mtMsg.setAllowedPeer(123, mtMsgSide.target, true);
       await mtMsgSide.setAllowedPeer(100, mtMsg.target, true);
       await mtSide.setMessager(mtMsgSide.target);
@@ -1509,7 +1301,7 @@ describe("ALL", function () {
 
     it("sendMintBudgetToChain", async function () {
       const {mt, mtSide, mtMsg, mtMsgSide, ccipRouter,
-        operator} = await loadFixture(deployTestFixture);
+        owner, operator, alice, bob} = await loadFixture(deployTestFixture);
       await mtMsg.setAllowedPeer(123, mtMsgSide.target, true);
       await mtMsgSide.setAllowedPeer(100, mtMsg.target, true);
       await mtSide.setMessager(mtMsgSide.target);
@@ -1557,186 +1349,7 @@ describe("ALL", function () {
 
   });
 
-  describe("MTokenMessagerV3 (CCIP)", function () {
-
-    it("init", async function () {
-      const {mt, mtMsgV3: mtMsg, owner, ccipRouter} = await loadFixture(deployTestFixture);
-
-      expect(await mtMsg.owner()).to.equal(owner.address);
-      expect(await mtMsg.ccClient()).to.equal(mt.target);
-      expect(await mtMsg.getRouter()).to.equal(ccipRouter.target);
-    });
-
-    it("setAllowedPeer", async function () {
-      const {mtMsgV3: mtMsg, alice} = await loadFixture(deployTestFixture);
-      expect(await mtMsg.allowedPeer(123, fakeSolanaAddr)).to.equal(false);
-      expect(await mtMsg.allowedPeer(456, fakeSolanaAddr2)).to.equal(false);
-
-      await expect(mtMsg.connect(alice).setAllowedPeer(123, fakeSolanaAddr2, true))
-        .to.be.revertedWithCustomError(mtMsg, 'OwnableUnauthorizedAccount')
-        .withArgs(alice);
-
-      await expect(mtMsg.setAllowedPeer(123, fakeSolanaAddr, true))
-        .to.emit(mtMsg, "AllowedPeer")
-        .withArgs(123, fakeSolanaAddr, true);
-      await expect(mtMsg.setAllowedPeer(456, fakeSolanaAddr2, true))
-        .to.emit(mtMsg, "AllowedPeer")
-        .withArgs(456, fakeSolanaAddr2, true);
-      expect(await mtMsg.allowedPeer(123, fakeSolanaAddr)).to.equal(true);
-      expect(await mtMsg.allowedPeer(456, fakeSolanaAddr2)).to.equal(true);
-
-      await expect(mtMsg.setAllowedPeer(123, fakeSolanaAddr, false))
-        .to.emit(mtMsg, "AllowedPeer")
-        .withArgs(123, fakeSolanaAddr, false);
-      expect(await mtMsg.allowedPeer(123, fakeSolanaAddr)).to.equal(false);
-      expect(await mtMsg.allowedPeer(456, fakeSolanaAddr2)).to.equal(true);
-    });
-
-    it("error: NotInAllowListed", async function () {
-      const {mtMsgV3: mtMsg, ccipRouter, alice} = await loadFixture(deployTestFixture);
-
-      await expect(mtMsg.connect(alice).sendTokenToChain(123, fakeSolanaAddr, fakeSolanaAddr2, 10000, "0x12"))
-        .to.be.revertedWithCustomError(mtMsg, "NotInAllowListed")
-        .withArgs(123, fakeSolanaAddr);
-
-      await expect(mtMsg.connect(alice).sendMintBudgetToChain(123, fakeSolanaAddr, 10000, "0x34"))
-        .to.be.revertedWithCustomError(mtMsg, "NotInAllowListed")
-        .withArgs(123, fakeSolanaAddr);
-
-      const msgId = ethers.keccak256("0x1234");
-      const sender32 = addrToBytes32(mtMsg.target);
-      await expect(ccipRouter.callCcipReceive(mtMsg, [msgId, 123, sender32, "0xda7a", []]))
-        .to.be.revertedWithCustomError(mtMsg, "NotInAllowListed")
-        .withArgs(123, sender32);
-    });
-
-    it("calcFee", async function () {
-      const {mt, mtMsgV3: mtMsg, operator, alice} = await loadFixture(deployTestFixture);
-      await mt.connect(operator).increaseMintBudget(50000);
-
-      const [fee1, msg1] = await mtMsg.calculateCCSendTokenFeeAndMessage(
-        123, fakeSolanaAddr, alice.address, fakeSolanaAddr2, 20000, "0x0e472a");
-      expect(fee1).to.deep.equal(1920000n);
-      expect(msg1[1]).to.include("0x0000000000000000000000000000000000000000000000000000000000000002");
-
-      const [fee2, msg2] = await mtMsg.calculateCcSendMintBudgetFeeAndMessage(
-        123, fakeSolanaAddr, 50000, "0x0e472a");
-      expect(fee2).to.deep.equal(1280000n);
-      expect(msg2[1]).to.include("0x0000000000000000000000000000000000000000000000000000000000000003");
-    });
-
-    it("sendTokenToChain", async function () {
-      const {mt, mtSide, mtMsgV3: mtMsg, mtMsgSideV3: mtMsgSide, ccipRouter, 
-        operator, alice, bob} = await loadFixture(deployTestFixture);
-      const mtMsg32 = addrToBytes32(mtMsg.target);
-      const mtMsgSide32 = addrToBytes32(mtMsgSide.target);
-      const alice32 = addrToBytes32(alice.address);
-      const bob32 = addrToBytes32(bob.address);
-
-      await mtMsg.setAllowedPeer(123, mtMsgSide32, true);
-      await mtMsgSide.setAllowedPeer(100, mtMsg32, true);
-      await mtSide.setMessager2(mtMsgSide.target);
-      await mtSide.setMessager2(mtMsgSide.target);
-      await mt.setMessager2(mtMsg.target);
-      await mt.setMessager2(mtMsg.target);
-      await mt.connect(operator).increaseMintBudget(50000);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-
-      // ok
-      await expect(
-        mtMsg.connect(alice).sendTokenToChain(
-          123, mtMsgSide32, bob32, 2000, "0x0e472a",
-          {value: 1920000}
-        )
-      ).to.emit(mt, "CCSendToken32").withArgs(alice.address, bob32, 2000)
-        .to.emit(mtMsg, "CCSendToken");
-      const msgId = await ccipRouter.lastMsgId();
-      // console.log('msgId:', msgId);
-
-      // return extra ether
-      await expect(
-        mtMsg.connect(alice).sendTokenToChain(
-          123, mtMsgSide32, bob32, 3000, "0x0e472a",
-          {value: 2000000}
-        )
-      ).to.changeEtherBalances(
-        [alice.address, ccipRouter.target], 
-        [-1920000, 1920000]);
-    
-      // fee not enough
-      await expect(
-        mtMsg.connect(alice).sendTokenToChain(
-          123, mtMsgSide32, bob32, 4000, "0x0e472a",
-          {value: 1900000}
-        )
-      ).to.be.revertedWithCustomError(mtMsg, "InsufficientFee")
-        .withArgs(1920000, 1900000);
-
-      // other side
-      await expect(ccipRouter.callCcipReceiveByMsgId(msgId))
-        .to.emit(mtSide, "CCReceiveToken32")
-        .withArgs(alice32, bob.address, 2000);
-      expect(await mt.balanceOf(alice.address)).to.equal(15000);
-      expect(await mtSide.balanceOf(bob.address)).to.equal(2000);
-    });
-
-    it("sendMintBudgetToChain", async function () {
-      const {mt, mtSide, mtMsgV3: mtMsg, mtMsgSideV3: mtMsgSide, ccipRouter,
-        operator} = await loadFixture(deployTestFixture);
-      const mtMsg32 = addrToBytes32(mtMsg.target);
-      const mtMsgSide32 = addrToBytes32(mtMsgSide.target);
-      // const alice32 = addrToBytes32(alice.address);
-      // const bob32 = addrToBytes32(bob.address);
-
-      await mtMsg.setAllowedPeer(123, mtMsgSide32, true);
-      await mtMsgSide.setAllowedPeer(100, mtMsg32, true);
-      await mtSide.setMessager2(mtMsgSide.target);
-      await mtSide.setMessager2(mtMsgSide.target);
-      await mt.setMessager2(mtMsg.target);
-      await mt.setMessager2(mtMsg.target);
-      await mt.connect(operator).increaseMintBudget(50000);
-
-      // ok
-      await expect(
-        mtMsg.connect(operator).sendMintBudgetToChain(
-          123, mtMsgSide32, 5000, "0x0e472a",
-          {value: 1280000}
-        )
-      ).to.emit(mt, "CCSendMintBudget").withArgs(5000)
-        .to.emit(mtMsg, "CCSendMintBudget");
-      const msgId = await ccipRouter.lastMsgId();
-      // console.log('msgId:', msgId);
-
-      // return extra ether
-      await expect(
-        mtMsg.connect(operator).sendMintBudgetToChain(
-          123, mtMsgSide32, 6000, "0x0e472a",
-          {value: 2000000}
-        )
-      ).to.changeEtherBalances(
-        [operator.address, ccipRouter.target], 
-        [-1280000, 1280000]);
-    
-      // fee not enough
-      await expect(
-        mtMsg.connect(operator).sendMintBudgetToChain(
-          123, mtMsgSide32, 7000, "0x0e472a",
-          {value: 1270000}
-        )
-      ).to.be.revertedWithCustomError(mtMsg, "InsufficientFee")
-        .withArgs(1280000, 1270000);
-    
-      // other side
-      await expect(ccipRouter.callCcipReceiveByMsgId(msgId))
-        .to.emit(mtSide, "CCReceiveMintBudget")
-        .withArgs(5000);
-      expect(await mtSide.mintBudget()).to.equal(5000);
-    });
-
-  });
-
-  describe("MTokenMessagerV2 (LayerZero)", function () {
+  describe("MTokenMessagerV2 (L0)", function () {
 
     it("init", async function () {
       const {mt, mtMsg, owner, ccipRouter} = await loadFixture(deployTestFixture);
@@ -1747,7 +1360,7 @@ describe("ALL", function () {
     });
 
     it("transferOwnership", async function () {
-      const {mtMsg, owner, alice, bob} = await loadFixture(deployTestFixture);
+      const {mt, mtMsg, owner, alice, bob} = await loadFixture(deployTestFixture);
       await expect(mtMsg.connect(alice).transferOwnership(bob))
         .to.be.revertedWithCustomError(mtMsg, "OwnableUnauthorizedAccount");
 
@@ -1756,7 +1369,7 @@ describe("ALL", function () {
     });
 
     it("lzSetPeer", async function () {
-      const {mtMsg, alice, bob} = await loadFixture(deployTestFixture);
+      const {mtMsg, owner, alice, bob} = await loadFixture(deployTestFixture);
       const aliceAddr32 = addrToBytes32(alice.address);
       const bobAddr32 = addrToBytes32(bob.address);
       expect(await mtMsg.peers(123)).to.equal(zeroBytes32);
@@ -1781,7 +1394,7 @@ describe("ALL", function () {
 
     it("error: NoPeer", async function () {
       const {mt, mtSide, mtMsg, mtMsgSide, lzEndpoint,
-        operator, alice, bob} = await loadFixture(deployTestFixture);
+        owner, operator, alice, bob} = await loadFixture(deployTestFixture);
       await mtSide.setMessager(mtMsgSide);
       await mtSide.setMessager(mtMsgSide);
       await mt.setMessager(mtMsg);
@@ -1811,7 +1424,7 @@ describe("ALL", function () {
 
     it("calcFee", async function () {
       const {mt, mtSide, mtMsg, mtMsgSide, lzEndpoint,
-        operator, alice, bob} = await loadFixture(deployTestFixture);
+        owner, operator, alice, bob} = await loadFixture(deployTestFixture);
       await mtSide.setMessager(mtMsgSide);
       await mtSide.setMessager(mtMsgSide);
       await mt.setMessager(mtMsg);
@@ -1832,7 +1445,7 @@ describe("ALL", function () {
 
     it("sendTokenToChain", async function () {
       const {mt, mtSide, mtMsg, mtMsgSide, lzEndpoint,
-        operator, alice, bob} = await loadFixture(deployTestFixture);
+        owner, operator, alice, bob} = await loadFixture(deployTestFixture);
       await mtMsg.setPeer(123, addrToBytes32(mtMsgSide.target));
       await mtMsgSide.setPeer(100, addrToBytes32(mtMsg.target));
       await mtSide.setMessager(mtMsgSide.target);
@@ -1885,251 +1498,13 @@ describe("ALL", function () {
 
     it("sendMintBudgetToChain", async function () {
       const {mt, mtSide, mtMsg, mtMsgSide, lzEndpoint,
-        operator, alice} = await loadFixture(deployTestFixture);
+        owner, operator, alice, bob} = await loadFixture(deployTestFixture);
       await mtMsg.setPeer(123, addrToBytes32(mtMsgSide.target));
       await mtMsgSide.setPeer(100, addrToBytes32(mtMsg.target));
       await mtSide.setMessager(mtMsgSide.target);
       await mtSide.setMessager(mtMsgSide.target);
       await mt.setMessager(mtMsg.target);
       await mt.setMessager(mtMsg.target);
-      await mt.connect(operator).increaseMintBudget(50000);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-
-      // ok
-      await expect(
-        mtMsg.connect(operator).lzSendMintBudgetToChain(
-          123, 5000, "0x0e472a",
-          {value: 1280000}
-        )
-      ).to.emit(mt, "CCSendMintBudget").withArgs(5000)
-        .to.emit(mtMsg, "CCSendMintBudgetLZ");
-      const msgId = await lzEndpoint.lastMsgId();
-      // console.log('msgId:', msgId);
-
-      // do not return extra ether
-      await expect(
-        mtMsg.connect(operator).lzSendMintBudgetToChain(
-          123, 6000, "0x0e472a",
-          {value: 2000000}
-        )
-      ).to.changeEtherBalances(
-        [operator.address, lzEndpoint.target], 
-        [-2000000, 2000000]);
-    
-      // fee not enough
-      await expect(
-        mtMsg.connect(operator).lzSendMintBudgetToChain(
-          123, 7000, "0x0e472a",
-          {value: 1270000}
-        )
-      ).to.be.revertedWith("LZ_INSUFFICIENT_FEE");
-    
-      // other side
-      await expect(lzEndpoint.callLzReceiveByMsgId(msgId))
-        .to.emit(mtSide, "CCReceiveMintBudget")
-        .withArgs(5000);
-      expect(await mtSide.mintBudget()).to.equal(5000);
-    });
-
-    it("pause", async function () {
-      const {mtMsg, owner, operator, alice, bob} = await loadFixture(deployTestFixture);
-
-      expect(await mtMsg.lzPaused()).to.equal(false);
-      await expect(mtMsg.connect(alice).setLZPaused(true))
-        .to.be.revertedWithCustomError(mtMsg, "OwnableUnauthorizedAccount")
-        .withArgs(alice);
-
-      await mtMsg.connect(owner).setLZPaused(true); // ok
-      expect(await mtMsg.lzPaused()).to.equal(true);
-
-      await expect(
-        mtMsg.connect(alice).lzSendTokenToChain(
-          123, bob.address, 4000, "0x0e472a",
-          {value: 1900000}
-        )
-      ).to.be.revertedWith("LZ_PAUSED");
-
-      await expect(
-        mtMsg.connect(operator).lzSendMintBudgetToChain(
-          123, 7000, "0x0e472a",
-          {value: 1270000}
-        )
-      ).to.be.revertedWith("LZ_PAUSED");
-    });
-
-  });
-
-  describe("MTokenMessagerV3 (LayerZero)", function () {
-
-    it("init", async function () {
-      const {mt, mtMsgV3: mtMsg, owner, ccipRouter} = await loadFixture(deployTestFixture);
-
-      expect(await mtMsg.owner()).to.equal(owner.address);
-      expect(await mtMsg.ccClient()).to.equal(mt.target);
-      expect(await mtMsg.getRouter()).to.equal(ccipRouter.target);
-    });
-
-    it("transferOwnership", async function () {
-      const {mtMsgV3: mtMsg, owner, alice, bob} = await loadFixture(deployTestFixture);
-      await expect(mtMsg.connect(alice).transferOwnership(bob))
-        .to.be.revertedWithCustomError(mtMsg, "OwnableUnauthorizedAccount");
-
-      await mtMsg.connect(owner).transferOwnership(bob); // ok
-      expect(await mtMsg.owner()).to.equal(bob.address);
-    });
-
-    it("lzSetPeer", async function () {
-      const {mtMsgV3: mtMsg, alice, bob} = await loadFixture(deployTestFixture);
-      const aliceAddr32 = addrToBytes32(alice.address);
-      const bobAddr32 = addrToBytes32(bob.address);
-      expect(await mtMsg.peers(123)).to.equal(zeroBytes32);
-      expect(await mtMsg.peers(456)).to.equal(zeroBytes32);
-
-      await expect(mtMsg.connect(alice).lzSetPeer(123, bobAddr32))
-        .to.be.revertedWithCustomError(mtMsg, 'OwnableUnauthorizedAccount')
-        .withArgs(alice);
-
-      await expect(mtMsg.lzSetPeer(123, aliceAddr32))
-        .to.emit(mtMsg, "PeerSet").withArgs(123, aliceAddr32);
-      await expect(mtMsg.lzSetPeer(456, bobAddr32))
-        .to.emit(mtMsg, "PeerSet").withArgs(456, bobAddr32);
-      expect(await mtMsg.peers(123)).to.equal(aliceAddr32);
-      expect(await mtMsg.peers(456)).to.equal(bobAddr32);
-
-      await expect(mtMsg.lzSetPeer(123, zeroBytes32))
-        .to.emit(mtMsg, "PeerSet").withArgs(123, zeroBytes32);
-      expect(await mtMsg.peers(123)).to.equal(zeroBytes32);
-      expect(await mtMsg.peers(456)).to.equal(bobAddr32);
-    });
-
-    it("error: NoPeer", async function () {
-      const {mt, mtSide, mtMsgV3: mtMsg, mtMsgSideV3: mtMsgSide, lzEndpoint,
-        operator, alice, bob} = await loadFixture(deployTestFixture);
-      const alice32 = addrToBytes32(alice.address);
-      const bob32 = addrToBytes32(bob.address);
-
-      await mtSide.setMessager2(mtMsgSide);
-      await mtSide.setMessager2(mtMsgSide);
-      await mt.setMessager2(mtMsg);
-      await mt.setMessager2(mtMsg);
-      await mt.connect(operator).increaseMintBudget(50000);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-
-      await expect(mtMsg.connect(alice).lzSendTokenToChain(123, bob32, 10000, "0x12"))
-        .to.be.revertedWithCustomError(mtMsg, "NoPeer").withArgs(123);
-
-      await expect(mtMsg.connect(operator).lzSendMintBudgetToChain(123, 10000, "0x34"))
-        .to.be.revertedWithCustomError(mtMsg, "NoPeer").withArgs(123);
-
-      const callLzReceiveArgs = [
-        mtMsg,
-        [123, addrToBytes32(alice.address), 888], // Origin
-        addrToBytes32(alice.address), // _guid,
-        "0x", // payload
-        zeroAddr, // address
-        zeroBytes32, // _data,
-      ];
-      await expect(lzEndpoint.callLzReceive(...callLzReceiveArgs))
-        .to.be.revertedWithCustomError(mtMsg, "NoPeer")
-        .withArgs(123);
-    });
-
-    it("calcFee", async function () {
-      const {mt, mtSide, mtMsgV3: mtMsg, mtMsgSideV3: mtMsgSide, lzEndpoint,
-        operator, alice, bob} = await loadFixture(deployTestFixture);
-      const alice32 = addrToBytes32(alice.address);
-      const bob32 = addrToBytes32(bob.address);
-
-      await mtSide.setMessager2(mtMsgSide);
-      await mtSide.setMessager2(mtMsgSide);
-      await mt.setMessager2(mtMsg);
-      await mt.setMessager2(mtMsg);
-      await mt.connect(operator).increaseMintBudget(500000);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-      await mtMsg.setPeer(123, addrToBytes32(mtMsgSide.target));
-
-      const nativeFee1 = await mtMsg.lzCalculateSendTokenFee(
-        123, alice.address, bob32, 20000, "0x0e472a");
-      expect(nativeFee1).to.deep.equal(1920000n);
-
-      const nativeFee2 = await mtMsg.lzCalculateSendMintBudgetFee(
-        123, 50000, "0x0e472a");
-      expect(nativeFee2).to.deep.equal(1280000n);
-    });
-
-    it("sendTokenToChain", async function () {
-      const {mt, mtSide, mtMsgV3: mtMsg, mtMsgSideV3: mtMsgSide, lzEndpoint,
-        operator, alice, bob} = await loadFixture(deployTestFixture);
-      const mtMsgSide32 = addrToBytes32(mtMsgSide.target);
-      const mtMsg32 = addrToBytes32(mtMsg.target);
-      const alice32 = addrToBytes32(alice.address);
-      const bob32 = addrToBytes32(bob.address);
-
-      await mtMsg.setPeer(123, mtMsgSide32);
-      await mtMsgSide.setPeer(100, mtMsg32);
-      await mtSide.setMessager2(mtMsgSide.target);
-      await mtSide.setMessager2(mtMsgSide.target);
-      await mt.setMessager2(mtMsg.target);
-      await mt.setMessager2(mtMsg.target);
-      await mt.connect(operator).increaseMintBudget(50000);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-
-      // ok
-      const expectedData = '0x00000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000000000000000000000000000000000006000000000000000000000000015d34aaf54267db7d7c367839aaf71a00a2c6a650000000000000000000000009965507d1a55bcc2695c58ba16fb37d819b0a4dc00000000000000000000000000000000000000000000000000000000000007d0';
-      const tx = mtMsg.connect(alice).lzSendTokenToChain(
-        123, bob32, 2000, "0x0e472a",
-        {value: 1920000}
-      );
-      await tx;
-      const msgId = await lzEndpoint.lastMsgId();
-      // console.log('msgId:', msgId);
-      await expect(tx).to.emit(mtMsg, "CCSendTokenLZ")
-        .withArgs(msgId, expectedData);
-      await expect(tx).to.emit(mt, "CCSendToken32")
-        .withArgs(alice.address, bob32, 2000);
-
-      // do not return extra ether
-      await expect(
-        mtMsg.connect(alice).lzSendTokenToChain(
-          123, bob32, 3000, "0x0e472a",
-          {value: 2000000}
-        )
-      ).to.changeEtherBalances(
-        [alice.address, lzEndpoint.target], 
-        [-2000000, 2000000]);
-    
-      // fee not enough
-      await expect(
-        mtMsg.connect(alice).lzSendTokenToChain(
-          123, bob32, 4000, "0x0e472a",
-          {value: 1900000}
-        )
-      ).to.be.revertedWith("LZ_INSUFFICIENT_FEE");
-
-      // other side
-      await expect(lzEndpoint.callLzReceiveByMsgId(msgId))
-        .to.emit(mtSide, "CCReceiveToken32")
-        .withArgs(alice32, bob.address, 2000);
-      expect(await mt.balanceOf(alice.address)).to.equal(15000);
-      expect(await mtSide.balanceOf(bob.address)).to.equal(2000);
-    });
-
-    it("sendMintBudgetToChain", async function () {
-      const {mt, mtSide, mtMsgV3: mtMsg, mtMsgSideV3: mtMsgSide, lzEndpoint,
-        operator, alice} = await loadFixture(deployTestFixture);
-      const mtMsgSide32 = addrToBytes32(mtMsgSide.target);
-      const mtMsg32 = addrToBytes32(mtMsg.target);
-
-      await mtMsg.setPeer(123, mtMsgSide32);
-      await mtMsgSide.setPeer(100, mtMsg32);
-      await mtSide.setMessager2(mtMsgSide.target);
-      await mtSide.setMessager2(mtMsgSide.target);
-      await mt.setMessager2(mtMsg.target);
-      await mt.setMessager2(mtMsg.target);
       await mt.connect(operator).increaseMintBudget(50000);
       await mt.connect(operator).mintTo(alice.address, 20000, 0);
       await mt.connect(operator).mintTo(alice.address, 20000, 0);
