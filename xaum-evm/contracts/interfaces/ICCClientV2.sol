@@ -1,18 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.24;
 
-interface ICCClient {
+interface ICCClientV2 {
     function ccReceive(bytes calldata message) external;
 
     function msgOfCcSendToken(
         address sender,
-        address receiver,
+        bytes calldata receiver,
         uint256 value
     ) external view returns (bytes memory message);
 
     function ccSendToken(
         address sender,
-        address receiver,
+        bytes calldata receiver,
         uint256 value
     ) external returns (bytes memory message);
 
@@ -24,5 +24,3 @@ interface ICCClient {
         uint112 value
     ) external returns (bytes memory message);
 }
-
-interface ICCIPClient is ICCClient {}

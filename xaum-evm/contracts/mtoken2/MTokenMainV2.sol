@@ -2,10 +2,10 @@
 pragma solidity ^0.8.24;
 
 import "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
-import "./MToken.sol";
+import "./MTokenV2.sol";
 
 // this contract will be deployed on Ethereum
-contract MTokenMain is MToken {
+contract MTokenMainV2 is MTokenV2 {
     uint constant ORACLE_OFFLINE_THRESHOLD = 2 days;
 
     event SetReserveFeedRequest(address oldAddr, address newAddr, uint64 et);

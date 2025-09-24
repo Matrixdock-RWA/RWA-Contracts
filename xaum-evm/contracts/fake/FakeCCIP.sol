@@ -3,6 +3,7 @@ pragma solidity ^0.8.24;
 
 import {Client} from "@chainlink/contracts-ccip/src/v0.8/ccip/libraries/Client.sol";
 import {CCIPReceiver} from "@chainlink/contracts-ccip/src/v0.8/ccip/applications/CCIPReceiver.sol";
+// import "hardhat/console.sol";
 
 contract FakeRouterClient {
     bytes32 public lastMsgId;
@@ -35,13 +36,13 @@ contract FakeRouterClient {
 
     function callCcipReceiveByMsgId(bytes32 msgId) public {
         Client.EVM2AnyMessage memory msg1 = msgMap[msgId];
-        address receiver = abi.decode(msg1.receiver, (address));
+        address receiver = address(bytes20(msg1.receiver));
         address sender = senderMap[msgId];
 
         Client.Any2EVMMessage memory msg2 = Client.Any2EVMMessage({
             messageId: msgId,
             sourceChainSelector: 100, // hardcoded for test
-            sender: abi.encode(sender),
+            sender: abi.encodePacked(sender),
             data: msg1.data,
             destTokenAmounts: msg1.tokenAmounts
         });

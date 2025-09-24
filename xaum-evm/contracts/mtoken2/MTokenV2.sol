@@ -2,11 +2,11 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PermitUpgradeable.sol";
-import "./DelayedUpgradeable.sol";
-import "./interfaces/ICCClient.sol";
+import "../DelayedUpgradeable.sol";
+import "../interfaces/ICCClientV2.sol";
 // import "hardhat/console.sol";
 
-abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
+abstract contract MTokenBaseV2 is ERC20PermitUpgradeable, DelayedUpgradeable {
     // every chain has its own mintBudget, operator can move mintBudget from one chain to another
     uint112 public mintBudget;
 
@@ -57,7 +57,7 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
 }
 
 // this contract will be deployed on EVM-compatible chains other than Ethereum
-contract MToken is MTokenBase, ICCIPClient {
+contract MTokenV2 is MTokenBaseV2, ICCClientV2 {
     uint64 constant MIN_DELAY = 1 hours;
 
     uint constant TagSendToken = 2;
@@ -73,17 +73,9 @@ contract MToken is MTokenBase, ICCIPClient {
     event SetMessagerEffected(address newAddr);
     event BlockPlaced(address indexed _user);
     event BlockReleased(address indexed _user);
-    event CCSendToken(
-        address indexed sender,
-        address indexed receiver,
-        uint value
-    );
+    event CCSendToken(address indexed sender, bytes receiver, uint value);
     event CCSendMintBudget(uint112 value);
-    event CCReceiveToken(
-        address indexed sender,
-        address indexed receiver,
-        uint value
-    );
+    event CCReceiveToken(bytes sender, address indexed receiver, uint value);
     event CCReceiveMintBudget(uint112 value);
     event Redeem(address indexed customer, uint amount, bytes data);
     event MintRequest(address indexed receiver, uint amount, uint nonce);
@@ -103,6 +95,7 @@ contract MToken is MTokenBase, ICCIPClient {
     error CcSendDisabled();
     error InvalidMsg(uint tag);
     error DelayTooSmall();
+    error InvalidReceiver(uint length);
 
     modifier onlyNotBlocked() {
         _checkBlocked(_msgSender());
@@ -370,18 +363,23 @@ contract MToken is MTokenBase, ICCIPClient {
     // get cross-chain message to estimate cross-chain fees
     function msgOfCcSendToken(
         address sender,
-        address receiver,
+        bytes calldata receiverBytes,
         uint256 value
     ) public view returns (bytes memory message) {
         _checkBlocked(sender);
-        _checkBlocked(receiver);
-        return abi.encode(TagSendToken, abi.encode(sender, receiver, value));
+        if (receiverBytes.length == 20) {
+            address receiver = address(bytes20(receiverBytes));
+            _checkBlocked(receiver);
+        }
+        bytes memory senderBytes = abi.encodePacked(sender);
+        bytes memory body = abi.encode(senderBytes, receiverBytes, value);
+        return abi.encode(TagSendToken, body);
     }
 
     // called by the messager contract to initialize a cross-chain token transfer
     function ccSendToken(
         address sender,
-        address receiver,
+        bytes calldata receiver,
         uint256 value
     ) public onlyMessager returns (bytes memory message) {
         if (disableCcSend) {
@@ -414,12 +412,14 @@ contract MToken is MTokenBase, ICCIPClient {
 
     // finish a cross-chain token transfer
     function ccReceiveToken(bytes memory message) internal {
-        (address sender, address receiver, uint value) = abi.decode(
-            message,
-            (address, address, uint)
-        );
+        (bytes memory senderBytes, bytes memory receiverBytes, uint value) = abi
+            .decode(message, (bytes, bytes, uint));
+        if (receiverBytes.length != 20) {
+            revert InvalidReceiver(receiverBytes.length);
+        }
+        address receiver = address(bytes20(receiverBytes));
         _mint(receiver, value);
-        emit CCReceiveToken(sender, receiver, value);
+        emit CCReceiveToken(senderBytes, receiver, value);
     }
 
     // finish a cross-chain mint-budget transfer
