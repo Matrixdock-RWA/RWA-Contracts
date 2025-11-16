@@ -273,8 +273,13 @@ pub struct Initialize<'info> {
         space =  8 + 32 + 32 + 32 + 4 + 32 * MAX_ACCEPTED_TOKENS + 4 + 32 * MAX_ACCEPTED_TOKENS + 1,  // allocate MAX_ACCEPTED_TOKENS tokens for pool_a and MAX_ACCEPTED_TOKENS for pool_b)]
     )]
     pub state: Account<'info, State>,
+
     #[account(mut)]
     pub owner: Signer<'info>,
+
+    #[ account(address = crate::ID) ]
+    pub program: Signer<'info>,
+
     pub system_program: Program<'info, System>,
 }
 
