@@ -1,5 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
+use anchor_spl::associated_token::AssociatedToken;
 
 declare_id!("4S5DwBpHosKNWpfqjzXRvieqPhpdNCJwqNuogCdEZ5ax");
 
@@ -108,6 +109,10 @@ pub mod xaum_minter {
         timestamp: i64,
     ) -> Result<()> {
         let state = &ctx.accounts.state;
+        require!(
+            for_token == ctx.accounts.for_token.key(),
+            ErrorCode::InvalidForToken
+        );
         require!(
             state.accepted_by_a.contains(&transferred_token)
                 && transferred_token == ctx.accounts.transferred_token.key(),
@@ -315,6 +320,19 @@ pub struct RequestMint<'info> {
         associated_token::authority = requestor)]
     pub requestor_transferred_token_account: Box<Account<'info, TokenAccount>>,
 
+    /// CHECK: token mint of for token
+    pub for_token: Account<'info, Mint>,
+
+    /// The ATA of the requestor for for_token
+    #[account(
+        init_if_needed,
+        payer = requestor,
+        associated_token::mint = for_token,
+        associated_token::authority = requestor,
+        token::token_program = token_program,
+    )]
+    pub for_token_account: Box<Account<'info, TokenAccount>>,
+
     /// The pool_account_a's ATA to receive tokens
     #[account(mut,
         associated_token::mint = transferred_token,
@@ -325,6 +343,10 @@ pub struct RequestMint<'info> {
     pub pool_account_a: AccountInfo<'info>,
 
     pub token_program: Program<'info, Token>,
+
+    pub associated_token_program: Program<'info, AssociatedToken>,
+
+    pub system_program: Program<'info, System>,
 }
 
 impl<'info> RequestMint<'info> {
@@ -395,4 +417,6 @@ pub enum ErrorCode {
     InvalidPoolAccountB,
     #[msg("EXCEEDS_MAX_ACCEPTED_TOKENS")]
     ExceedsMaxAcceptedTokens,
+    #[msg("InvalidForToken")]
+    InvalidForToken,
 }
