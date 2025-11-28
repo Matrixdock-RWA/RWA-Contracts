@@ -1,15 +1,21 @@
 pub mod authority;
 pub mod create;
+pub mod extensions;
+pub mod force_transfer;
 pub mod freeze;
-pub mod metadata;
 pub mod mint;
 pub mod redeem;
 pub mod thaw;
+pub mod transfer_fee_harvest;
+pub mod transfer_fee_withdraw;
 
 pub use authority::*;
 pub use create::*;
+pub use extensions::*;
+pub use force_transfer::*;
 pub use freeze::*;
-pub use metadata::*;
 pub use mint::*;
 pub use redeem::*;
 pub use thaw::*;
+pub use transfer_fee_harvest::*;
+pub use transfer_fee_withdraw::*;

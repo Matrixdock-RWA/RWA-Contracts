@@ -1,6 +1,6 @@
 import fs from "fs";
 import { Keypair, PublicKey } from "@solana/web3.js";
-import { getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
 import * as anchor from "@coral-xyz/anchor";
 import type { XaumToken } from "../../target/types/xaum_token";
 
@@ -17,6 +17,9 @@ const programKeypair = Keypair.fromSecretKey(
 
 
 export function getATA(owner: PublicKey, allowOwnerOffCurve=false) {
+    return getAssociatedTokenAddressSync(mintPDA, owner, allowOwnerOffCurve, TOKEN_2022_PROGRAM_ID);
+}
+export function getATA_old(owner: PublicKey, allowOwnerOffCurve=false) {
     return getAssociatedTokenAddressSync(mintPDA, owner, allowOwnerOffCurve);
 }
 
@@ -29,7 +32,10 @@ export async function getTokenState() {
 export async function createToken(payer: Keypair, name: string, symbol: string, uri: string, initDelay: number) {
     await program.methods
         .createToken(name, symbol, uri, new anchor.BN(initDelay))
-        .accounts({payer: payer.publicKey})
+        .accounts({
+            payer: payer.publicKey,
+            mintAccount: mintPDA,
+        })
         .signers([payer, programKeypair])
         .rpc();
 }
@@ -70,13 +76,6 @@ export async function setDelay(signer: Keypair, newDelay: number) {
         .signers([signer])
         .rpc();
 }
-export async function updateMetadata(signer: Keypair, uri: string) {
-    await program.methods
-        .updateMetadata(uri)
-        .accounts({owner: signer.publicKey})
-        .signers([signer])
-        .rpc();
-}
 export async function revokeNextOwner(signer: Keypair) {
     await program.methods
         .revokeNextOwner()
@@ -87,6 +86,29 @@ export async function revokeNextOwner(signer: Keypair) {
 export async function revokeNextRevoker(signer: Keypair) {
     await program.methods
         .revokeNextRevoker()
+        .accounts({owner: signer.publicKey})
+        .signers([signer])
+        .rpc();
+}
+
+// extensions
+export async function updateMetadata(signer: Keypair, newUri: string) {
+    await program.methods
+        .updateMetadata(newUri)
+        .accounts({owner: signer.publicKey})
+        .signers([signer])
+        .rpc();
+}
+export async function updateTransferFee(signer: Keypair, transferFeeBasisPoints: number, maximumFee: number) {
+    await program.methods
+        .updateTransferFee(transferFeeBasisPoints, new anchor.BN(maximumFee))
+        .accounts({owner: signer.publicKey})
+        .signers([signer])
+        .rpc();
+}
+export async function setPaused(signer: Keypair, paused: boolean) {
+    await program.methods
+        .setPaused(paused)
         .accounts({owner: signer.publicKey})
         .signers([signer])
         .rpc();
@@ -117,7 +139,7 @@ export async function revokeNextDelay(signer: Keypair) {
 export async function revokeNextMint(signer: Keypair) {
     await program.methods
         .revokeMint()
-        .accounts({revoker: signer.publicKey} as any)
+        .accounts({revoker: signer.publicKey})
         .signers([signer])
         .rpc();
 }
@@ -138,7 +160,8 @@ export async function mint(signer: Keypair, to: PublicKey, amt: number, idx=0, a
             operator: signer.publicKey,
             recipient: to,
             associatedTokenAccount: toATA || getATA(to, allowOwnerOffCurve),
-        } as any)
+            // tokenProgram: TOKEN_2022_PROGRAM_ID.toBase58(),
+        })
         .signers([signer])
         .rpc();
 }
@@ -147,8 +170,10 @@ export async function redeem(signer: Keypair, amt: number, customer: PublicKey, 
         .redeemToken(new anchor.BN(amt), customer, data)
         .accounts({
             operator: signer.publicKey,
+            mintAccount: mintPDA,
             associatedTokenAccount: getATA(signer.publicKey),
-        } as any)
+            tokenProgram: TOKEN_2022_PROGRAM_ID.toBase58(),
+        })
         .signers([signer])
         .rpc();
 }
@@ -157,52 +182,44 @@ export async function addToBlockedList(signer: Keypair, user: PublicKey) {
         .addToBlockedList()
         .accounts({
             operator: signer.publicKey,
-            tokenAccount: getATA(user),
-            } as any)
-            .signers([signer])
-            .rpc();
+            targetTokenAccount: getATA(user),
+        })
+        .signers([signer])
+        .rpc();
 }
 export async function removeFromBlockedList(signer: Keypair, user: PublicKey) {
     await program.methods
         .removeFromBlockedList()
         .accounts({
             operator: signer.publicKey,
-            tokenAccount: getATA(user),
+            targetTokenAccount: getATA(user),
+        })
+        .signers([signer])
+        .rpc();
+}
+
+export async function forcedTransfer(signer: Keypair, from: PublicKey, to: PublicKey, amount: number) {
+    await program.methods
+        .forceTransferTokens(new anchor.BN(amount))
+        .accounts({
+          owner: signer.publicKey,
+          senderTokenAccount: getATA(from),
+          recipientTokenAccount: getATA(to),
+          // mintAccount: mintPDA,
+          // tokenProgram: TOKEN_2022_PROGRAM_ID.toBase58(),
         } as any)
         .signers([signer])
         .rpc();
 }
 
-// cross chain
-export async function ccReceive(payer: Keypair, messager: Keypair, recipient: PublicKey, msg: Buffer) {
+export async function withdrawTransferFees(signer: Keypair, toAddr: PublicKey) {
     await program.methods
-        .ccReceive(msg)
+        .withdrawTransferFees()
         .accounts({
-            payer: payer.publicKey,
-            messager: messager.publicKey,
-            recipient: recipient,
-            associatedTokenAccount: getATA(recipient),
-        } as any)
-        .signers([payer, messager])
-        .rpc();
-}
-export async function ccSendToken(messager: Keypair, sender: Keypair, receiver: Buffer, amount: number) {
-    await program.methods
-        .ccSendToken(receiver, new anchor.BN(amount))
-        .accounts({
-            messager: messager.publicKey,
-            sender: sender.publicKey,
-        } as any)
-        .signers([messager, sender])
-        .rpc();
-}
-export async function ccSendMintBudget(messager: Keypair, operator: Keypair, amount: number) {
-    await program.methods
-        .ccSendMintBudget(new anchor.BN(amount))
-        .accounts({
-            messager: messager.publicKey,
-            operator: operator.publicKey,
-        } as any)
-        .signers([messager, operator])
+            owner: signer.publicKey,
+            mintAccount: mintPDA,
+            tokenAccount: getATA(toAddr),
+        })
+        .signers([signer])
         .rpc();
 }

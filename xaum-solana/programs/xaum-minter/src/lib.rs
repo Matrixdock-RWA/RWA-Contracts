@@ -1,8 +1,8 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::{self, Mint, Token, TokenAccount, Transfer};
 use anchor_spl::associated_token::AssociatedToken;
+use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked};
 
-declare_id!("4S5DwBpHosKNWpfqjzXRvieqPhpdNCJwqNuogCdEZ5ax");
+declare_id!("7oRKE73rQCQ13hrmGrVUmUwg7S6LzEV8yuV3GTgAzjGY");
 
 #[program]
 pub mod xaum_minter {
@@ -127,7 +127,12 @@ pub mod xaum_minter {
             clock.unix_timestamp <= timestamp + DELAY_MAX,
             ErrorCode::InvalidTimestamp
         );
-        token::transfer(ctx.accounts.into_transfer_to_pool_a_ctx(), amount)?;
+        let decimals = ctx.accounts.transferred_token.decimals;
+        token_interface::transfer_checked(
+            ctx.accounts.into_transfer_to_pool_a_ctx(),
+            amount,
+            decimals,
+        )?;
         msg!(
             "MintRequest: transferred_token={}, for_token={}, requestor={}, pool={}, pool_ata={}, amount={}, preprice={}, slippage={}",
             transferred_token,
@@ -176,7 +181,12 @@ pub mod xaum_minter {
             clock.unix_timestamp <= timestamp + DELAY_MAX,
             ErrorCode::InvalidTimestamp
         );
-        token::transfer(ctx.accounts.into_transfer_to_pool_b_ctx(), amount)?;
+        let decimals = ctx.accounts.transferred_token.decimals;
+        token_interface::transfer_checked(
+            ctx.accounts.into_transfer_to_pool_b_ctx(),
+            amount,
+            decimals,
+        )?;
         msg!(
             "RedeemRequest: transferred_token={}, for_token={}, requestor={}, pool={}, pool_ata={}, amount={}, preprice={}, slippage={}",
             transferred_token,
@@ -312,16 +322,24 @@ pub struct RequestMint<'info> {
     pub requestor: Signer<'info>,
 
     /// CHECK: token mint of transferred token
-    pub transferred_token: Account<'info, Mint>,
+    #[account(
+        mint::token_program = token_program_transferred_token
+    )]
+    pub transferred_token: Box<InterfaceAccount<'info, Mint>>,
 
     /// The ATA of the requestor for transferred_token
     #[account(mut,
         associated_token::mint = transferred_token,
-        associated_token::authority = requestor)]
-    pub requestor_transferred_token_account: Box<Account<'info, TokenAccount>>,
+        associated_token::authority = requestor,
+        associated_token::token_program = token_program_transferred_token
+    )]
+    pub requestor_transferred_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// CHECK: token mint of for token
-    pub for_token: Account<'info, Mint>,
+    #[account(
+        mint::token_program = token_program_for_token
+    )]
+    pub for_token: Box<InterfaceAccount<'info, Mint>>,
 
     /// The ATA of the requestor for for_token
     #[account(
@@ -329,20 +347,24 @@ pub struct RequestMint<'info> {
         payer = requestor,
         associated_token::mint = for_token,
         associated_token::authority = requestor,
-        token::token_program = token_program,
+        associated_token::token_program = token_program_for_token,
     )]
-    pub for_token_account: Box<Account<'info, TokenAccount>>,
+    pub for_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// The pool_account_a's ATA to receive tokens
     #[account(mut,
         associated_token::mint = transferred_token,
-        associated_token::authority = pool_account_a)]
-    pub pool_token_account_a: Box<Account<'info, TokenAccount>>,
+        associated_token::authority = pool_account_a,
+        associated_token::token_program = token_program_transferred_token
+    )]
+    pub pool_token_account_a: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// CHECK: pool account A
     pub pool_account_a: AccountInfo<'info>,
 
-    pub token_program: Program<'info, Token>,
+    pub token_program_transferred_token: Interface<'info, TokenInterface>,
+
+    pub token_program_for_token: Interface<'info, TokenInterface>,
 
     pub associated_token_program: Program<'info, AssociatedToken>,
 
@@ -350,13 +372,17 @@ pub struct RequestMint<'info> {
 }
 
 impl<'info> RequestMint<'info> {
-    fn into_transfer_to_pool_a_ctx(&self) -> CpiContext<'_, '_, '_, 'info, Transfer<'info>> {
-        let cpi_accounts = Transfer {
+    fn into_transfer_to_pool_a_ctx(&self) -> CpiContext<'_, '_, '_, 'info, TransferChecked<'info>> {
+        let cpi_accounts = TransferChecked {
+            mint: self.transferred_token.to_account_info(),
             from: self.requestor_transferred_token_account.to_account_info(),
             to: self.pool_token_account_a.to_account_info(),
             authority: self.requestor.to_account_info(),
         };
-        CpiContext::new(self.token_program.to_account_info(), cpi_accounts)
+        CpiContext::new(
+            self.token_program_transferred_token.to_account_info(),
+            cpi_accounts,
+        )
     }
 }
 
@@ -372,34 +398,45 @@ pub struct RequestRedeem<'info> {
     pub requestor: Signer<'info>,
 
     /// CHECK: token mint of transferred token
-    pub transferred_token: Account<'info, Mint>,
+    #[account(
+        mint::token_program = token_program_transferred_token
+    )]
+    pub transferred_token: Box<InterfaceAccount<'info, Mint>>,
 
     /// The ATA of the requestor for transferred_token
     #[account(mut,
         associated_token::mint = transferred_token,
-        associated_token::authority = requestor)]
-    pub requestor_transferred_token_account: Box<Account<'info, TokenAccount>>,
+        associated_token::authority = requestor,
+        associated_token::token_program = token_program_transferred_token
+    )]
+    pub requestor_transferred_token_account: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// The pool_account_b's ATA to receive tokens
     #[account(mut,
         associated_token::mint = transferred_token,
-        associated_token::authority = pool_account_b)]
-    pub pool_token_account_b: Box<Account<'info, TokenAccount>>,
+        associated_token::authority = pool_account_b,
+        associated_token::token_program = token_program_transferred_token
+    )]
+    pub pool_token_account_b: Box<InterfaceAccount<'info, TokenAccount>>,
 
     /// CHECK: pool account b
     pub pool_account_b: AccountInfo<'info>,
 
-    pub token_program: Program<'info, Token>,
+    pub token_program_transferred_token: Interface<'info, TokenInterface>,
 }
 
 impl<'info> RequestRedeem<'info> {
-    fn into_transfer_to_pool_b_ctx(&self) -> CpiContext<'_, '_, '_, 'info, Transfer<'info>> {
-        let cpi_accounts = Transfer {
+    fn into_transfer_to_pool_b_ctx(&self) -> CpiContext<'_, '_, '_, 'info, TransferChecked<'info>> {
+        let cpi_accounts = TransferChecked {
+            mint: self.transferred_token.to_account_info(),
             from: self.requestor_transferred_token_account.to_account_info(),
             to: self.pool_token_account_b.to_account_info(),
             authority: self.requestor.to_account_info(),
         };
-        CpiContext::new(self.token_program.to_account_info(), cpi_accounts)
+        CpiContext::new(
+            self.token_program_transferred_token.to_account_info(),
+            cpi_accounts,
+        )
     }
 }
 

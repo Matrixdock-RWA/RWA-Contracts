@@ -6,7 +6,7 @@ pub mod mtoken;
 use anchor_lang::prelude::*;
 use instructions::*;
 
-declare_id!("F6DjYVsndrWQayFnRvDpgCVmgCFqLempxxCmATbKjcoi");
+declare_id!("3cGCHMomYzqoSVYB7EcL1zvvDFFuNRrzfLTWcKpdrx5u");
 
 #[program]
 pub mod xaum_token {
@@ -91,7 +91,33 @@ pub mod xaum_token {
         authority::revoke_next_delay(ctx)
     }
 
-    pub fn update_metadata(ctx: Context<UpdateMetadata>, uri: String) -> Result<()> {
-        metadata::update_metadata(ctx, uri)
+    pub fn force_transfer_tokens(ctx: Context<ForceTransferTokens>, amount: u64) -> Result<()> {
+        force_transfer::force_transfer_tokens(ctx, amount)
+    }
+
+    pub fn update_metadata(ctx: Context<UpdateExtension>, uri: String) -> Result<()> {
+        extensions::update_metadata(ctx, uri)
+    }
+
+    pub fn update_transfer_fee(
+        ctx: Context<UpdateExtension>,
+        transfer_fee_basis_points: u16,
+        maximum_fee: u64,
+    ) -> Result<()> {
+        extensions::update_transfer_fee(ctx, transfer_fee_basis_points, maximum_fee)
+    }
+
+    pub fn set_paused(ctx: Context<UpdateExtension>, paused: bool) -> Result<()> {
+        extensions::set_paused(ctx, paused)
+    }
+
+    pub fn harvest_transfer_fees<'info>(
+        ctx: Context<'_, '_, 'info, 'info, Harvest<'info>>,
+    ) -> Result<()> {
+        transfer_fee_harvest::process_harvest(ctx)
+    }
+
+    pub fn withdraw_transfer_fees(ctx: Context<Withdraw>) -> Result<()> {
+        transfer_fee_withdraw::process_withdraw(ctx)
     }
 }

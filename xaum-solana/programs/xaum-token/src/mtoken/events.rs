@@ -96,3 +96,10 @@ pub struct BlockPlaced {
 pub struct BlockReleased {
     pub user: Pubkey,
 }
+
+#[event]
+pub struct ForceTransfer {
+    pub from: Pubkey,
+    pub to: Pubkey,
+    pub amount: u64,
+}

@@ -2,7 +2,7 @@ use {
     anchor_lang::prelude::*,
     anchor_spl::{
         associated_token::AssociatedToken,
-        token::{burn, Burn, Mint, Token, TokenAccount},
+        token_interface::{self, Burn, Mint, Token2022, TokenAccount},
     },
 };
 
@@ -10,6 +10,7 @@ use super::super::mtoken::{errors::ErrorCode, events::Redeem, state::State};
 
 #[derive(Accounts)]
 pub struct RedeemToken<'info> {
+    #[account(mut)]
     pub operator: Signer<'info>,
 
     // Mint account address is a PDA
@@ -18,16 +19,17 @@ pub struct RedeemToken<'info> {
         seeds = [b"mint"],
         bump
     )]
-    pub mint_account: Account<'info, Mint>,
+    pub mint_account: InterfaceAccount<'info, Mint>,
 
-    // Create Associated Token Account, if needed
     // This is the account that will hold the minted tokens
     #[account(
-        mut,
+        init_if_needed,
+        payer = operator,
         associated_token::mint = mint_account,
         associated_token::authority = operator,
+        token::token_program = token_program,
     )]
-    pub associated_token_account: Account<'info, TokenAccount>,
+    pub associated_token_account: InterfaceAccount<'info, TokenAccount>,
 
     #[account(
         mut,
@@ -37,7 +39,7 @@ pub struct RedeemToken<'info> {
     )]
     state: Account<'info, State>,
 
-    pub token_program: Program<'info, Token>,
+    pub token_program: Program<'info, Token2022>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
 }
@@ -48,12 +50,8 @@ pub fn redeem_token(
     customer: Pubkey,
     data: Vec<u8>,
 ) -> Result<()> {
-    msg!("redeem_token...");
-    msg!("mint_account: {}", &ctx.accounts.mint_account.key());
-    msg!("ATA: {}", &ctx.accounts.associated_token_account.key());
-
     // Invoke the burn instruction on the token program
-    burn(
+    token_interface::burn(
         CpiContext::new(
             ctx.accounts.token_program.to_account_info(),
             Burn {
