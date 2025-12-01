@@ -10,12 +10,12 @@ use super::super::mtoken::{errors::ErrorCode, state::State};
 
 #[derive(Accounts)]
 pub struct Withdraw<'info> {
-    pub owner: Signer<'info>,
+    pub operator: Signer<'info>,
 
     #[account(
         seeds = [b"state"],
         bump = state.bump,
-        has_one = owner @ ErrorCode::NotOwner,
+        has_one = operator @ ErrorCode::NotOperator,
     )]
     state: Account<'info, State>,
 

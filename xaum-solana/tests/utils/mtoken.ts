@@ -216,7 +216,7 @@ export async function withdrawTransferFees(signer: Keypair, toAddr: PublicKey) {
     await program.methods
         .withdrawTransferFees()
         .accounts({
-            owner: signer.publicKey,
+            operator: signer.publicKey,
             mintAccount: mintPDA,
             tokenAccount: getATA(toAddr),
         })

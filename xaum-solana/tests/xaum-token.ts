@@ -463,7 +463,7 @@ describe("MToken", () => {
 
         // TODO: fix me
         it("transfer_fee", async () => {
-            await checkErrorCode(withdrawTransferFees(user1, user1.publicKey), "NotOwner");
+            await checkErrorCode(withdrawTransferFees(user1, user1.publicKey), "NotOperator");
 
             await updateTransferFee(owner, 100, 1000); // 1% fee
             // wait nexe epoch
