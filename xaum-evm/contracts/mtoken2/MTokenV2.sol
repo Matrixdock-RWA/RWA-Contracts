@@ -63,6 +63,11 @@ contract MTokenV2 is MTokenBaseV2, ICCClientV2 {
     uint constant TagSendToken = 2;
     uint constant TagSendMintBudget = 3;
 
+    uint8 constant LOCAL_DECIMALS = 18;
+    uint8 constant SHARED_DECIMALS = 9;
+    uint256 constant DECIMALS_SCALE_FACTOR =
+        10 ** (LOCAL_DECIMALS - SHARED_DECIMALS);
+
     event SetDelayRequest(uint64 oldDelay, uint64 newDelay, uint64 et);
     event SetDelayEffected(uint64 newDelay);
     event SetOperatorRequest(address oldAddr, address newAddr, uint64 et);
@@ -96,6 +101,7 @@ contract MTokenV2 is MTokenBaseV2, ICCClientV2 {
     error InvalidMsg(uint tag);
     error DelayTooSmall();
     error InvalidReceiver(uint length);
+    error PrecisionLost();
 
     modifier onlyNotBlocked() {
         _checkBlocked(_msgSender());
@@ -360,6 +366,22 @@ contract MTokenV2 is MTokenBaseV2, ICCClientV2 {
     }
 
     //-------------
+
+    function convertToSharedDecimals(
+        uint256 value
+    ) private pure returns (uint256) {
+        if (value % DECIMALS_SCALE_FACTOR != 0) {
+            revert PrecisionLost();
+        }
+        return value / DECIMALS_SCALE_FACTOR;
+    }
+
+    function convertToLocalDecimals(
+        uint256 value
+    ) private pure returns (uint256) {
+        return value * DECIMALS_SCALE_FACTOR;
+    }
+
     // get cross-chain message to estimate cross-chain fees
     function msgOfCcSendToken(
         address sender,
@@ -371,6 +393,7 @@ contract MTokenV2 is MTokenBaseV2, ICCClientV2 {
             address receiver = address(bytes20(receiverBytes));
             _checkBlocked(receiver);
         }
+        value = convertToSharedDecimals(value);
         bytes memory senderBytes = abi.encodePacked(sender);
         bytes memory body = abi.encode(senderBytes, receiverBytes, value);
         return abi.encode(TagSendToken, body);
@@ -395,6 +418,7 @@ contract MTokenV2 is MTokenBaseV2, ICCClientV2 {
         uint112 value
     ) public view returns (bytes memory message) {
         _checkMintBudget(value);
+        value = uint112(convertToSharedDecimals(value));
         return abi.encode(TagSendMintBudget, abi.encode(value));
     }
 
@@ -418,6 +442,7 @@ contract MTokenV2 is MTokenBaseV2, ICCClientV2 {
             revert InvalidReceiver(receiverBytes.length);
         }
         address receiver = address(bytes20(receiverBytes));
+        value = convertToLocalDecimals(value);
         _mint(receiver, value);
         emit CCReceiveToken(senderBytes, receiver, value);
     }
@@ -425,6 +450,7 @@ contract MTokenV2 is MTokenBaseV2, ICCClientV2 {
     // finish a cross-chain mint-budget transfer
     function ccReceiveMintBudget(bytes memory message) internal {
         uint112 value = abi.decode(message, (uint112));
+        value = uint112(convertToLocalDecimals(value));
         mintBudget += value;
         emit CCReceiveMintBudget(value);
     }

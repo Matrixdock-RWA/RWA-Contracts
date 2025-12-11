@@ -22,6 +22,8 @@ calculateCcSendMintBudgetFeeAndMessage | lzCalculateSendMintBudgetFee
 
 */
 
+/// @custom:oz-upgrades-unsafe-allow constructor
+/// @custom:oz-upgrades-unsafe-allow state-variable-immutable
 contract MTokenMessagerV3 is CCIPReceiver, MTokenMessagerLZV2 {
     using Address for address payable;
 
@@ -36,15 +38,11 @@ contract MTokenMessagerV3 is CCIPReceiver, MTokenMessagerLZV2 {
     error NotInAllowListed(uint64 chainSelector, bytes messager);
     error InsufficientFee(uint256 required, uint256 actual);
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(
         address _ccipRouter,
-        address _ccipClient,
-        address _lzEndpoint,
-        address _initialOwner
-    )
-        CCIPReceiver(_ccipRouter)
-        MTokenMessagerLZV2(_ccipClient, _lzEndpoint, _initialOwner)
-    {}
+        address _lzEndpoint
+    ) CCIPReceiver(_ccipRouter) MTokenMessagerLZV2(_lzEndpoint) {}
 
     // CCIP related config.
     function setAllowedPeer(

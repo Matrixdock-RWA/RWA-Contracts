@@ -2,12 +2,14 @@
 pragma solidity ^0.8.24;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {OApp, Origin, MessagingFee} from "@layerzerolabs/oapp-evm/contracts/oapp/OApp.sol";
+import {OAppUpgradeable, Origin, MessagingFee} from "@layerzerolabs/oapp-evm-upgradeable/contracts/oapp/OAppUpgradeable.sol";
 import {MessagingReceipt} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
-import {MTokenMessagerBase} from "../MTokenMessagerBase.sol";
+import {MTokenMessagerBaseUpgradeable} from "./MTokenMessagerBaseUpgradeable.sol";
 import {ICCClientV2} from "../interfaces/ICCClientV2.sol";
 
-contract MTokenMessagerLZV2 is MTokenMessagerBase, OApp {
+/// @custom:oz-upgrades-unsafe-allow constructor
+/// @custom:oz-upgrades-unsafe-allow state-variable-immutable
+contract MTokenMessagerLZV2 is MTokenMessagerBaseUpgradeable, OAppUpgradeable {
     bool public lzPaused;
 
     event CCReceiveLZ(bytes32 indexed messageID, bytes messageData);
@@ -20,15 +22,23 @@ contract MTokenMessagerLZV2 is MTokenMessagerBase, OApp {
         _;
     }
 
-    constructor(
-        address _ccipClient,
-        address _endpoint,
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(address _endpoint) OAppUpgradeable(_endpoint) {}
+
+    function initialize(
+        address _ccClient,
         address _initialOwner
-    )
-        MTokenMessagerBase(_ccipClient)
-        OApp(_endpoint, _initialOwner)
-        Ownable(_initialOwner)
-    {}
+    ) public initializer {
+        __MTokenMessagerLZV2_init(_ccClient, _initialOwner);
+    }
+
+    function __MTokenMessagerLZV2_init(
+        address _ccClient,
+        address _initialOwner
+    ) internal onlyInitializing {
+        __OApp_init(_initialOwner);
+        __MTokenMessagerBase_init(_ccClient, _initialOwner);
+    }
 
     function setLZPaused(bool isPaused) public onlyOwner {
         lzPaused = isPaused;
