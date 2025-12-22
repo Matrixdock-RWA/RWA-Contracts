@@ -28,6 +28,9 @@ import {
     withdrawTransferFees,
 } from "./utils/mtoken";
 
+const minDelay = 3600; // 1 hour
+const maxDelay = 48 * 3600; // 48 hours
+
 const initDelay = 3;
 const xaumName = "Solana Gold";
 const xaumSymbol = "GOLDSOL";
@@ -188,6 +191,13 @@ describe("MToken", () => {
         } // end of for
 
     }); // end of describe
+
+    describe("state config", () => {
+        it("setDelay", async () => {
+            await checkErrorCode(setDelay(owner, minDelay - 1), "DelayBelowMinimum");
+            await checkErrorCode(setDelay(owner, maxDelay + 1), "DelayExceedsMaximum");
+        });
+    });
 
     describe("extensions config", () => {
 

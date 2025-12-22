@@ -17,6 +17,12 @@ pub enum ErrorCode {
     #[msg("NotEffective")]
     NotEffective,
 
+    #[msg("DelayBelowMinimum")]
+    DelayBelowMinimum,
+
+    #[msg("DelayExceedsMaximum")]
+    DelayExceedsMaximum,
+
     #[msg("IncorrectMintInfo")]
     IncorrectMintInfo,
 

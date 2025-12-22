@@ -2,6 +2,7 @@
 // This is to demonstrate that the same PDA can be used for both the address of an account and CPI signing
 use anchor_lang::prelude::*;
 
+use super::super::mtoken::xaum::{MAX_ACCEPTABLE_DELAY, MIN_ACCEPTABLE_DELAY};
 use super::super::mtoken::{errors::ErrorCode, events::*, state::State};
 
 #[derive(Accounts)]
@@ -174,6 +175,15 @@ pub fn revoke_next_messager(ctx: Context<RevokerOp>) -> Result<()> {
 //================================================================================
 
 pub fn set_delay(ctx: Context<OwnerOp>, new_delay: i64) -> Result<()> {
+    require!(
+        new_delay >= MIN_ACCEPTABLE_DELAY,
+        ErrorCode::DelayBelowMinimum
+    );
+    require!(
+        new_delay <= MAX_ACCEPTABLE_DELAY,
+        ErrorCode::DelayExceedsMaximum
+    );
+
     let state = &mut ctx.accounts.state;
     let clock = Clock::get()?;
     if state.next_delay_et == 0 {
