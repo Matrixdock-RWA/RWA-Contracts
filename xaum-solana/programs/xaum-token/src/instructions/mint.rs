@@ -1,11 +1,8 @@
 use {
     anchor_lang::prelude::*,
     anchor_spl::{
-        associated_token::{
-            create_idempotent, get_associated_token_address_with_program_id, AssociatedToken,
-            Create,
-        },
-        token_interface::{self, Mint, MintTo, Token2022},
+        associated_token::AssociatedToken,
+        token_interface::{self, Mint, MintTo, Token2022, TokenAccount},
     },
 };
 
@@ -23,9 +20,14 @@ pub struct MintToken<'info> {
     /// CHECK: recipient account can be a PDA or multisig
     pub recipient: UncheckedAccount<'info>,
 
-    /// CHECK: we will check the ATA later since it's may not initialized yet
-    #[account(mut)]
-    pub associated_token_account: UncheckedAccount<'info>,
+    // ATA must be initialized before minting
+    #[account(
+        mut,
+        associated_token::mint = mint_account,
+        associated_token::authority = recipient,
+        associated_token::token_program = token_program,
+    )]
+    pub associated_token_account: InterfaceAccount<'info, TokenAccount>,
 
     // Mint account address is a PDA
     #[account(
@@ -51,17 +53,6 @@ pub struct MintToken<'info> {
 pub fn mint_token(ctx: Context<MintToken>, amount: u64, nonce: [u8; 32]) -> Result<()> {
     let recipient_key = ctx.accounts.recipient.key();
     let state = &mut ctx.accounts.state;
-
-    // check ATA
-    let expected_ata = get_associated_token_address_with_program_id(
-        &recipient_key,
-        &ctx.accounts.mint_account.key(),
-        ctx.accounts.token_program.key,
-    );
-    require!(
-        expected_ata == *ctx.accounts.associated_token_account.key,
-        ErrorCode::InvalidATA,
-    );
 
     let clock = Clock::get()?;
     if state.next_mint_et == 0 {
@@ -91,19 +82,6 @@ pub fn mint_token(ctx: Context<MintToken>, amount: u64, nonce: [u8; 32]) -> Resu
 
     require!(state.mint_budget >= amount, ErrorCode::MintBudgetNotEnough);
     state.mint_budget -= amount;
-
-    // create ATA if not initialized
-    create_idempotent(CpiContext::new(
-        ctx.accounts.associated_token_program.to_account_info(),
-        Create {
-            payer: ctx.accounts.operator.to_account_info(),
-            associated_token: ctx.accounts.associated_token_account.to_account_info(),
-            authority: ctx.accounts.recipient.to_account_info(),
-            mint: ctx.accounts.mint_account.to_account_info(),
-            system_program: ctx.accounts.system_program.to_account_info(),
-            token_program: ctx.accounts.token_program.to_account_info(),
-        },
-    ))?;
 
     // PDA signer seeds
     let signer_seeds: &[&[&[u8]]] = &[&[b"mint", &[ctx.bumps.mint_account]]];

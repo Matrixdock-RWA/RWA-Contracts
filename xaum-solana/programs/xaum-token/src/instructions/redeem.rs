@@ -23,11 +23,10 @@ pub struct RedeemToken<'info> {
 
     // This is the account that will hold the minted tokens
     #[account(
-        init_if_needed,
-        payer = operator,
+        mut,
         associated_token::mint = mint_account,
         associated_token::authority = operator,
-        token::token_program = token_program,
+        associated_token::token_program = token_program,
     )]
     pub associated_token_account: InterfaceAccount<'info, TokenAccount>,
 

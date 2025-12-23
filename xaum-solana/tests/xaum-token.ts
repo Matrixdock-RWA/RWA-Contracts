@@ -387,13 +387,15 @@ describe("MToken", () => {
         it("init_after_execute", async () => {
             const user = Keypair.generate();
 
-            await checkErrorCode(mint(operator, user1.publicKey, 100, 0, false, user2.publicKey), "InvalidATA");
-            await checkErrorCode(mint(operator, user1.publicKey, 100, 0, false, user.publicKey), "InvalidATA");
-            await checkErrorCode(mint(operator, user.publicKey, 100, 0, false, user2.publicKey), "InvalidATA");
+            // const errCode = "ConstraintTokenOwner";
+            const errMsg = "A token owner constraint was violated";
+            await checkErrorMsg(mint(operator, user1.publicKey, 100, 0, false, user2.publicKey), errMsg);
+            await checkErrorMsg(mint(operator, user1.publicKey, 100, 0, false, user.publicKey), errMsg);
+            await checkErrorMsg(mint(operator, user.publicKey, 100, 0, false, user2.publicKey), errMsg);
 
             await mint(operator, user.publicKey, 300);
             await increaseBlockTime(provider, initDelay);
-            await checkErrorMsg(getTokenAccount(user.publicKey), "TokenAccountNotFoundError");
+            // await checkErrorMsg(getTokenAccount(user.publicKey), "TokenAccountNotFoundError");
             // assert.equal(a.isInitialized, false);
 
             await mint(operator, user.publicKey, 300);

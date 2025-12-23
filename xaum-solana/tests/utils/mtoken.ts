@@ -1,6 +1,9 @@
 import fs from "fs";
 import { Keypair, PublicKey } from "@solana/web3.js";
-import { TOKEN_2022_PROGRAM_ID, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { 
+    TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, 
+    getAssociatedTokenAddressSync, createAssociatedTokenAccount,
+} from "@solana/spl-token";
 import * as anchor from "@coral-xyz/anchor";
 import type { XaumToken } from "../../target/types/xaum_token";
 
@@ -152,14 +155,22 @@ export async function changeMintBudget(signer: Keypair, delta: number) {
         .signers([signer])
         .rpc();
 }
-export async function mint(signer: Keypair, to: PublicKey, amt: number, idx=0, allowOwnerOffCurve=false, toATA?: PublicKey) {
+export async function mint(signer: Keypair, to: PublicKey, amt: number, idx=0, allowOwnerOffCurve=false, ataOwner?: PublicKey) {
+    // create ATA if it doesn't exist
+    const ataAddr = getATA(ataOwner || to, allowOwnerOffCurve);
+    const ataInfo = await program.provider.connection.getAccountInfo(ataAddr);
+    if (!ataInfo) {
+        await createAssociatedTokenAccount(program.provider.connection, signer, mintPDA, ataOwner || to, 
+            undefined, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, allowOwnerOffCurve);
+    }
+
     const nonce = new Array(32).fill(idx); // TODO
     await program.methods
         .mintToken(new anchor.BN(amt), nonce)
         .accounts({
             operator: signer.publicKey,
             recipient: to,
-            associatedTokenAccount: toATA || getATA(to, allowOwnerOffCurve),
+            associatedTokenAccount: ataAddr,
             // tokenProgram: TOKEN_2022_PROGRAM_ID.toBase58(),
         })
         .signers([signer])
