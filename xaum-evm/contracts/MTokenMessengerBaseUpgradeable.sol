@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.24;
 
-import {DelayedUpgradeable} from "../DelayedUpgradeable.sol";
+import {DelayedUpgradeable} from "./DelayedUpgradeable.sol";
 
-abstract contract MTokenMessagerBaseUpgradeable is DelayedUpgradeable {
+abstract contract MTokenMessengerBaseUpgradeable is DelayedUpgradeable {
     uint64 constant MIN_DELAY = 1 hours;
 
     address public ccClient;
@@ -16,7 +16,7 @@ abstract contract MTokenMessagerBaseUpgradeable is DelayedUpgradeable {
     event SetDelayEffected(uint64 newDelay);
     error DelayTooSmall();
 
-    function __MTokenMessagerBase_init(
+    function __MTokenMessengerBase_init(
         address _ccClient,
         address _initialOwner
     ) internal onlyInitializing {

@@ -4,12 +4,12 @@ pragma solidity ^0.8.24;
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {OAppUpgradeable, Origin, MessagingFee} from "@layerzerolabs/oapp-evm-upgradeable/contracts/oapp/OAppUpgradeable.sol";
 import {MessagingReceipt} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
-import {MTokenMessagerBaseUpgradeable} from "./MTokenMessagerBaseUpgradeable.sol";
-import {ICCClientV2} from "../interfaces/ICCClientV2.sol";
+import {MTokenMessengerBaseUpgradeable} from "./MTokenMessengerBaseUpgradeable.sol";
+import {ICCClient} from "./interfaces/ICCClient.sol";
 
 /// @custom:oz-upgrades-unsafe-allow constructor
 /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
-contract MTokenMessagerLZV2 is MTokenMessagerBaseUpgradeable, OAppUpgradeable {
+contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
     bool public lzPaused;
 
     event CCReceiveLZ(bytes32 indexed messageID, bytes messageData);
@@ -29,15 +29,15 @@ contract MTokenMessagerLZV2 is MTokenMessagerBaseUpgradeable, OAppUpgradeable {
         address _ccClient,
         address _initialOwner
     ) public initializer {
-        __MTokenMessagerLZV2_init(_ccClient, _initialOwner);
+        __MTokenMessengerLZ_init(_ccClient, _initialOwner);
     }
 
-    function __MTokenMessagerLZV2_init(
+    function __MTokenMessengerLZ_init(
         address _ccClient,
         address _initialOwner
     ) internal onlyInitializing {
         __OApp_init(_initialOwner);
-        __MTokenMessagerBase_init(_ccClient, _initialOwner);
+        __MTokenMessengerBase_init(_ccClient, _initialOwner);
     }
 
     function setLZPaused(bool isPaused) public onlyOwner {
@@ -45,7 +45,7 @@ contract MTokenMessagerLZV2 is MTokenMessagerBaseUpgradeable, OAppUpgradeable {
         emit LZPaused(isPaused);
     }
 
-    // to differentiate from setAllowedPeer in MTokenMessager
+    // to differentiate from setAllowedPeer in MTokenMessenger
     function lzSetPeer(uint32 _eid, bytes32 _peer) public onlyOwner {
         setPeer(_eid, _peer);
     }
@@ -59,7 +59,7 @@ contract MTokenMessagerLZV2 is MTokenMessagerBaseUpgradeable, OAppUpgradeable {
         bytes calldata // Any extra data or options to trigger on receipt.
     ) internal override {
         // src sender check already made in OApp.
-        ICCClientV2(ccClient).ccReceive(payload);
+        ICCClient(ccClient).ccReceive(payload);
         emit CCReceiveLZ(_guid, payload);
     }
 
@@ -69,7 +69,7 @@ contract MTokenMessagerLZV2 is MTokenMessagerBaseUpgradeable, OAppUpgradeable {
         uint value,
         bytes calldata _options
     ) external payable onlyLZNotPaused returns (bytes32 messageId) {
-        bytes memory _data = ICCClientV2(ccClient).ccSendToken(
+        bytes memory _data = ICCClient(ccClient).ccSendToken(
             msg.sender,
             recipient,
             value
@@ -83,7 +83,7 @@ contract MTokenMessagerLZV2 is MTokenMessagerBaseUpgradeable, OAppUpgradeable {
         uint112 value,
         bytes calldata _options
     ) external payable onlyLZNotPaused returns (bytes32 messageId) {
-        bytes memory _data = ICCClientV2(ccClient).ccSendMintBudget(value);
+        bytes memory _data = ICCClient(ccClient).ccSendMintBudget(value);
         messageId = sendThroughLZ(_dstEid, _data, _options, msg.value);
         emit CCSendMintBudgetLZ(messageId, _data);
     }
@@ -116,7 +116,7 @@ contract MTokenMessagerLZV2 is MTokenMessagerBaseUpgradeable, OAppUpgradeable {
         uint value,
         bytes calldata _options // Message execution options
     ) public view returns (uint256 nativeFee) {
-        bytes memory _data = ICCClientV2(ccClient).msgOfCcSendToken(
+        bytes memory _data = ICCClient(ccClient).msgOfCcSendToken(
             sender,
             recipient,
             value
@@ -130,7 +130,7 @@ contract MTokenMessagerLZV2 is MTokenMessagerBaseUpgradeable, OAppUpgradeable {
         uint112 value,
         bytes calldata _options
     ) public view returns (uint256 nativeFee) {
-        bytes memory _data = ICCClientV2(ccClient).msgOfCcSendMintBudget(value);
+        bytes memory _data = ICCClient(ccClient).msgOfCcSendMintBudget(value);
         MessagingFee memory fee = _quote(_dstEid, _data, _options, false);
         return fee.nativeFee;
     }

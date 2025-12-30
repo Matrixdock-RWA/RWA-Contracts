@@ -25,10 +25,10 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
     address public nextRevoker;
     uint64 public etNextRevoker; //effective time
 
-    // the messager contract takes care of cross-chain task
-    address public messager;
-    address public nextMessager;
-    uint64 public etNextMessager; //effective time
+    // the messenger contract takes care of cross-chain task
+    address public messenger;
+    address public nextMessenger;
+    uint64 public etNextMessenger; //effective time
 
     // the delayed minting requests are stored in requestMap
     mapping(bytes32 requestHash => uint effectiveTime) public requestMap;
@@ -57,11 +57,17 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
 }
 
 // this contract will be deployed on EVM-compatible chains other than Ethereum
-contract MToken is MTokenBase, ICCIPClient {
+contract MToken is MTokenBase, ICCClient {
     uint64 constant MIN_DELAY = 1 hours;
+    uint64 constant MAX_DELAY = 48 hours;
 
     uint constant TagSendToken = 2;
     uint constant TagSendMintBudget = 3;
+
+    uint8 constant LOCAL_DECIMALS = 18;
+    uint8 constant SHARED_DECIMALS = 9;
+    uint256 constant DECIMALS_SCALE_FACTOR =
+        10 ** (LOCAL_DECIMALS - SHARED_DECIMALS);
 
     event SetDelayRequest(uint64 oldDelay, uint64 newDelay, uint64 et);
     event SetDelayEffected(uint64 newDelay);
@@ -69,21 +75,13 @@ contract MToken is MTokenBase, ICCIPClient {
     event SetOperatorEffected(address newAddr);
     event SetRevokerRequest(address oldAddr, address newAddr, uint64 et);
     event SetRevokerEffected(address newAddr);
-    event SetMessagerRequest(address oldAddr, address newAddr, uint64 et);
-    event SetMessagerEffected(address newAddr);
+    event SetMessengerRequest(address oldAddr, address newAddr, uint64 et);
+    event SetMessengerEffected(address newAddr);
     event BlockPlaced(address indexed _user);
     event BlockReleased(address indexed _user);
-    event CCSendToken(
-        address indexed sender,
-        address indexed receiver,
-        uint value
-    );
+    event CCSendToken(address indexed sender, bytes receiver, uint value);
     event CCSendMintBudget(uint112 value);
-    event CCReceiveToken(
-        address indexed sender,
-        address indexed receiver,
-        uint value
-    );
+    event CCReceiveToken(bytes sender, address indexed receiver, uint value);
     event CCReceiveMintBudget(uint112 value);
     event Redeem(address indexed customer, uint amount, bytes data);
     event MintRequest(address indexed receiver, uint amount, uint nonce);
@@ -93,7 +91,7 @@ contract MToken is MTokenBase, ICCIPClient {
     error NotOperator(address);
     error NotRevoker(address);
     error NotNftContract(address);
-    error NotMessager(address);
+    error NotMessenger(address);
     error NotOperatorNorNft(address);
     error MintBudgetNotEnough(uint budget, uint amount);
     error TransferToContract();
@@ -103,6 +101,9 @@ contract MToken is MTokenBase, ICCIPClient {
     error CcSendDisabled();
     error InvalidMsg(uint tag);
     error DelayTooSmall();
+    error DelayTooLarge();
+    error InvalidReceiver(uint length);
+    error PrecisionLost();
 
     modifier onlyNotBlocked() {
         _checkBlocked(_msgSender());
@@ -128,9 +129,9 @@ contract MToken is MTokenBase, ICCIPClient {
         _;
     }
 
-    modifier onlyMessager() {
-        if (msg.sender != messager) {
-            revert NotMessager(msg.sender);
+    modifier onlyMessenger() {
+        if (msg.sender != messenger) {
+            revert NotMessenger(msg.sender);
         }
         _;
     }
@@ -187,6 +188,9 @@ contract MToken is MTokenBase, ICCIPClient {
         if (_delay < MIN_DELAY) {
             revert DelayTooSmall();
         }
+        if (_delay > MAX_DELAY) {
+            revert DelayTooLarge();
+        }
 
         uint64 et = etNextDelay;
         if (_delay == nextDelay && et != 0 && et < block.timestamp) {
@@ -199,16 +203,16 @@ contract MToken is MTokenBase, ICCIPClient {
         }
     }
 
-    function setMessager(address _messager) public onlyOwner {
-        _checkZeroAddress(_messager);
-        uint64 et = etNextMessager;
-        if (_messager == nextMessager && et != 0 && et < block.timestamp) {
-            messager = _messager;
-            emit SetMessagerEffected(_messager);
+    function setMessenger(address _messenger) public onlyOwner {
+        _checkZeroAddress(_messenger);
+        uint64 et = etNextMessenger;
+        if (_messenger == nextMessenger && et != 0 && et < block.timestamp) {
+            messenger = _messenger;
+            emit SetMessengerEffected(_messenger);
         } else {
-            nextMessager = _messager;
-            etNextMessager = uint64(block.timestamp) + delay;
-            emit SetMessagerRequest(messager, _messager, etNextMessager);
+            nextMessenger = _messenger;
+            etNextMessenger = uint64(block.timestamp) + delay;
+            emit SetMessengerRequest(messenger, _messenger, etNextMessenger);
         }
     }
 
@@ -263,8 +267,8 @@ contract MToken is MTokenBase, ICCIPClient {
         etNextOperator = 0;
     }
 
-    function revokeNextMessager() public onlyRevoker {
-        etNextMessager = 0;
+    function revokeNextMessenger() public onlyRevoker {
+        etNextMessenger = 0;
     }
 
     function revokeNextRevoker() public onlyRevoker {
@@ -367,23 +371,45 @@ contract MToken is MTokenBase, ICCIPClient {
     }
 
     //-------------
+
+    function convertToSharedDecimals(
+        uint256 value
+    ) private pure returns (uint256) {
+        if (value % DECIMALS_SCALE_FACTOR != 0) {
+            revert PrecisionLost();
+        }
+        return value / DECIMALS_SCALE_FACTOR;
+    }
+
+    function convertToLocalDecimals(
+        uint256 value
+    ) private pure returns (uint256) {
+        return value * DECIMALS_SCALE_FACTOR;
+    }
+
     // get cross-chain message to estimate cross-chain fees
     function msgOfCcSendToken(
         address sender,
-        address receiver,
+        bytes calldata receiverBytes,
         uint256 value
     ) public view returns (bytes memory message) {
         _checkBlocked(sender);
-        _checkBlocked(receiver);
-        return abi.encode(TagSendToken, abi.encode(sender, receiver, value));
+        if (receiverBytes.length == 20) {
+            address receiver = address(bytes20(receiverBytes));
+            _checkBlocked(receiver);
+        }
+        value = convertToSharedDecimals(value);
+        bytes memory senderBytes = abi.encodePacked(sender);
+        bytes memory body = abi.encode(senderBytes, receiverBytes, value);
+        return abi.encode(TagSendToken, body);
     }
 
-    // called by the messager contract to initialize a cross-chain token transfer
+    // called by the messenger contract to initialize a cross-chain token transfer
     function ccSendToken(
         address sender,
-        address receiver,
+        bytes calldata receiver,
         uint256 value
-    ) public onlyMessager returns (bytes memory message) {
+    ) public onlyMessenger returns (bytes memory message) {
         if (disableCcSend) {
             revert CcSendDisabled();
         }
@@ -397,13 +423,14 @@ contract MToken is MTokenBase, ICCIPClient {
         uint112 value
     ) public view returns (bytes memory message) {
         _checkMintBudget(value);
+        value = uint112(convertToSharedDecimals(value));
         return abi.encode(TagSendMintBudget, abi.encode(value));
     }
 
-    // called by the messager contract to initialize a cross-chain mint-budget transfer
+    // called by the messenger contract to initialize a cross-chain mint-budget transfer
     function ccSendMintBudget(
         uint112 value
-    ) public onlyMessager returns (bytes memory message) {
+    ) public onlyMessenger returns (bytes memory message) {
         _checkOperator(tx.origin);
         _checkZeroValue(value);
         message = msgOfCcSendMintBudget(value);
@@ -414,23 +441,27 @@ contract MToken is MTokenBase, ICCIPClient {
 
     // finish a cross-chain token transfer
     function ccReceiveToken(bytes memory message) internal {
-        (address sender, address receiver, uint value) = abi.decode(
-            message,
-            (address, address, uint)
-        );
+        (bytes memory senderBytes, bytes memory receiverBytes, uint value) = abi
+            .decode(message, (bytes, bytes, uint));
+        if (receiverBytes.length != 20) {
+            revert InvalidReceiver(receiverBytes.length);
+        }
+        address receiver = address(bytes20(receiverBytes));
+        value = convertToLocalDecimals(value);
         _mint(receiver, value);
-        emit CCReceiveToken(sender, receiver, value);
+        emit CCReceiveToken(senderBytes, receiver, value);
     }
 
     // finish a cross-chain mint-budget transfer
     function ccReceiveMintBudget(bytes memory message) internal {
         uint112 value = abi.decode(message, (uint112));
+        value = uint112(convertToLocalDecimals(value));
         mintBudget += value;
         emit CCReceiveMintBudget(value);
     }
 
-    // called by the messager contract to handle a received cross-chain message
-    function ccReceive(bytes calldata message) public onlyMessager {
+    // called by the messenger contract to handle a received cross-chain message
+    function ccReceive(bytes calldata message) public onlyMessenger {
         (uint tag, bytes memory data) = abi.decode(message, (uint, bytes));
         if (tag == TagSendToken) {
             ccReceiveToken(data);

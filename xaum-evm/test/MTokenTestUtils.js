@@ -22,13 +22,13 @@ export async function deployTestFixture() {
   const reserveFeed = await FallbackReserveFeed.deploy(owner.address);
   await reserveFeed.setReserve(100000000);
 
-  const MTokenMain = await ethers.getContractFactory("MTokenMainV2");
+  const MTokenMain = await ethers.getContractFactory("MTokenMain");
   const mt = await upgrades.deployProxy(MTokenMain, 
     ["MTokenMain", "MTM", owner.address, operator.address, reserveFeed.target],
     {kind: "uups"}
   );
 
-  const MTokenSide = await ethers.getContractFactory("MTokenSideV2");
+  const MTokenSide = await ethers.getContractFactory("MTokenSide");
   const mtSide = await upgrades.deployProxy(MTokenSide,
     ["MTokenSide", "MTS", owner.address, operator.address],
     {kind: "uups"}
@@ -46,8 +46,8 @@ export async function deployTestFixture() {
   const FakeL0Endpoint = await ethers.getContractFactory("FakeL0Endpoint");
   const lzEndpoint = await FakeL0Endpoint.deploy();
 
-  const MTokenMessager = await ethers.getContractFactory("MTokenMessagerV3");
-  const mtMsg = await upgrades.deployProxy(MTokenMessager,
+  const MTokenMessenger = await ethers.getContractFactory("MTokenMessenger");
+  const mtMsg = await upgrades.deployProxy(MTokenMessenger,
     [mt.target, owner.address], // init args
     {
       kind: "uups",
@@ -55,7 +55,7 @@ export async function deployTestFixture() {
       unsafeAllow: ['constructor', 'state-variable-immutable']
     },
   );
-  const mtMsgSide = await upgrades.deployProxy(MTokenMessager,
+  const mtMsgSide = await upgrades.deployProxy(MTokenMessenger,
     [mtSide.target, owner.address], // init args
     {
       kind: "uups",

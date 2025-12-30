@@ -85,7 +85,7 @@ describe("MTokenALL", function () {
   describe("delayedSet", function () {
     const testCases = [ 
       {c: "mt",  field: "delay",       zeroVal: 0,        initVal: 0,        newVal: 12345},
-      {c: "mt",  field: "messager",    zeroVal: zeroAddr, initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000001"},
+      {c: "mt",  field: "messenger",    zeroVal: zeroAddr, initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000001"},
       {c: "mt",  field: "revoker",     zeroVal: zeroAddr, initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000005"},
       {c: "mt",  field: "operator",    zeroVal: zeroAddr, initVal: "opAddr", newVal: "0x0000000000000000000000000000000000000002"},
       {c: "mt",  field: "reserveFeed", zeroVal: zeroAddr, initVal: "rfAddr", newVal: "0x0000000000000000000000000000000000000003"},
@@ -99,6 +99,7 @@ describe("MTokenALL", function () {
         for (const delay of [0, 1, 43, 888, 3599]) {
           await expect(mt.setDelay(delay)).to.be.revertedWithCustomError(mt, "DelayTooSmall");
         }
+        await expect(mt.setDelay(48 * 3600 + 1)).to.be.revertedWithCustomError(mt, "DelayTooLarge");
 
         await mt.setDelay(3600); // ok
     });
@@ -179,8 +180,8 @@ describe("MTokenALL", function () {
       const { mt, nft, owner, operator } = await loadFixture(deployTestFixture);
 
       const testCases = [
-        mt.connect(owner).setMessager(zeroAddr),
-        mt.connect(owner).setMessager(zeroAddr),
+        mt.connect(owner).setMessenger(zeroAddr),
+        mt.connect(owner).setMessenger(zeroAddr),
         mt.connect(owner).setNFTContract(zeroAddr),
         mt.connect(owner).setRevoker(zeroAddr),
         mt.connect(owner).setOperator(zeroAddr),
@@ -202,7 +203,7 @@ describe("MTokenALL", function () {
       const testCases = [
         // onlyOnler
         ["OwnableUnauthorizedAccount", mt.connect(alice).setDelay(123)],
-        ["OwnableUnauthorizedAccount", mt.connect(alice).setMessager(alice.address)],
+        ["OwnableUnauthorizedAccount", mt.connect(alice).setMessenger(alice.address)],
         ["OwnableUnauthorizedAccount", mt.connect(alice).setNFTContract(alice.address)],
         ["OwnableUnauthorizedAccount", mt.connect(alice).setOperator(alice.address)],
         ["OwnableUnauthorizedAccount", mt.connect(alice).setRevoker(alice.address)],
@@ -216,15 +217,15 @@ describe("MTokenALL", function () {
         // onlyOperatorAndNft
         ["NotOperatorNorNft", mt.connect(alice).mintTo(alice.address, 1, 2)],
         ["NotOperatorNorNft", mt.connect(alice).redeem(123, alice.address, "0x")],
-        // onlyMessager
-        ["NotMessager", mt.connect(alice).ccSendToken(alice.address, bob.address, 123)],
-        ["NotMessager", mt.connect(alice).ccSendMintBudget(123)],
-        ["NotMessager", mt.connect(alice).ccReceive("0x1234")],
+        // onlyMessenger
+        ["NotMessenger", mt.connect(alice).ccSendToken(alice.address, bob.address, 123)],
+        ["NotMessenger", mt.connect(alice).ccSendMintBudget(123)],
+        ["NotMessenger", mt.connect(alice).ccReceive("0x1234")],
         // onlyRevoker
         ["NotRevoker", mt.connect(alice).revokeRequest(ethers.keccak256("0x1234"))],
         ["NotRevoker", mt.connect(alice).revokeNextDelay()],
         ["NotRevoker", mt.connect(alice).revokeNextOperator()],
-        ["NotRevoker", mt.connect(alice).revokeNextMessager()],
+        ["NotRevoker", mt.connect(alice).revokeNextMessenger()],
         ["NotRevoker", mt.connect(alice).revokeNextRevoker()],
       ];
 
@@ -513,8 +514,8 @@ describe("MTokenALL", function () {
       await mt.connect(operator).increaseMintBudget(scaleUp(50000));
       await mt.connect(operator).mintTo(alice.address, scaleUp(20000), 0);
       await mt.connect(operator).mintTo(alice.address, scaleUp(20000), 0);
-      await mt.setMessager(owner);
-      await mt.setMessager(owner);
+      await mt.setMessenger(owner);
+      await mt.setMessenger(owner);
 
       await mt.setDisableCcSend(true);
       await expect(mt.ccSendToken(alice.address, bob.address, 0))
@@ -542,8 +543,8 @@ describe("MTokenALL", function () {
       const { mt, reserveFeed, operator } = await loadFixture(deployTestFixture);
       await reserveFeed.setReserve(scaleUp(100000));
       await mt.connect(operator).increaseMintBudget(scaleUp(50000));
-      await mt.setMessager(operator);
-      await mt.setMessager(operator);
+      await mt.setMessenger(operator);
+      await mt.setMessenger(operator);
 
       await expect(mt.connect(operator).ccSendMintBudget(0))
         .to.be.revertedWithCustomError(mt, "ZeroValue");
@@ -564,8 +565,8 @@ describe("MTokenALL", function () {
 
     it("ccReceiveToken: InvalidReceiver", async function () {
       const { mt, owner } = await loadFixture(deployTestFixture);
-      await mt.setMessager(owner);
-      await mt.setMessager(owner);
+      await mt.setMessenger(owner);
+      await mt.setMessenger(owner);
 
       const testCases = [
         ["1234560000000000000000000000000000000000000000000000000000000000", "03", 3], // < 20 bytes
@@ -593,8 +594,8 @@ describe("MTokenALL", function () {
 
     it("ccReceiveToken", async function () {
       const { mt, owner, alice, bob } = await loadFixture(deployTestFixture);
-      await mt.setMessager(owner);
-      await mt.setMessager(owner);
+      await mt.setMessenger(owner);
+      await mt.setMessenger(owner);
 
       const testCases = [
         [alice.address, addrTo32Bytes(alice.address), "14"],
@@ -625,8 +626,8 @@ describe("MTokenALL", function () {
 
     it("ccReceiveMintBudget", async function () {
       const { mt, owner } = await loadFixture(deployTestFixture);
-      await mt.setMessager(owner);
-      await mt.setMessager(owner);
+      await mt.setMessenger(owner);
+      await mt.setMessenger(owner);
 
       const msg = "0x"
         + "0000000000000000000000000000000000000000000000000000000000000003"
@@ -642,8 +643,8 @@ describe("MTokenALL", function () {
 
     it("ccReceive: InvalidTag", async function () {
       const { mt, owner } = await loadFixture(deployTestFixture);
-      await mt.setMessager(owner);
-      await mt.setMessager(owner);
+      await mt.setMessenger(owner);
+      await mt.setMessenger(owner);
 
       const msg = "0x"
         + "0000000000000000000000000000000000000000000000000000000000000004"

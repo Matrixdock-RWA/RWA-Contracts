@@ -49,9 +49,9 @@ contract BullionMinter is DelayedUpgradeable {
     event SetAcceptedByA(address token, bool accepted);
     event SetAcceptedByB(address token, bool accepted);
     event MintRequest(address indexed transferredToken, address indexed forToken,
-               address indexed requestor, address pool, uint amount, uint preprice, uint slippage);
+               address indexed requestor, address pool, uint amount, uint preprice, uint slippage, bytes extraData);
     event RedeemRequest(address indexed transferredToken, address indexed forToken,
-               address indexed requestor, address pool, uint amount, uint preprice, uint slippage);
+               address indexed requestor, address pool, uint amount, uint preprice, uint slippage, bytes extraData);
 
     function getDelay() internal pure override returns (uint64) {
         return 3600 * 12; //upgrade must be delayed by 12 hours
@@ -77,18 +77,20 @@ contract BullionMinter is DelayedUpgradeable {
         emit SetAcceptedByB(token, accepted);
     }
 
-    function requestToMint(address transferredToken, address forToken, uint amount, uint preprice, uint slippage, uint timestamp) external {
+    // Most parameters are not checked here and are handled by the off-chain service.
+    function requestToMint(address transferredToken, address forToken, uint amount, uint preprice, uint slippage, uint timestamp, bytes calldata extraData) external {
         require(acceptedByA[transferredToken], "INVALID_TOKEN_FOR_MINTING");
         require(block.timestamp <= timestamp + delayMax, "INVALID_TIMESTAMP");
         IERC20(transferredToken).safeTransferFrom(msg.sender, poolAccountA, amount);
-        emit MintRequest(transferredToken, forToken, msg.sender, poolAccountA, amount, preprice, slippage);
+        emit MintRequest(transferredToken, forToken, msg.sender, poolAccountA, amount, preprice, slippage, extraData);
     }
 
-    function requestToRedeem(address transferredToken, address forToken, uint amount, uint preprice, uint slippage, uint timestamp) external {
+    // Most parameters are not checked here and are handled by the off-chain service.
+    function requestToRedeem(address transferredToken, address forToken, uint amount, uint preprice, uint slippage, uint timestamp, bytes calldata extraData) external {
         require(acceptedByB[transferredToken], "INVALID_TOKEN_FOR_REDEEMING");
         require(block.timestamp <= timestamp + delayMax, "INVALID_TIMESTAMP");
         IERC20(transferredToken).safeTransferFrom(msg.sender, poolAccountB, amount);
-        emit RedeemRequest(transferredToken, forToken, msg.sender, poolAccountB, amount, preprice, slippage);
+        emit RedeemRequest(transferredToken, forToken, msg.sender, poolAccountB, amount, preprice, slippage, extraData);
     }
 
     // rescue ERC20 tokens which were accidentally sent to this contract

@@ -16,9 +16,9 @@ function addrToBytes32(addr) {
 }
 
 
-describe("MTokenMessager", function () {
+describe("MTokenMessenger", function () {
 
-  describe("MTokenMessagerBase", function () {
+  describe("MTokenMessengerBase", function () {
 
     it("onlyOwner", async function () {
       const {mtMsg, alice} = await loadFixture(deployTestFixture);
@@ -38,7 +38,7 @@ describe("MTokenMessager", function () {
 
   });
 
-  describe("MTokenMessager (CCIP)", function () {
+  describe("MTokenMessenger (CCIP)", function () {
 
     it("init", async function () {
       const {mt, mtMsg, owner, ccipRouter} = await loadFixture(deployTestFixture);
@@ -63,19 +63,19 @@ describe("MTokenMessager", function () {
       ];
 
       // allow
-      for (const [chainSelector, messager] of testCases) {
-        expect(await mtMsg.allowedPeer(chainSelector, messager)).to.equal(false);
-        await expect(mtMsg.setAllowedPeer(chainSelector, messager, true))
+      for (const [chainSelector, messenger] of testCases) {
+        expect(await mtMsg.allowedPeer(chainSelector, messenger)).to.equal(false);
+        await expect(mtMsg.setAllowedPeer(chainSelector, messenger, true))
           .to.emit(mtMsg, "AllowedPeer")
-          .withArgs(chainSelector, messager.toLowerCase(), true);
+          .withArgs(chainSelector, messenger.toLowerCase(), true);
       }
 
       // disallow
-      for (const [chainSelector, messager] of testCases) {
-        expect(await mtMsg.allowedPeer(chainSelector, messager)).to.equal(true);
-        await expect(mtMsg.setAllowedPeer(chainSelector, messager, false))
+      for (const [chainSelector, messenger] of testCases) {
+        expect(await mtMsg.allowedPeer(chainSelector, messenger)).to.equal(true);
+        await expect(mtMsg.setAllowedPeer(chainSelector, messenger, false))
           .to.emit(mtMsg, "AllowedPeer")
-          .withArgs(chainSelector, messager.toLowerCase(), false);
+          .withArgs(chainSelector, messenger.toLowerCase(), false);
       }
     });
 
@@ -125,10 +125,10 @@ describe("MTokenMessager", function () {
         operator, alice, bob} = await loadFixture(deployTestFixture);
       await mtMsg.setAllowedPeer(123, mtMsgSide.target, true);
       await mtMsgSide.setAllowedPeer(100, mtMsg.target, true);
-      await mtSide.setMessager(mtMsgSide.target);
-      await mtSide.setMessager(mtMsgSide.target);
-      await mt.setMessager(mtMsg.target);
-      await mt.setMessager(mtMsg.target);
+      await mtSide.setMessenger(mtMsgSide.target);
+      await mtSide.setMessenger(mtMsgSide.target);
+      await mt.setMessenger(mtMsg.target);
+      await mt.setMessenger(mtMsg.target);
       await reserveFeed.setReserve(scaleUp(100000));
       await mt.connect(operator).increaseMintBudget(scaleUp(50000));
       await mt.connect(operator).mintTo(alice.address, scaleUp(20000), 0);
@@ -208,10 +208,10 @@ describe("MTokenMessager", function () {
         operator} = await loadFixture(deployTestFixture);
       await mtMsg.setAllowedPeer(123, mtMsgSide.target, true);
       await mtMsgSide.setAllowedPeer(100, mtMsg.target, true);
-      await mtSide.setMessager(mtMsgSide.target);
-      await mtSide.setMessager(mtMsgSide.target);
-      await mt.setMessager(mtMsg.target);
-      await mt.setMessager(mtMsg.target);
+      await mtSide.setMessenger(mtMsgSide.target);
+      await mtSide.setMessenger(mtMsgSide.target);
+      await mt.setMessenger(mtMsg.target);
+      await mt.setMessenger(mtMsg.target);
       await reserveFeed.setReserve(scaleUp(100000));
       await mt.connect(operator).increaseMintBudget(scaleUp(50000));
 
@@ -254,7 +254,7 @@ describe("MTokenMessager", function () {
 
   });
 
-  describe("MTokenMessager (LayerZero)", function () {
+  describe("MTokenMessenger (LayerZero)", function () {
 
     it("init", async function () {
       const {mt, mtMsg, owner, ccipRouter} = await loadFixture(deployTestFixture);
@@ -300,10 +300,10 @@ describe("MTokenMessager", function () {
     it("error: NoPeer", async function () {
       const {mt, mtSide, mtMsg, mtMsgSide, lzEndpoint, reserveFeed,
         operator, alice, bob} = await loadFixture(deployTestFixture);
-      await mtSide.setMessager(mtMsgSide);
-      await mtSide.setMessager(mtMsgSide);
-      await mt.setMessager(mtMsg);
-      await mt.setMessager(mtMsg);
+      await mtSide.setMessenger(mtMsgSide);
+      await mtSide.setMessenger(mtMsgSide);
+      await mt.setMessenger(mtMsg);
+      await mt.setMessenger(mtMsg);
       await reserveFeed.setReserve(scaleUp(100000));
       await mt.connect(operator).increaseMintBudget(scaleUp(50000));
       await mt.connect(operator).mintTo(alice.address, scaleUp(20000), 0);
@@ -331,10 +331,10 @@ describe("MTokenMessager", function () {
     it("calcFee", async function () {
       const {mt, mtSide, mtMsg, mtMsgSide, reserveFeed,
         operator, alice, bob} = await loadFixture(deployTestFixture);
-      await mtSide.setMessager(mtMsgSide);
-      await mtSide.setMessager(mtMsgSide);
-      await mt.setMessager(mtMsg);
-      await mt.setMessager(mtMsg);
+      await mtSide.setMessenger(mtMsgSide);
+      await mtSide.setMessenger(mtMsgSide);
+      await mt.setMessenger(mtMsg);
+      await mt.setMessenger(mtMsg);
       await reserveFeed.setReserve(scaleUp(1000000));
       await mt.connect(operator).increaseMintBudget(scaleUp(500000));
       await mt.connect(operator).mintTo(alice.address, scaleUp(20000), 0);
@@ -358,10 +358,10 @@ describe("MTokenMessager", function () {
         operator, alice, bob} = await loadFixture(deployTestFixture);
       await mtMsg.setPeer(123, addrToBytes32(mtMsgSide.target));
       await mtMsgSide.setPeer(100, addrToBytes32(mtMsg.target));
-      await mtSide.setMessager(mtMsgSide.target);
-      await mtSide.setMessager(mtMsgSide.target);
-      await mt.setMessager(mtMsg.target);
-      await mt.setMessager(mtMsg.target);
+      await mtSide.setMessenger(mtMsgSide.target);
+      await mtSide.setMessenger(mtMsgSide.target);
+      await mt.setMessenger(mtMsg.target);
+      await mt.setMessenger(mtMsg.target);
       await reserveFeed.setReserve(scaleUp(100000));
       await mt.connect(operator).increaseMintBudget(scaleUp(50000));
       await mt.connect(operator).mintTo(alice.address, scaleUp(20000), 0);
@@ -435,10 +435,10 @@ describe("MTokenMessager", function () {
         operator, alice} = await loadFixture(deployTestFixture);
       await mtMsg.setPeer(123, addrToBytes32(mtMsgSide.target));
       await mtMsgSide.setPeer(100, addrToBytes32(mtMsg.target));
-      await mtSide.setMessager(mtMsgSide.target);
-      await mtSide.setMessager(mtMsgSide.target);
-      await mt.setMessager(mtMsg.target);
-      await mt.setMessager(mtMsg.target);
+      await mtSide.setMessenger(mtMsgSide.target);
+      await mtSide.setMessenger(mtMsgSide.target);
+      await mt.setMessenger(mtMsg.target);
+      await mt.setMessenger(mtMsg.target);
       await reserveFeed.setReserve(scaleUp(100000));
       await mt.connect(operator).increaseMintBudget(scaleUp(50000));
       await mt.connect(operator).mintTo(alice.address, scaleUp(20000), 0);
