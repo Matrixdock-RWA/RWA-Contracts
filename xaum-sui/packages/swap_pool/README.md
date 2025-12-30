@@ -18,5 +18,3 @@ SwapPool use SwapCap to limit only whilelisted user can swap XAUM token.
 | SwapPool Package  | 0x443ab6e1662cc575e99f368dc661dbc94ee12fbf43dd4c09538ae465b7a7acac |
 | SwapPool State id | 0x6c8ba72b252b243bc3c7839046ff1284c15dc3cee506fc4838a0b68f42675ffb                                                                  |
 | UpgradeCap id     | 0xf0c7612d79bb9e54289786d344c0333e5c6062d3f1de396ac1ad12019a75afce                                                                  |
-
-

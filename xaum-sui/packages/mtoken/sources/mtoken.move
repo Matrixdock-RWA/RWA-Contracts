@@ -1,6 +1,7 @@
 // https://docs.sui.io/concepts/sui-move-concepts/conventions
 module mtoken::mtoken;
 
+use mtoken::message_codec;
 use std::ascii;
 use std::string;
 use std::type_name;
@@ -8,6 +9,7 @@ use sui::address;
 use sui::clock::Clock;
 use sui::coin::{Self, TreasuryCap, DenyCapV2, Coin, CoinMetadata};
 use sui::deny_list::DenyList;
+use sui::dynamic_field as df;
 use sui::dynamic_object_field as dof;
 use sui::event;
 use sui::package::UpgradeCap;
@@ -25,6 +27,9 @@ const ENotNewOwner: u64 = 107;
 const EUpgradeCapInvalid: u64 = 108;
 const EReqExpired: u64 = 109;
 const EUpgradeCapIdNotNone: u64 = 110;
+const EInvalidMessageType: u64 = 111;
+const EInvalidMessengerCap: u64 = 112;
+const ERedeemAmountNotMatch: u64 = 113;
 
 // === Constants ===
 
@@ -63,11 +68,6 @@ public struct SetDelayEvent has copy, drop {
     req_id: ID,
 }
 
-public struct ChangeMintBudgetEvent has copy, drop {
-    delta: u64,
-    is_incr: bool,
-}
-
 public struct MintEvent has copy, drop {
     to_address: address,
     amount: u64,
@@ -79,6 +79,10 @@ public struct RedeemEvent has copy, drop {
     from_address: address,
     amount: u64,
 }
+public struct RedeemEventExtraData has copy, drop {
+    customer: address,
+    data: vector<u8>,
+}
 
 public struct BlockEvent has copy, drop {
     user_address: address,
@@ -86,6 +90,16 @@ public struct BlockEvent has copy, drop {
 
 public struct UnblockEvent has copy, drop {
     user_address: address,
+}
+
+public struct CCReceiveMintBudgetEvent has copy, drop {
+    amount: u64,
+}
+
+public struct CCReceiveTokenEvent has copy, drop {
+    sender: vector<u8>,
+    receiver: address,
+    amount: u64,
 }
 
 // === Structs ===
@@ -124,6 +138,7 @@ public struct MintReq has key {
 
 public struct TreasuryCapKey has copy, drop, store {}
 public struct DenyCapKey has copy, drop, store {}
+public struct MessengerCapKey has copy, drop, store {}
 
 public struct State<phantom T> has key, store {
     id: UID,
@@ -136,32 +151,39 @@ public struct State<phantom T> has key, store {
     mint_budget: u64,
 }
 
+public struct MessengerCap has key, store {
+    id: UID,
+}
+
 // === Public & Entry Functions ===
 
 /*
- Ops\Roles\Delayed       | Owner | Operator | Revoker | Delayed
--------------------------+-------+----------+---------+---------
-init_upgrade_cap_id      |   ✓   |          |         |
-migrate                  |   ✓   |          |         |
-update_description       |   ✓   |          |         |
-update_icon_url          |   ✓   |          |         |
-transfer_ownership       |   ✓   |          |         | ✓
-set_operator             |   ✓   |          |         | ✓
-set_revoker              |   ✓   |          |         | ✓
-set_delay                |   ✓   |          |         | ✓
-change_mint_budget       |       |   ✓      |         | 
-mint_to                  |       |   ✓      |         | ✓
-redeem                   |       |   ✓      |         |
-add_to_blocked_list      |       |   ✓      |         |
-remove_from_blocked_list |       |   ✓      |         |
-revoke_transfer_ownership|   ✓   |          |         |
-revoke_set_revoker       |   ✓   |          |         |
-revoke_set_operator      |       |          |   ✓     |
-revoke_set_delay         |       |          |   ✓     |
-revoke_mint_to           |       |          |   ✓     |
+ Ops\Roles\Delayed       | Owner | Operator | Revoker | Messenger| Delayed 
+-------------------------+-------+----------+---------+----------+---------
+init_upgrade_cap_id      |   ✓   |          |         |          |         
+migrate                  |   ✓   |          |         |          |         
+update_description       |   ✓   |          |         |          |         
+update_icon_url          |   ✓   |          |         |          |         
+transfer_ownership       |   ✓   |          |         |          | ✓       
+set_operator             |   ✓   |          |         |          | ✓       
+set_revoker              |   ✓   |          |         |          | ✓       
+set_delay                |   ✓   |          |         |          | ✓       
+mint_to                  |       |   ✓      |         |          | ✓       
+redeem                   |       |   ✓      |         |          |         
+add_to_blocked_list      |       |   ✓      |         |          |         
+remove_from_blocked_list |       |   ✓      |         |          |         
+revoke_transfer_ownership|   ✓   |          |         |          |         
+revoke_set_revoker       |   ✓   |          |         |          |         
+revoke_set_operator      |       |          |   ✓     |          |         
+revoke_set_delay         |       |          |   ✓     |          |         
+revoke_mint_to           |       |          |   ✓     |          |         
+cc_new_messenger_cap     |   ✓   |          |         |          |         
+cc_send_mint_budget      |       |          |         | ✓        |         
+cc_send_token            |       |          |         | ✓        |         
+cc_receive               |       |          |         | ✓        |         
 */
 
-#[allow(lint(share_owned))]
+#[allow(lint(share_owned), deprecated_usage)]
 public fun create_coin<T: drop>(
     witness: T,
     decimals: u8,
@@ -417,19 +439,6 @@ entry fun revoke_set_delay<T>(state: &State<T>, req: SetDelayReq, ctx: &TxContex
     id.delete();
 }
 
-entry fun change_mint_budget<T>(state: &mut State<T>, delta: u64, is_incr: bool, ctx: &TxContext) {
-    check_version(state);
-    check_operator(state, ctx);
-
-    if (is_incr) {
-        state.mint_budget = state.mint_budget + delta;
-    } else {
-        state.mint_budget = state.mint_budget - delta;
-    };
-
-    event::emit(ChangeMintBudgetEvent { delta, is_incr });
-}
-
 // https://docs.sui.io/references/framework/sui-framework/coin#function-mint
 // https://docs.sui.io/references/framework/sui-framework/coin#0x2_coin_mint_and_transfer
 
@@ -463,8 +472,7 @@ entry fun execute_mint_to<T>(
     let MintReq { id, recipient, amount, et } = req;
     check_effective_time(clock, et);
 
-    assert!(state.mint_budget >= amount, EMintBudgetNotEnough);
-    state.mint_budget = state.mint_budget - amount;
+    deduct_mint_budget(state, amount);
 
     let minted_coin = coin::mint<T>(state.borrow_treasury_cap_mut(), amount, ctx);
     transfer::public_transfer(minted_coin, recipient);
@@ -480,14 +488,22 @@ entry fun revoke_mint_to<T>(state: &State<T>, req: MintReq, ctx: &TxContext) {
 }
 
 // https://docs.sui.io/references/framework/sui-framework/coin#0x2_coin_burn
-entry fun redeem<T>(state: &mut State<T>, to_be_burnt: Coin<T>, ctx: &TxContext) {
+entry fun redeem<T>(
+    state: &mut State<T>,
+    to_be_burnt: Coin<T>,
+    amount: u64,
+    customer: address,
+    data: vector<u8>,
+    ctx: &TxContext,
+) {
     check_version(state);
     check_operator(state, ctx);
+    assert!(to_be_burnt.balance().value() == amount, ERedeemAmountNotMatch);
     let from_address = ctx.sender();
-    let amount = to_be_burnt.balance().value();
     coin::burn<T>(state.borrow_treasury_cap_mut(), to_be_burnt);
     state.mint_budget = state.mint_budget + amount;
     event::emit(RedeemEvent { from_address, amount });
+    event::emit(RedeemEventExtraData { customer, data });
 }
 
 // https://github.com/MystenLabs/sui/blob/main/crates/sui-framework/docs/sui-framework/coin.md#0x2_coin_deny_list_v2_add
@@ -514,6 +530,82 @@ entry fun remove_from_blocked_list<T>(
     check_operator(state, ctx);
     coin::deny_list_v2_remove(deny_list, state.borrow_deny_cap_mut(), user_address, ctx);
     event::emit(UnblockEvent { user_address });
+}
+
+entry fun cc_new_messenger_cap<T>(state: &mut State<T>, holder: address, ctx: &mut TxContext) {
+    check_version(state);
+    check_owner(state, ctx);
+
+    let cap = MessengerCap {
+        id: object::new(ctx),
+    };
+
+    let key = MessengerCapKey {};
+    df::remove_if_exists<MessengerCapKey, sui::object::ID>(&mut state.id, key);
+    df::add(&mut state.id, key, object::id(&cap));
+
+    transfer::transfer(cap, holder);
+}
+
+public fun cc_send_mint_budget<T>(
+    state: &mut State<T>,
+    msg_cap: &MessengerCap,
+    amount: u64,
+    ctx: &mut TxContext,
+): vector<u8> {
+    check_version(state);
+    check_operator(state, ctx);
+    check_messenger_cap(state, msg_cap);
+    deduct_mint_budget(state, amount);
+    msg_of_cc_send_mint_budget(amount)
+}
+
+public fun msg_of_cc_send_mint_budget(amount: u64): vector<u8> {
+    message_codec::encode_cc_mint_budget_message(amount)
+}
+
+public fun cc_send_token<T>(
+    state: &mut State<T>,
+    msg_cap: &MessengerCap,
+    sender: address,
+    receiver: vector<u8>,
+    token: Coin<T>,
+    _ctx: &mut TxContext,
+): vector<u8> {
+    check_version(state);
+    check_messenger_cap(state, msg_cap);
+    // TODO: check if sender is in the blocked list
+    // TODO: check if receiver is a valid address
+    let amount = token.balance().value();
+    coin::burn<T>(state.borrow_treasury_cap_mut(), token);
+    msg_of_cc_send_token(sender, receiver, amount)
+}
+
+public fun msg_of_cc_send_token(sender: address, receiver: vector<u8>, amount: u64): vector<u8> {
+    message_codec::encode_cc_token_message(sender, receiver, amount)
+}
+
+public fun cc_receive<T>(
+    state: &mut State<T>,
+    msg_cap: &MessengerCap,
+    msg: vector<u8>,
+    ctx: &mut TxContext,
+) {
+    check_version(state);
+    check_messenger_cap(state, msg_cap);
+
+    let decoded_msg = message_codec::decode_cc_message(msg);
+    if (decoded_msg.is_mint_budget()) {
+        let amount = decoded_msg.extract_mint_budget();
+        state.mint_budget = state.mint_budget + amount;
+        event::emit(CCReceiveMintBudgetEvent { amount });
+    } else {
+        assert!(decoded_msg.is_token(), EInvalidMessageType);
+        let (sender, receiver, amount) = decoded_msg.extract_token_info();
+        let minted_coin = coin::mint<T>(state.borrow_treasury_cap_mut(), amount, ctx);
+        transfer::public_transfer(minted_coin, receiver);
+        event::emit(CCReceiveTokenEvent { sender, receiver, amount });
+    }
 }
 
 // === View Functions ===
@@ -547,7 +639,7 @@ public fun mint_budget<T>(state: &State<T>): u64 {
 }
 
 public fun package_address<T>(_state: &State<T>): address {
-    address::from_ascii_bytes(type_name::get_with_original_ids<State<T>>().get_address().as_bytes())
+    address::from_ascii_bytes(type_name::with_original_ids<State<T>>().address_string().as_bytes())
 }
 
 public fun total_supply<T>(state: &State<T>): u64 {
@@ -584,6 +676,17 @@ fun check_revoker<T>(state: &State<T>, ctx: &TxContext) {
     assert!(ctx.sender() == state.revoker, ENotRevoker);
 }
 
+fun check_messenger_cap<T>(state: &State<T>, cap: &MessengerCap) {
+    let valid_capId = df::borrow(&state.id, MessengerCapKey {});
+    let cap_id = object::id(cap);
+    assert!(cap_id == valid_capId, EInvalidMessengerCap);
+}
+
+fun deduct_mint_budget<T>(state: &mut State<T>, amount: u64) {
+    assert!(state.mint_budget >= amount, EMintBudgetNotEnough);
+    state.mint_budget = state.mint_budget - amount;
+}
+
 fun borrow_treasury_cap<T>(state: &State<T>): &TreasuryCap<T> {
     dof::borrow(&state.id, TreasuryCapKey {})
 }
@@ -604,7 +707,7 @@ public(package) fun set_version<T>(state: &mut State<T>, version: u64) {
 }
 
 #[test_only]
-public(package) fun set_mint_budget<T>(state: &mut State<T>, val: u64) {
+public fun set_mint_budget<T>(state: &mut State<T>, val: u64) {
     state.mint_budget = val;
 }
 
@@ -621,6 +724,14 @@ public(package) fun new_mint_event(
 #[test_only]
 public(package) fun new_redeem_event(from_address: address, amount: u64): RedeemEvent {
     RedeemEvent { from_address, amount }
+}
+
+#[test_only]
+public(package) fun new_redeem_event_extra_data(
+    customer: address,
+    data: vector<u8>,
+): RedeemEventExtraData {
+    RedeemEventExtraData { customer, data }
 }
 
 #[test_only]

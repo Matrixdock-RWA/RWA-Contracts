@@ -9,7 +9,7 @@ use sui::event;
 use sui::package::{test_publish, UpgradeCap};
 use sui::sui::SUI;
 use sui::test_scenario as ts;
-use sui::test_utils::assert_eq;
+use std::unit_test::assert_eq;
 
 const OWNER: address = @0xAD;
 const ALICE: address = @0xA;
@@ -17,6 +17,7 @@ const POOLA: address = @0xB;
 const POOLB: address = @0xC;
 const BOB: address = @0xD;
 const VERSION: u64 = 1;
+const EXTRADATA: vector<u8> = b"DATA";
 
 public struct USDT has drop {}
 
@@ -44,7 +45,7 @@ fun test_transfer_ownership() {
         let state: minter::State = ts.take_shared();
         assert!(state.owner() == BOB);
         let upgrade_cap = ts.take_from_sender<UpgradeCap>();
-        assert_eq(object::id(&upgrade_cap), upgrade_cap_id);
+        assert_eq!(object::id(&upgrade_cap), upgrade_cap_id);
         ts.return_to_sender(upgrade_cap);
         ts::return_shared(state);
     };
@@ -61,13 +62,13 @@ fun test_minter() {
     {
         ts.next_tx(OWNER);
         let mut state: minter::State = ts.take_shared();
-        assert_eq(state.version(), VERSION);
+        assert_eq!(state.version(), VERSION);
 
         minter::set_pool_account_a(&mut state, POOLA, ts.ctx());
         minter::set_pool_account_b(&mut state, POOLB, ts.ctx());
 
-        assert_eq(state.pool_account_a(), POOLA);
-        assert_eq(state.pool_account_b(), POOLB);
+        assert_eq!(state.pool_account_a(), POOLA);
+        assert_eq!(state.pool_account_b(), POOLB);
         ts::return_shared(state);
     };
     {
@@ -86,13 +87,13 @@ fun test_minter() {
         assert!(
             minter::accepted_by_a(
                 &state,
-                type_name::get<USDT>(),
+                type_name::with_defining_ids<USDT>(),
             ),
         );
         assert!(
             minter::accepted_by_b(
                 &state,
-                type_name::get<SUI>(),
+                type_name::with_defining_ids<SUI>(),
             ),
         );
         ts::return_shared(state);
@@ -110,21 +111,23 @@ fun test_minter() {
             10,
             5,
             999,
+            EXTRADATA,
             &_clock,
             ts.ctx(),
         );
-        assert_eq(coin::value(&usdt), 900);
-        assert_eq(event::num_events(), 1);
-        assert_eq(
+        assert_eq!(coin::value(&usdt), 900);
+        assert_eq!(event::num_events(), 1);
+        assert_eq!(
             event::events_by_type<minter::MintRequest>().pop_back(),
             minter::new_mint_request_event(
-                type_name::get<USDT>(),
-                type_name::get<SUI>(),
+                type_name::with_defining_ids<USDT>(),
+                type_name::with_defining_ids<SUI>(),
                 ALICE,
                 POOLA,
                 100,
                 10,
                 5,
+                EXTRADATA,
             ),
         );
         transfer::public_transfer(usdt, ALICE);
@@ -134,7 +137,7 @@ fun test_minter() {
     {
         ts.next_tx(POOLA);
         let usdt = ts.take_from_sender<coin::Coin<USDT>>();
-        assert_eq(coin::value(&usdt), 100);
+        assert_eq!(coin::value(&usdt), 100);
         ts.return_to_sender(usdt);
     };
     {
@@ -150,21 +153,23 @@ fun test_minter() {
             10,
             5,
             999,
+            EXTRADATA,
             &_clock,
             ts.ctx(),
         );
-        assert_eq(coin::value(&sui), 900);
-        assert_eq(event::num_events(), 1);
-        assert_eq(
+        assert_eq!(coin::value(&sui), 900);
+        assert_eq!(event::num_events(), 1);
+        assert_eq!(
             event::events_by_type<minter::RedeemRequest>().pop_back(),
             minter::new_redeem_request_event(
-                type_name::get<SUI>(),
-                type_name::get<USDT>(),
+                type_name::with_defining_ids<SUI>(),
+                type_name::with_defining_ids<USDT>(),
                 ALICE,
                 POOLB,
                 100,
                 10,
                 5,
+                EXTRADATA,
             ),
         );
         transfer::public_transfer(sui, ALICE);
@@ -174,7 +179,7 @@ fun test_minter() {
     {
         ts.next_tx(POOLB);
         let sui = ts.take_from_sender<coin::Coin<SUI>>();
-        assert_eq(coin::value(&sui), 100);
+        assert_eq!(coin::value(&sui), 100);
         ts.return_to_sender(sui);
     };
     ts.end();
@@ -211,6 +216,7 @@ fun invalid_token_for_mint_request() {
             10,
             5,
             999,
+            EXTRADATA,
             &_clock,
             ts.ctx(),
         );
@@ -249,6 +255,7 @@ fun insufficient_token_balance_for_mint_request() {
             10,
             5,
             999,
+            EXTRADATA,
             &_clock,
             ts.ctx(),
         );
@@ -287,6 +294,7 @@ fun invalid_timestamp_for_mint_request() {
             10,
             5,
             900,
+            EXTRADATA,
             &_clock,
             ts.ctx(),
         );
@@ -335,6 +343,7 @@ fun invalid_token_for_mint_when_remove_accepted_token() {
             10,
             5,
             1000,
+            EXTRADATA,
             &_clock,
             ts.ctx(),
         );
@@ -373,6 +382,7 @@ fun invalid_token_for_redeem_request() {
             10,
             5,
             999,
+            EXTRADATA,
             &_clock,
             ts.ctx(),
         );
@@ -411,6 +421,7 @@ fun invalid_timestamp_for_redeem_request() {
             10,
             5,
             900,
+            EXTRADATA,
             &_clock,
             ts.ctx(),
         );
@@ -449,6 +460,7 @@ fun insufficient_token_balance_for_redeem_request() {
             10,
             5,
             999,
+            EXTRADATA,
             &_clock,
             ts.ctx(),
         );
@@ -505,7 +517,7 @@ fun migrate_ok() {
         let mut state = scenario.take_shared<minter::State>();
         state.set_version(0);
         minter::migrate(&mut state, scenario.ctx());
-        assert_eq(state.version(), VERSION);
+        assert_eq!(state.version(), VERSION);
         ts::return_shared(state);
     };
 
@@ -583,7 +595,7 @@ fun init_upgrade_cap_id_ok() {
             scenario.ctx(),
         );
         minter::init_upgrade_cap_id(&mut state, &upgrade_cap, scenario.ctx()); // ok
-        assert_eq(state.upgrade_cap_id(), option::some(object::id(&upgrade_cap)));
+        assert_eq!(state.upgrade_cap_id(), option::some(object::id(&upgrade_cap)));
         transfer::public_share_object(upgrade_cap);
         ts::return_shared(state);
     };
@@ -676,7 +688,7 @@ fun set_owner_ok() {
     {
         let state = scenario.take_shared<minter::State>();
         let upgrade_cap = scenario.take_from_sender<UpgradeCap>();
-        assert_eq(upgrade_cap.package(), state.package_address().to_id());
+        assert_eq!(upgrade_cap.package(), state.package_address().to_id());
         scenario.return_to_sender(upgrade_cap);
         ts::return_shared(state);
     };
@@ -710,12 +722,12 @@ fun set_accepted_token_by_a_ok() {
         let state = scenario.take_shared<minter::State>();
         assert!(
             state.accepted_by_a(
-                type_name::get<USDT>(),
+                type_name::with_defining_ids<USDT>(),
             ),
         );
         assert!(
             !state.accepted_by_a(
-                type_name::get<SUI>(),
+                type_name::with_defining_ids<SUI>(),
             ),
         );
         ts::return_shared(state);
@@ -740,12 +752,12 @@ fun set_accepted_token_by_a_ok() {
         let state = scenario.take_shared<minter::State>();
         assert!(
             !state.accepted_by_a(
-                type_name::get<USDT>(),
+                type_name::with_defining_ids<USDT>(),
             ),
         );
         assert!(
             state.accepted_by_a(
-                type_name::get<SUI>(),
+                type_name::with_defining_ids<SUI>(),
             ),
         );
         ts::return_shared(state);
@@ -771,12 +783,12 @@ fun set_accepted_token_by_a_ok() {
         let state = scenario.take_shared<minter::State>();
         assert!(
             !state.accepted_by_a(
-                type_name::get<USDT>(),
+                type_name::with_defining_ids<USDT>(),
             ),
         );
         assert!(
             state.accepted_by_a(
-                type_name::get<SUI>(),
+                type_name::with_defining_ids<SUI>(),
             ),
         );
         ts::return_shared(state);
@@ -811,12 +823,12 @@ fun set_accepted_token_by_b_ok() {
         let state = scenario.take_shared<minter::State>();
         assert!(
             state.accepted_by_b(
-                type_name::get<USDT>(),
+                type_name::with_defining_ids<USDT>(),
             ),
         );
         assert!(
             !state.accepted_by_b(
-                type_name::get<SUI>(),
+                type_name::with_defining_ids<SUI>(),
             ),
         );
         ts::return_shared(state);
@@ -841,12 +853,12 @@ fun set_accepted_token_by_b_ok() {
         let state = scenario.take_shared<minter::State>();
         assert!(
             !state.accepted_by_b(
-                type_name::get<USDT>(),
+                type_name::with_defining_ids<USDT>(),
             ),
         );
         assert!(
             state.accepted_by_b(
-                type_name::get<SUI>(),
+                type_name::with_defining_ids<SUI>(),
             ),
         );
         ts::return_shared(state);
@@ -872,12 +884,12 @@ fun set_accepted_token_by_b_ok() {
         let state = scenario.take_shared<minter::State>();
         assert!(
             !state.accepted_by_b(
-                type_name::get<USDT>(),
+                type_name::with_defining_ids<USDT>(),
             ),
         );
         assert!(
             state.accepted_by_b(
-                type_name::get<SUI>(),
+                type_name::with_defining_ids<SUI>(),
             ),
         );
         ts::return_shared(state);

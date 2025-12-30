@@ -1,5 +1,5 @@
 [package]
-name = "mtoken"
+name = "MToken"
 edition = "2024.beta" # edition = "legacy" to use legacy (pre-2024) Move
 license = "GPL-3.0" # e.g., "MIT", "GPL", "Apache 2.0"
 authors = ["mprwa-dev@matrixport.com"] # e.g., ["Joe Smith (joesmith@noemail.com)", "John Snow (johnsnow@noemail.com)"]

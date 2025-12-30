@@ -29,3 +29,8 @@ fun init(witness: XAUM, ctx: &mut TxContext) {
         ctx,
     );
 }
+
+#[test_only]
+public fun init_for_testing(ctx: &mut TxContext) {
+    init(XAUM {}, ctx);
+}

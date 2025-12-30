@@ -59,6 +59,7 @@ public struct MintRequest has copy, drop {
     amount: u64,
     preprice: u64,
     slippage: u64,
+    extra_data: vector<u8>,
 }
 
 public struct RedeemRequest has copy, drop {
@@ -69,6 +70,7 @@ public struct RedeemRequest has copy, drop {
     amount: u64,
     preprice: u64,
     slippage: u64,
+    extra_data: vector<u8>,
 }
 
 // === Structs ===
@@ -149,7 +151,7 @@ entry fun set_pool_account_b(state: &mut State, pool_account_b: address, ctx: &T
 entry fun set_accepted_by_a<T>(state: &mut State, accepted: bool, ctx: &TxContext) {
     check_version(state);
     check_owner(state, ctx);
-    let token = type_name::get<T>();
+    let token = type_name::with_defining_ids<T>();
     if (state.accepted_by_a.contains(token)) {
         if (!accepted) {
             state.accepted_by_a.remove(token);
@@ -165,7 +167,7 @@ entry fun set_accepted_by_a<T>(state: &mut State, accepted: bool, ctx: &TxContex
 entry fun set_accepted_by_b<T>(state: &mut State, accepted: bool, ctx: &TxContext) {
     check_version(state);
     check_owner(state, ctx);
-    let token = type_name::get<T>();
+    let token = type_name::with_defining_ids<T>();
     if (state.accepted_by_b.contains(token)) {
         if (!accepted) {
             state.accepted_by_b.remove(token);
@@ -187,11 +189,12 @@ public fun request_to_mint<T, F>(
     preprice: u64,
     slippage: u64,
     timestamp: u64,
+    extra_data: vector<u8>,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
     check_version(state);
-    let tn = type_name::get<T>();
+    let tn = type_name::with_defining_ids<T>();
     assert!(state.accepted_by_a.contains(tn), EInvalidTokenForMint);
     let now = clock.timestamp_ms() / 1000;
     assert!(now <= timestamp + DELAY_MAX, EInvalidTimestamp);
@@ -201,12 +204,13 @@ public fun request_to_mint<T, F>(
     transfer::public_transfer(out, state.pool_account_a);
     event::emit(MintRequest {
         transferred_token: tn,
-        for_token: type_name::get<F>(),
+        for_token: type_name::with_defining_ids<F>(),
         requestor: ctx.sender(),
         pool: state.pool_account_a,
         amount,
         preprice,
         slippage,
+        extra_data,
     });
 }
 
@@ -217,11 +221,12 @@ public fun request_to_redeem<T, F>(
     preprice: u64,
     slippage: u64,
     timestamp: u64,
+    extra_data: vector<u8>,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
     check_version(state);
-    let tn = type_name::get<T>();
+    let tn = type_name::with_defining_ids<T>();
     assert!(state.accepted_by_b.contains(tn), EInvalidTokenForRedeem);
     let now = clock.timestamp_ms() / 1000;
     assert!(now <= timestamp + DELAY_MAX, EInvalidTimestamp);
@@ -231,12 +236,13 @@ public fun request_to_redeem<T, F>(
     transfer::public_transfer(out, state.pool_account_b);
     event::emit(RedeemRequest {
         transferred_token: tn,
-        for_token: type_name::get<F>(),
+        for_token: type_name::with_defining_ids<F>(),
         requestor: ctx.sender(),
         pool: state.pool_account_b,
         amount,
         preprice,
         slippage,
+        extra_data,
     });
 }
 
@@ -271,7 +277,7 @@ public fun accepted_by_b(state: &State, token: TypeName): bool {
 }
 
 public fun package_address(_state: &State): address {
-    address::from_ascii_bytes(type_name::get_with_original_ids<State>().get_address().as_bytes())
+    address::from_ascii_bytes(type_name::with_original_ids<State>().address_string().as_bytes())
 }
 
 // === Private Functions ===
@@ -300,8 +306,18 @@ public(package) fun new_mint_request_event(
     amount: u64,
     preprice: u64,
     slippage: u64,
+    extra_data: vector<u8>,
 ): MintRequest {
-    MintRequest { transferred_token, for_token, requestor, pool, amount, preprice, slippage }
+    MintRequest {
+        transferred_token,
+        for_token,
+        requestor,
+        pool,
+        amount,
+        preprice,
+        slippage,
+        extra_data,
+    }
 }
 
 #[test_only]
@@ -313,8 +329,18 @@ public(package) fun new_redeem_request_event(
     amount: u64,
     preprice: u64,
     slippage: u64,
+    extra_data: vector<u8>,
 ): RedeemRequest {
-    RedeemRequest { transferred_token, for_token, requestor, pool, amount, preprice, slippage }
+    RedeemRequest {
+        transferred_token,
+        for_token,
+        requestor,
+        pool,
+        amount,
+        preprice,
+        slippage,
+        extra_data,
+    }
 }
 
 #[test_only]
