@@ -45,7 +45,6 @@ pub mod xaum_minter {
     pub fn set_pool_account_a(ctx: Context<OnlyOwner>, new_pool_a: Pubkey) -> Result<()> {
         let state = &mut ctx.accounts.state;
         state.pool_account_a = new_pool_a;
-        msg!("SetPoolAccountA: {}", new_pool_a);
         emit!(SetPoolAccountAEvent {
             pool_account_a: new_pool_a,
         });
@@ -55,7 +54,6 @@ pub mod xaum_minter {
     pub fn set_pool_account_b(ctx: Context<OnlyOwner>, new_pool_b: Pubkey) -> Result<()> {
         let state = &mut ctx.accounts.state;
         state.pool_account_b = new_pool_b;
-        msg!("SetPoolAccountB: {}", new_pool_b);
         emit!(SetPoolAccountBEvent {
             pool_account_b: new_pool_b,
         });
@@ -75,7 +73,6 @@ pub mod xaum_minter {
         } else {
             state.accepted_by_a.retain(|x| x != &token);
         }
-        msg!("SetAcceptedByA: {} -> {}", token, accepted);
         emit!(SetAcceptedByAEvent { token, accepted });
         Ok(())
     }
@@ -93,7 +90,6 @@ pub mod xaum_minter {
         } else {
             state.accepted_by_b.retain(|x| x != &token);
         }
-        msg!("SetAcceptedByB: {} -> {}", token, accepted);
         emit!(SetAcceptedByBEvent { token, accepted });
         Ok(())
     }
@@ -110,7 +106,8 @@ pub mod xaum_minter {
     ) -> Result<()> {
         let state = &ctx.accounts.state;
         require!(
-            for_token == ctx.accounts.for_token.key(),
+            state.accepted_by_b.contains(&for_token)
+                && for_token == ctx.accounts.for_token.key(),
             ErrorCode::InvalidForToken
         );
         require!(
@@ -133,17 +130,6 @@ pub mod xaum_minter {
             amount,
             decimals,
         )?;
-        msg!(
-            "MintRequest: transferred_token={}, for_token={}, requestor={}, pool={}, pool_ata={}, amount={}, preprice={}, slippage={}",
-            transferred_token,
-            for_token,
-            ctx.accounts.requestor.key(),
-            state.pool_account_a,
-            ctx.accounts.pool_token_account_a.key(),
-            amount,
-            preprice,
-            slippage
-        );
         emit!(MintRequestEvent {
             transferred_token,
             for_token,
@@ -168,6 +154,10 @@ pub mod xaum_minter {
     ) -> Result<()> {
         let state = &ctx.accounts.state;
         require!(
+            state.accepted_by_a.contains(&for_token),
+            ErrorCode::InvalidForToken
+        );
+        require!(
             state.accepted_by_b.contains(&transferred_token)
                 && transferred_token == ctx.accounts.transferred_token.key(),
             ErrorCode::InvalidTokenForRedeeming
@@ -187,17 +177,6 @@ pub mod xaum_minter {
             amount,
             decimals,
         )?;
-        msg!(
-            "RedeemRequest: transferred_token={}, for_token={}, requestor={}, pool={}, pool_ata={}, amount={}, preprice={}, slippage={}",
-            transferred_token,
-            for_token,
-            ctx.accounts.requestor.key(),
-            state.pool_account_b,
-            ctx.accounts.pool_token_account_b.key(),
-            amount,
-            preprice,
-            slippage
-        );
         emit!(RedeemRequestEvent {
             transferred_token,
             for_token,
