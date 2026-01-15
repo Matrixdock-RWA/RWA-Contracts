@@ -5,6 +5,7 @@ import {DelayedUpgradeable} from "./DelayedUpgradeable.sol";
 
 abstract contract MTokenMessengerBaseUpgradeable is DelayedUpgradeable {
     uint64 constant MIN_DELAY = 1 hours;
+    uint64 constant MAX_DELAY = 48 hours;
 
     address public ccClient;
 
@@ -15,6 +16,7 @@ abstract contract MTokenMessengerBaseUpgradeable is DelayedUpgradeable {
     event SetDelayRequest(uint64 oldDelay, uint64 newDelay, uint64 et);
     event SetDelayEffected(uint64 newDelay);
     error DelayTooSmall();
+    error DelayTooLarge();
 
     function __MTokenMessengerBase_init(
         address _ccClient,
@@ -31,6 +33,9 @@ abstract contract MTokenMessengerBaseUpgradeable is DelayedUpgradeable {
     function setDelay(uint64 _delay) public onlyOwner {
         if (_delay < MIN_DELAY) {
             revert DelayTooSmall();
+        }
+        if (_delay > MAX_DELAY) {
+            revert DelayTooLarge();
         }
 
         uint64 et = etNextDelay;

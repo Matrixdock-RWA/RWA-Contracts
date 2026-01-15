@@ -36,6 +36,13 @@ describe("MTokenMessenger", function () {
       }
     });
 
+    it("setDelay", async function () {
+      const {mtMsg} = await loadFixture(deployTestFixture);
+      await expect(mtMsg.setDelay(3599)).to.be.revertedWithCustomError(mtMsg, "DelayTooSmall");
+      await expect(mtMsg.setDelay(48 * 3600 + 1)).to.be.revertedWithCustomError(mtMsg, "DelayTooLarge");
+      await mtMsg.setDelay(3600 * 2); // ok
+    });
+
   });
 
   describe("MTokenMessenger (CCIP)", function () {
@@ -51,7 +58,7 @@ describe("MTokenMessenger", function () {
     it("setAllowedPeer", async function () {
       const {mtMsg, alice, bob} = await loadFixture(deployTestFixture);
 
-      await expect(mtMsg.connect(alice).setAllowedPeer(123, bob.address, true))
+      await expect(mtMsg.connect(alice).setAllowedPeer(123, bob.address, true, 20))
         .to.be.revertedWithCustomError(mtMsg, 'OwnableUnauthorizedAccount')
         .withArgs(alice);
 
@@ -64,16 +71,16 @@ describe("MTokenMessenger", function () {
 
       // allow
       for (const [chainSelector, messenger] of testCases) {
-        expect(await mtMsg.allowedPeer(chainSelector, messenger)).to.equal(false);
-        await expect(mtMsg.setAllowedPeer(chainSelector, messenger, true))
+        expect(await mtMsg.allowedPeer(chainSelector, messenger)).to.deep.equal([false, 0]);
+        await expect(mtMsg.setAllowedPeer(chainSelector, messenger, true, 20))
           .to.emit(mtMsg, "AllowedPeer")
           .withArgs(chainSelector, messenger.toLowerCase(), true);
       }
 
       // disallow
       for (const [chainSelector, messenger] of testCases) {
-        expect(await mtMsg.allowedPeer(chainSelector, messenger)).to.equal(true);
-        await expect(mtMsg.setAllowedPeer(chainSelector, messenger, false))
+        expect(await mtMsg.allowedPeer(chainSelector, messenger)).to.deep.equal([true, 20]);
+        await expect(mtMsg.setAllowedPeer(chainSelector, messenger, false, 20))
           .to.emit(mtMsg, "AllowedPeer")
           .withArgs(chainSelector, messenger.toLowerCase(), false);
       }
@@ -123,8 +130,8 @@ describe("MTokenMessenger", function () {
     it("sendTokenToChain", async function () {
       const {mt, mtSide, mtMsg, mtMsgSide, ccipRouter, reserveFeed,
         operator, alice, bob} = await loadFixture(deployTestFixture);
-      await mtMsg.setAllowedPeer(123, mtMsgSide.target, true);
-      await mtMsgSide.setAllowedPeer(100, mtMsg.target, true);
+      await mtMsg.setAllowedPeer(123, mtMsgSide.target, true, 20);
+      await mtMsgSide.setAllowedPeer(100, mtMsg.target, true, 20);
       await mtSide.setMessenger(mtMsgSide.target);
       await mtSide.setMessenger(mtMsgSide.target);
       await mt.setMessenger(mtMsg.target);
@@ -171,13 +178,25 @@ describe("MTokenMessenger", function () {
       expect(await mt.balanceOf(alice.address)).to.equal(scaleUp(15000));
       expect(await mtSide.balanceOf(bob.address)).to.equal(scaleUp(2000));
 
+      // invalid recipient length
+      await expect(
+        mtMsg.connect(alice).sendTokenToChain(
+          123, mtMsgSide.target, "0x12345678", scaleUp(1000), "0x0e472a",
+          {value: 3200000}
+        )
+      ).to.be.revertedWithCustomError(mtMsg, "InvalidRecipientLength")
+        .withArgs(20, 4);
+
       // more test cases
       const testCases = [
-        [bob.address, addrTo32Bytes(bob.address), "14"],
-        [fakeSolanaAddr, fakeSolanaAddr.replace("0x", ""), "20"],
-        ["0x123456", "1234560000000000000000000000000000000000000000000000000000000000", "03"],
+        [bob.address, addrTo32Bytes(bob.address), "14", 0x14],
+        [fakeSolanaAddr, fakeSolanaAddr.replace("0x", ""), "20", 0x20],
+        ["0x123456", "1234560000000000000000000000000000000000000000000000000000000000", "03", 0x03],
       ];
-      for (const [receiverAddr, bytes32, lenHex] of testCases) {
+      for (const [receiverAddr, bytes32, lenHex, addrLen] of testCases) {
+        const chainSel = 10000 + addrLen;
+        const msgAddr = '0x' + (0x1000000000100000000010000000001000000000n + BigInt(addrLen)).toString(16);
+        await mtMsg.setAllowedPeer(chainSel,msgAddr, true, addrLen);
         const expectedData = '0x'
           + '0000000000000000000000000000000000000000000000000000000000000002'
           + '0000000000000000000000000000000000000000000000000000000000000040'
@@ -191,7 +210,7 @@ describe("MTokenMessenger", function () {
           + bytes32 // receiver
           ;
         const tx = mtMsg.connect(alice).sendTokenToChain(
-          123, mtMsgSide.target, receiverAddr, scaleUp(2000), "0x0e472a",
+          chainSel, msgAddr, receiverAddr, scaleUp(2000), "0x0e472a",
           {value: 3200000}
         );
         await tx;
@@ -206,8 +225,8 @@ describe("MTokenMessenger", function () {
     it("sendMintBudgetToChain", async function () {
       const {mt, mtSide, mtMsg, mtMsgSide, ccipRouter, reserveFeed,
         operator} = await loadFixture(deployTestFixture);
-      await mtMsg.setAllowedPeer(123, mtMsgSide.target, true);
-      await mtMsgSide.setAllowedPeer(100, mtMsg.target, true);
+      await mtMsg.setAllowedPeer(123, mtMsgSide.target, true, 20);
+      await mtMsgSide.setAllowedPeer(100, mtMsg.target, true, 20);
       await mtSide.setMessenger(mtMsgSide.target);
       await mtSide.setMessenger(mtMsgSide.target);
       await mt.setMessenger(mtMsg.target);
@@ -280,18 +299,18 @@ describe("MTokenMessenger", function () {
       expect(await mtMsg.peers(123)).to.equal(zeroBytes32);
       expect(await mtMsg.peers(456)).to.equal(zeroBytes32);
 
-      await expect(mtMsg.connect(alice).lzSetPeer(123, bobAddr32))
+      await expect(mtMsg.connect(alice).lzSetPeer(123, bobAddr32, 20))
         .to.be.revertedWithCustomError(mtMsg, 'OwnableUnauthorizedAccount')
         .withArgs(alice);
 
-      await expect(mtMsg.lzSetPeer(123, aliceAddr32))
+      await expect(mtMsg.lzSetPeer(123, aliceAddr32, 20))
         .to.emit(mtMsg, "PeerSet").withArgs(123, aliceAddr32);
-      await expect(mtMsg.lzSetPeer(456, bobAddr32))
+      await expect(mtMsg.lzSetPeer(456, bobAddr32, 20))
         .to.emit(mtMsg, "PeerSet").withArgs(456, bobAddr32);
       expect(await mtMsg.peers(123)).to.equal(aliceAddr32);
       expect(await mtMsg.peers(456)).to.equal(bobAddr32);
 
-      await expect(mtMsg.lzSetPeer(123, zeroBytes32))
+      await expect(mtMsg.lzSetPeer(123, zeroBytes32, 20))
         .to.emit(mtMsg, "PeerSet").withArgs(123, zeroBytes32);
       expect(await mtMsg.peers(123)).to.equal(zeroBytes32);
       expect(await mtMsg.peers(456)).to.equal(bobAddr32);
@@ -356,8 +375,8 @@ describe("MTokenMessenger", function () {
     it("sendTokenToChain", async function () {
       const {mt, mtSide, mtMsg, mtMsgSide, lzEndpoint, reserveFeed,
         operator, alice, bob} = await loadFixture(deployTestFixture);
-      await mtMsg.setPeer(123, addrToBytes32(mtMsgSide.target));
-      await mtMsgSide.setPeer(100, addrToBytes32(mtMsg.target));
+      await mtMsg.lzSetPeer(123, addrToBytes32(mtMsgSide.target), 20);
+      await mtMsgSide.lzSetPeer(100, addrToBytes32(mtMsg.target), 20);
       await mtSide.setMessenger(mtMsgSide.target);
       await mtSide.setMessenger(mtMsgSide.target);
       await mt.setMessenger(mtMsg.target);
@@ -398,13 +417,25 @@ describe("MTokenMessenger", function () {
       expect(await mt.balanceOf(alice.address)).to.equal(scaleUp(12000));
       expect(await mtSide.balanceOf(bob.address)).to.equal(scaleUp(5000));
 
+      // invalid recipient length
+      await expect(
+        mtMsg.connect(alice).lzSendTokenToChain(
+          123, "0x12345678", scaleUp(1000), "0x0e472a",
+          {value: 3200000}
+        )
+      ).to.be.revertedWithCustomError(mtMsg, "InvalidRecipientLength")
+        .withArgs(20, 4);
+
       // more test cases
       const testCases = [
-        [bob.address, addrTo32Bytes(bob.address), "14"],
-        [fakeSolanaAddr, fakeSolanaAddr.replace("0x", ""), "20"],
-        ["0x123456", "1234560000000000000000000000000000000000000000000000000000000000", "03"],
+        [bob.address, addrTo32Bytes(bob.address), "14", 0x14],
+        [fakeSolanaAddr, fakeSolanaAddr.replace("0x", ""), "20", 0x20],
+        ["0x123456", "1234560000000000000000000000000000000000000000000000000000000000", "03", 0x03],
       ];
-      for (const [receiverAddr, bytes32, lenHex] of testCases) {
+      for (const [receiverAddr, bytes32, lenHex, addrLen] of testCases) {
+        const eid = 10000 + addrLen;
+        const peerAddr = '0x' + (0x1000000000100000000010000000001000000000n + BigInt(addrLen)).toString(16);
+        await mtMsg.lzSetPeer(eid, addrToBytes32(peerAddr), addrLen);
         const expectedData = '0x'
           + '0000000000000000000000000000000000000000000000000000000000000002'
           + '0000000000000000000000000000000000000000000000000000000000000040'
@@ -418,7 +449,7 @@ describe("MTokenMessenger", function () {
           + bytes32 // receiver
           ;
         const tx = mtMsg.connect(alice).lzSendTokenToChain(
-          123, receiverAddr, scaleUp(2000), "0x0e472a",
+          eid, receiverAddr, scaleUp(2000), "0x0e472a",
           {value: 3200000}
         );
         await tx;

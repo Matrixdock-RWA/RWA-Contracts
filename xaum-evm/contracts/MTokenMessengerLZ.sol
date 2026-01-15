@@ -10,15 +10,32 @@ import {ICCClient} from "./interfaces/ICCClient.sol";
 /// @custom:oz-upgrades-unsafe-allow constructor
 /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
 contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
-    bool public lzPaused;
+    struct MsgLzStorage {
+        bool lzPaused;
+        mapping(uint64 eid => uint8 addrLen) eidToAddrLen;
+    }
+
+    // namespace="mtokenmessengerlz.storage.eidtoaddrlen"
+    // keccak256(abi.encode(uint256(keccak256(abi.encodePacked(namespace))) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant MSGLZ_STORAGE_LOCATION =
+        0xa7de46fd53e49d8e70fc58b68ffbf0484ff2aefa7464a0e32d9992ae843a9200;
+
+    function _getMsgLzStorage() internal pure returns (MsgLzStorage storage $) {
+        assembly {
+            $.slot := MSGLZ_STORAGE_LOCATION
+        }
+    }
 
     event CCReceiveLZ(bytes32 indexed messageID, bytes messageData);
     event CCSendTokenLZ(bytes32 indexed messageID, bytes messageData);
     event CCSendMintBudgetLZ(bytes32 indexed messageID, bytes messageData);
     event LZPaused(bool isPaused);
 
+    error InvalidRecipientLength(uint8 expected, uint8 actual);
+
     modifier onlyLZNotPaused() {
-        require(!lzPaused, "LZ_PAUSED");
+        MsgLzStorage storage $ = _getMsgLzStorage();
+        require(!$.lzPaused, "LZ_PAUSED");
         _;
     }
 
@@ -40,14 +57,26 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
         __MTokenMessengerBase_init(_ccClient, _initialOwner);
     }
 
+    function lzPaused() public view returns (bool) {
+        MsgLzStorage storage $ = _getMsgLzStorage();
+        return $.lzPaused;
+    }
+
     function setLZPaused(bool isPaused) public onlyOwner {
-        lzPaused = isPaused;
+        MsgLzStorage storage $ = _getMsgLzStorage();
+        $.lzPaused = isPaused;
         emit LZPaused(isPaused);
     }
 
     // to differentiate from setAllowedPeer in MTokenMessenger
-    function lzSetPeer(uint32 _eid, bytes32 _peer) public onlyOwner {
+    function lzSetPeer(
+        uint32 _eid,
+        bytes32 _peer,
+        uint8 _addrLen
+    ) public onlyOwner {
         setPeer(_eid, _peer);
+        MsgLzStorage storage $ = _getMsgLzStorage();
+        $.eidToAddrLen[_eid] = _addrLen;
     }
 
     // lz OApp receive implementation
@@ -75,6 +104,13 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
             value
         );
         messageId = sendThroughLZ(_dstEid, _data, _options, msg.value);
+
+        MsgLzStorage storage $ = _getMsgLzStorage();
+        uint8 dstAddrLen = $.eidToAddrLen[_dstEid];
+        if (dstAddrLen != 0 && recipient.length != dstAddrLen) {
+            revert InvalidRecipientLength(dstAddrLen, uint8(recipient.length));
+        }
+
         emit CCSendTokenLZ(messageId, _data);
     }
 

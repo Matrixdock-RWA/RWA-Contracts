@@ -26,7 +26,13 @@ calculateCcSendMintBudgetFeeAndMessage | lzCalculateSendMintBudgetFee
 contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
     using Address for address payable;
 
-    mapping(uint64 chainSelector => mapping(bytes messenger => bool allowed))
+    struct PeerInfo {
+        bool allowed;
+        uint8 addrLen; // 0 means no address length check
+    }
+
+    // messenger must be 32 bytes (left padded with 0) if chainSelector points to an EVM chain
+    mapping(uint64 chainSelector => mapping(bytes messenger => PeerInfo))
         public allowedPeer;
 
     event AllowedPeer(uint64 chainSelector, bytes messenger, bool allowed);
@@ -47,9 +53,13 @@ contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
     function setAllowedPeer(
         uint64 chainSelector,
         bytes calldata messenger,
-        bool allowed
+        bool allowed,
+        uint8 addrLen
     ) external onlyOwner {
-        allowedPeer[chainSelector][messenger] = allowed;
+        allowedPeer[chainSelector][messenger] = PeerInfo({
+            allowed: allowed,
+            addrLen: addrLen
+        });
         emit AllowedPeer(chainSelector, messenger, allowed);
     }
 
@@ -58,7 +68,7 @@ contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
     ) internal override {
         uint64 chainSelector = any2EvmMessage.sourceChainSelector;
         bytes memory sender = any2EvmMessage.sender;
-        if (!allowedPeer[chainSelector][sender]) {
+        if (!allowedPeer[chainSelector][sender].allowed) {
             revert NotInAllowListed(chainSelector, sender);
         }
 
@@ -117,8 +127,12 @@ contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
         uint value,
         bytes calldata extraArgs
     ) external payable returns (bytes32 messageId) {
-        if (!allowedPeer[destinationChainSelector][messageReceiver]) {
+        PeerInfo memory peer = allowedPeer[destinationChainSelector][messageReceiver];
+        if (!peer.allowed) {
             revert NotInAllowListed(destinationChainSelector, messageReceiver);
+        }
+        if (peer.addrLen != 0 && recipient.length != peer.addrLen) {
+            revert InvalidRecipientLength(peer.addrLen, uint8(recipient.length));
         }
         bytes memory data = ICCClient(ccClient).ccSendToken(
             msg.sender,
@@ -140,7 +154,7 @@ contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
         uint112 value,
         bytes calldata extraArgs
     ) external payable returns (bytes32 messageId) {
-        if (!allowedPeer[destinationChainSelector][messageReceiver]) {
+        if (!allowedPeer[destinationChainSelector][messageReceiver].allowed) {
             revert NotInAllowListed(destinationChainSelector, messageReceiver);
         }
         bytes memory data = ICCClient(ccClient).ccSendMintBudget(value);
