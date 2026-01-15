@@ -16,7 +16,8 @@ use {
 };
 
 use super::super::mtoken::utils::update_account_lamports_to_minimum_rent_balance;
-use super::super::mtoken::{state::State, xaum::XAUM_DECIMALS};
+use super::super::mtoken::xaum::MAX_ACCEPTABLE_DELAY;
+use super::super::mtoken::{errors::ErrorCode, state::State, xaum::XAUM_DECIMALS};
 
 #[derive(Accounts)]
 pub struct CreateToken<'info> {
@@ -51,6 +52,12 @@ pub fn create_token(
     token_uri: String,
     delay: i64,
 ) -> Result<()> {
+    require!(delay >= 0, ErrorCode::NegativeDelay); // zero is allowed for initialization scenarios
+    require!(
+        delay <= MAX_ACCEPTABLE_DELAY,
+        ErrorCode::DelayExceedsMaximum
+    );
+
     // Initialize state
     let state = &mut ctx.accounts.state;
     let bump = ctx.bumps.state;

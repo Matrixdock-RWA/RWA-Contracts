@@ -37,4 +37,7 @@ pub enum ErrorCode {
 
     #[msg("TokenBalanceZero")]
     TokenBalanceZero,
+
+    #[msg("NegativeDelay")]
+    NegativeDelay,
 }

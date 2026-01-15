@@ -102,6 +102,17 @@ describe("MToken", () => {
         await provider.connection.requestAirdrop(user2.publicKey, 2e10);
     });
 
+    it("create_token: invalid delay", async () => {
+        await checkErrorCode(
+            createToken(deployer.payer, xaumName, xaumSymbol, xaumUri, -1),
+            "NegativeDelay",
+        );
+        await checkErrorCode(
+            createToken(deployer.payer, xaumName, xaumSymbol, xaumUri, maxDelay + 1),
+            "DelayExceedsMaximum",
+        );
+    });
+
     it("initialize", async () => {
         await createToken(deployer.payer, xaumName, xaumSymbol, xaumUri, initDelay);
         const stateData = await getTokenState();
