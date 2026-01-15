@@ -30,12 +30,14 @@ const EUpgradeCapIdNotNone: u64 = 110;
 const EInvalidMessageType: u64 = 111;
 const EInvalidMessengerCap: u64 = 112;
 const ERedeemAmountNotMatch: u64 = 113;
+const EDelayTooLong: u64 = 114;
 
 // === Constants ===
 
-const VERSION: u64 = 1;
+const VERSION: u64 = 2;
 
 const MIN_DELAY: u64 = 3600; // 1 hour
+const MAX_DELAY: u64 = 3600 * 48; // 48 hours
 const REQ_TTL: u64 = 3600; // 1 hour, time to live after effective
 
 // === Events ===
@@ -99,6 +101,16 @@ public struct CCReceiveMintBudgetEvent has copy, drop {
 public struct CCReceiveTokenEvent has copy, drop {
     sender: vector<u8>,
     receiver: address,
+    amount: u64,
+}
+
+public struct CCSendMintBudgetEvent has copy, drop {
+    amount: u64,
+}
+
+public struct CCSendTokenEvent has copy, drop {
+    sender: address,
+    receiver: vector<u8>,
     amount: u64,
 }
 
@@ -405,6 +417,7 @@ entry fun request_set_delay<T>(
     check_version(state);
     check_owner(state, ctx);
     assert!(new_delay >= MIN_DELAY, EDelayTooShort);
+    assert!(new_delay <= MAX_DELAY, EDelayTooLong);
     let old_delay = state.delay;
     let et = get_effective_time(state, clock);
     let req = SetDelayReq { id: object::new(ctx), new_delay, et };
@@ -557,6 +570,7 @@ public fun cc_send_mint_budget<T>(
     check_operator(state, ctx);
     check_messenger_cap(state, msg_cap);
     deduct_mint_budget(state, amount);
+    event::emit(CCSendMintBudgetEvent { amount });
     msg_of_cc_send_mint_budget(amount)
 }
 
@@ -578,6 +592,7 @@ public fun cc_send_token<T>(
     // TODO: check if receiver is a valid address
     let amount = token.balance().value();
     coin::burn<T>(state.borrow_treasury_cap_mut(), token);
+    event::emit(CCSendTokenEvent { sender, receiver, amount });
     msg_of_cc_send_token(sender, receiver, amount)
 }
 
@@ -707,11 +722,6 @@ public(package) fun set_version<T>(state: &mut State<T>, version: u64) {
 }
 
 #[test_only]
-public fun set_mint_budget<T>(state: &mut State<T>, val: u64) {
-    state.mint_budget = val;
-}
-
-#[test_only]
 public(package) fun new_mint_event(
     to_address: address,
     amount: u64,
@@ -742,4 +752,15 @@ public(package) fun new_block_event(user_address: address): BlockEvent {
 #[test_only]
 public(package) fun new_unblock_event(user_address: address): UnblockEvent {
     UnblockEvent { user_address }
+}
+
+#[test_only]
+public fun set_mint_budget<T>(state: &mut State<T>, val: u64) {
+    state.mint_budget = val;
+}
+
+#[test_only]
+public fun mint_for_testing<T>(state: &mut State<T>, amount: u64, ctx: &mut TxContext): Coin<T> {
+    state.check_owner(ctx);
+    coin::mint<T>(state.borrow_treasury_cap_mut(), amount, ctx)
 }

@@ -16,7 +16,7 @@ const ALICE: address = @0xA;
 const POOLA: address = @0xB;
 const POOLB: address = @0xC;
 const BOB: address = @0xD;
-const VERSION: u64 = 1;
+const VERSION: u64 = 2;
 const EXTRADATA: vector<u8> = b"DATA";
 
 public struct USDT has drop {}

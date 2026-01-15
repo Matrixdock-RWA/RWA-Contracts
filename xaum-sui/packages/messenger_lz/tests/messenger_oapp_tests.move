@@ -8,14 +8,16 @@ use endpoint_v2::endpoint_v2::{Self, EndpointV2};
 use endpoint_v2::messaging_channel::MessagingChannel;
 use endpoint_v2::messaging_receipt::MessagingReceipt;
 use messenger_lz::messenger_oapp::{Self, State, SendContext};
+use messenger_lz::ptb_builder;
 use mtoken::mtoken::{Self, State as MtState, MessengerCap};
 use oapp::oapp::OApp;
 use std::unit_test::{assert_eq, destroy};
 use sui::clock;
-use sui::coin;
+use sui::coin::{Self, Coin};
 use sui::sui::SUI;
 use sui::test_scenario;
 use utils::bytes32;
+use utils::package;
 use xaum::xaum::{Self, XAUM};
 
 // test addresses
@@ -75,10 +77,37 @@ fun set_oapp_info(
     }
 }
 
-fun set_peer(scenario: &mut test_scenario::Scenario, caller: address, eid: u32, peer: vector<u8>) {
+fun skip(
+    scenario: &mut test_scenario::Scenario,
+    caller: address,
+    src_eid: u32,
+    sender: vector<u8>,
+    nonce: u64,
+) {
     scenario.next_tx(caller);
     {
         let state = scenario.take_shared<State>();
+        let my_oapp = scenario.take_shared<OApp>();
+        let endpoint = scenario.take_shared<EndpointV2>();
+        let mut channel = scenario.take_shared<MessagingChannel>();
+        state.skip(&my_oapp, &endpoint, &mut channel, src_eid, sender, nonce, scenario.ctx());
+        test_scenario::return_shared(state);
+        test_scenario::return_shared(my_oapp);
+        test_scenario::return_shared(endpoint);
+        test_scenario::return_shared(channel);
+    }
+}
+
+fun set_peer(
+    scenario: &mut test_scenario::Scenario,
+    caller: address,
+    eid: u32,
+    peer: vector<u8>,
+    addr_len: u8,
+) {
+    scenario.next_tx(caller);
+    {
+        let mut state = scenario.take_shared<State>();
         let mut my_oapp = scenario.take_shared<OApp>();
         let endpoint = scenario.take_shared<EndpointV2>();
         let mut channel = scenario.take_shared<MessagingChannel>();
@@ -89,6 +118,7 @@ fun set_peer(scenario: &mut test_scenario::Scenario, caller: address, eid: u32, 
             &mut channel,
             eid,
             peer,
+            addr_len,
             scenario.ctx(),
         );
 
@@ -96,6 +126,23 @@ fun set_peer(scenario: &mut test_scenario::Scenario, caller: address, eid: u32, 
         test_scenario::return_shared(my_oapp);
         test_scenario::return_shared(endpoint);
         test_scenario::return_shared(channel);
+    }
+}
+
+fun set_enforced_options(
+    scenario: &mut test_scenario::Scenario,
+    caller: address,
+    eid: u32,
+    msg_type: u16,
+    options: vector<u8>,
+) {
+    scenario.next_tx(caller);
+    {
+        let state = scenario.take_shared<State>();
+        let mut my_oapp = scenario.take_shared<OApp>();
+        state.set_enforced_options(&mut my_oapp, eid, msg_type, options, scenario.ctx());
+        test_scenario::return_shared(state);
+        test_scenario::return_shared(my_oapp);
     }
 }
 
@@ -129,6 +176,64 @@ fun init_messenger_cap(scenario: &mut test_scenario::Scenario, caller: address) 
         state.init_messenger_cap(msg_cap, scenario.ctx());
         test_scenario::return_shared(state);
     };
+}
+
+fun send_mint_budget(
+    scenario: &mut test_scenario::Scenario,
+    caller: address,
+    dst_eid: u32,
+    amount: u64,
+): (Call<SendParam, MessagingReceipt>, SendContext) {
+    scenario.next_tx(caller);
+    {
+        let state = scenario.take_shared<State>();
+        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let mut my_oapp = scenario.take_shared<OApp>();
+        let (_call, _send_ctx) = state.send_mint_budget(
+            &mut mt_state,
+            &mut my_oapp,
+            dst_eid,
+            vector::empty(),
+            coin::zero<SUI>(scenario.ctx()),
+            caller, // refund address
+            amount,
+            scenario.ctx(),
+        );
+        test_scenario::return_shared(state);
+        test_scenario::return_shared(mt_state);
+        test_scenario::return_shared(my_oapp);
+        (_call, _send_ctx)
+    }
+}
+
+fun send_token(
+    scenario: &mut test_scenario::Scenario,
+    caller: address,
+    dst_eid: u32,
+    token: Coin<XAUM>,
+    receiver: vector<u8>,
+): (Call<SendParam, MessagingReceipt>, SendContext) {
+    scenario.next_tx(caller);
+    {
+        let state = scenario.take_shared<State>();
+        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let mut my_oapp = scenario.take_shared<OApp>();
+        let (_call, _send_ctx) = state.send_token(
+            &mut mt_state,
+            &mut my_oapp,
+            dst_eid,
+            vector::empty(),
+            coin::zero<SUI>(scenario.ctx()),
+            caller, // refund address
+            receiver,
+            token,
+            scenario.ctx(),
+        );
+        test_scenario::return_shared(state);
+        test_scenario::return_shared(mt_state);
+        test_scenario::return_shared(my_oapp);
+        (_call, _send_ctx)
+    }
 }
 
 #[test]
@@ -207,10 +312,18 @@ fun set_oapp_info_ok() {
 }
 
 #[test, expected_failure(abort_code = messenger_oapp::ENotOwner)]
+fun skip_err_not_owner() {
+    let mut scenario = init_messenger_oapp();
+    register_oapp(&mut scenario, ADMIN);
+    skip(&mut scenario, ALICE, 123, b"sender", 456);
+    abort
+}
+
+#[test, expected_failure(abort_code = messenger_oapp::ENotOwner)]
 fun set_peer_err_not_owner() {
     let mut scenario = init_messenger_oapp();
     register_oapp(&mut scenario, ADMIN);
-    set_peer(&mut scenario, ALICE, 123, vector::empty());
+    set_peer(&mut scenario, ALICE, 123, vector::empty(), 20);
     abort
 }
 
@@ -218,7 +331,31 @@ fun set_peer_err_not_owner() {
 fun set_peer_ok() {
     let mut scenario = init_messenger_oapp();
     register_oapp(&mut scenario, ADMIN);
-    set_peer(&mut scenario, ADMIN, 123, b"peer_peer_peer_peer_peer_peer_pe");
+    set_peer(&mut scenario, ADMIN, 123, b"peer_peer_peer_peer_peer_peer_pe", 20);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = messenger_oapp::ENotOwner)]
+fun set_enforced_options_err_not_owner() {
+    let mut scenario = init_messenger_oapp();
+    register_oapp(&mut scenario, ADMIN);
+    set_enforced_options(&mut scenario, ALICE, 123, 1, vector::empty());
+    abort
+}
+
+#[test]
+fun set_enforced_options_ok() {
+    // prettier-ignore
+    // 0x000301001101000000000000000000000000000493e0
+    let options = vector[
+        0x00, 0x03, 0x01, 0x00, 0x11, 0x01, 0x00, 0x00, 0x00, 
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
+        0x00, 0x04, 0x93, 0xe0
+    ];
+
+    let mut scenario = init_messenger_oapp();
+    register_oapp(&mut scenario, ADMIN);
+    set_enforced_options(&mut scenario, ADMIN, 123, 456, options);
     scenario.end();
 }
 
@@ -236,39 +373,21 @@ fun set_paused_ok() {
     scenario.end();
 }
 
-fun send_mint_budget(
-    scenario: &mut test_scenario::Scenario,
-    caller: address,
-    dst_eid: u32,
-    amount: u64,
-): (Call<SendParam, MessagingReceipt>, SendContext) {
-    scenario.next_tx(caller);
-    {
-        let state = scenario.take_shared<State>();
-        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
-        let mut my_oapp = scenario.take_shared<OApp>();
-        let (_call, _send_ctx) = state.send_mint_budget(
-            &mut mt_state,
-            &mut my_oapp,
-            dst_eid,
-            vector::empty(),
-            coin::zero<SUI>(scenario.ctx()),
-            option::none(),
-            amount,
-            scenario.ctx(),
-        );
-        test_scenario::return_shared(state);
-        test_scenario::return_shared(mt_state);
-        test_scenario::return_shared(my_oapp);
-        (_call, _send_ctx)
-    }
-}
-
 #[test, expected_failure(abort_code = mtoken::ENotOperator)]
 fun send_mint_budget_not_operator() {
     let mut scenario = init_messenger_oapp();
     create_new_messenger_cap(&mut scenario, ADMIN, ADMIN);
     init_messenger_cap(&mut scenario, ADMIN);
+    let (_call, _send_ctx) = send_mint_budget(&mut scenario, ALICE, 123, 100);
+    abort
+}
+
+#[test, expected_failure(abort_code = messenger_oapp::EPaused)]
+fun send_mint_budget_err_paused() {
+    let mut scenario = init_messenger_oapp();
+    create_new_messenger_cap(&mut scenario, ADMIN, ADMIN);
+    init_messenger_cap(&mut scenario, ADMIN);
+    set_paused(&mut scenario, ADMIN, true);
     let (_call, _send_ctx) = send_mint_budget(&mut scenario, ALICE, 123, 100);
     abort
 }
@@ -279,7 +398,7 @@ fun send_mint_budget_ok() {
     create_new_messenger_cap(&mut scenario, ADMIN, ADMIN);
     init_messenger_cap(&mut scenario, ADMIN);
     register_oapp(&mut scenario, ADMIN);
-    set_peer(&mut scenario, ADMIN, 123, b"peer_peer_peer_peer_peer_peer_pe");
+    set_peer(&mut scenario, ADMIN, 123, b"peer_peer_peer_peer_peer_peer_pe", 20);
 
     scenario.next_tx(ADMIN);
     {
@@ -294,7 +413,104 @@ fun send_mint_budget_ok() {
     scenario.end();
 }
 
-// #[test]
+#[test]
+fun send_token_ok() {
+    let mut scenario = init_messenger_oapp();
+    create_new_messenger_cap(&mut scenario, ADMIN, ADMIN);
+    init_messenger_cap(&mut scenario, ADMIN);
+    register_oapp(&mut scenario, ADMIN);
+    set_peer(&mut scenario, ADMIN, 123, b"peer_peer_peer_peer_peer_peer_pe", 20);
+
+    scenario.next_tx(ADMIN);
+    {
+        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let token = mt_state.mint_for_testing(200, scenario.ctx());
+        test_scenario::return_shared(mt_state);
+
+        let (_call, _send_ctx) = send_token(
+            &mut scenario,
+            ADMIN,
+            123,
+            token,
+            b"receiver_receiver_re", // 20 bytes
+        );
+        destroy(_call);
+        destroy(_send_ctx);
+    };
+
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = messenger_oapp::EPaused)]
+fun send_token_err_paused() {
+    let mut scenario = init_messenger_oapp();
+    create_new_messenger_cap(&mut scenario, ADMIN, ADMIN);
+    init_messenger_cap(&mut scenario, ADMIN);
+    set_paused(&mut scenario, ADMIN, true);
+
+    scenario.next_tx(ADMIN);
+    {
+        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let token = mt_state.mint_for_testing(200, scenario.ctx());
+        test_scenario::return_shared(mt_state);
+
+        let (_call, _send_ctx) = send_token(
+            &mut scenario,
+            ADMIN,
+            123,
+            token,
+            b"receiver_receiver_re22", // 22 bytes
+        );
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = messenger_oapp::EReceiverLen)]
+fun send_token_err_receiver_len_mismatch() {
+    let mut scenario = init_messenger_oapp();
+    create_new_messenger_cap(&mut scenario, ADMIN, ADMIN);
+    init_messenger_cap(&mut scenario, ADMIN);
+    register_oapp(&mut scenario, ADMIN);
+    set_peer(&mut scenario, ADMIN, 123, b"peer_peer_peer_peer_peer_peer_pe", 20);
+
+    scenario.next_tx(ADMIN);
+    {
+        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let token = mt_state.mint_for_testing(200, scenario.ctx());
+        test_scenario::return_shared(mt_state);
+
+        let (_call, _send_ctx) = send_token(
+            &mut scenario,
+            ADMIN,
+            123,
+            token,
+            b"receiver_receiver_re22", // 22 bytes
+        );
+    };
+    abort
+}
+
+#[test]
+fun lz_receive_info_ok() {
+    let mut scenario = init_messenger_oapp();
+    scenario.next_tx(ADMIN);
+    {
+        let state = scenario.take_shared<State>();
+        let mt_state = scenario.take_shared<MtState<XAUM>>();
+        let my_oapp = scenario.take_shared<OApp>();
+        let info = ptb_builder::lz_receive_info(&state, &mt_state, &my_oapp);
+        std::debug::print(&info);
+        std::debug::print(&package::package_of_type<State>());
+
+        test_scenario::return_shared(state);
+        test_scenario::return_shared(mt_state);
+        test_scenario::return_shared(my_oapp);
+    };
+    scenario.end();
+}
+
+// TODO: fix this test
+#[test, expected_failure]
 fun lz_receive_mint_budget_ok() {
     let eid = 123;
     let peer = b"peer_peer_peer_peer_peer_peer_pe";
@@ -312,7 +528,7 @@ fun lz_receive_mint_budget_ok() {
     let mut scenario = init_messenger_oapp();
     let _clock = clock::create_for_testing(scenario.ctx());
     register_oapp(&mut scenario, ADMIN);
-    set_peer(&mut scenario, ADMIN, eid, peer);
+    set_peer(&mut scenario, ADMIN, eid, peer, 20);
     create_new_messenger_cap(&mut scenario, ADMIN, ADMIN);
     init_messenger_cap(&mut scenario, ADMIN);
 

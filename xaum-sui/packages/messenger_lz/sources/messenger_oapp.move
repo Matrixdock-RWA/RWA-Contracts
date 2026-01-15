@@ -20,7 +20,9 @@ use sui::coin::Coin;
 use sui::event;
 use sui::package::UpgradeCap;
 use sui::sui::SUI;
+use sui::table::{Self, Table};
 use utils::bytes32::{Self, Bytes32};
+use utils::table_ext;
 use xaum::xaum::XAUM;
 
 // === Errors ===
@@ -30,6 +32,8 @@ const EPaused: u64 = 3;
 const ENoMessengerCap: u64 = 4;
 const EUpgradeCapInvalid: u64 = 5;
 const ENotNewOwner: u64 = 6;
+const EReceiverLen: u64 = 7;
+const EInvalidSendContext: u64 = 8;
 
 // === Constants ===
 const VERSION: u64 = 1;
@@ -83,6 +87,7 @@ public struct State has key {
     oapp_admin_cap: AdminCap,
     mtoken_msg_cap: Option<MessengerCap>,
     upgrade_cap_id: Option<ID>,
+    eid_to_addr_len: Table<u32, u8>,
     owner: address,
     paused: bool,
 }
@@ -90,6 +95,7 @@ public struct State has key {
 public struct SendContext {
     is_token: bool,
     msg_data: vector<u8>,
+    call_id: address,
 }
 
 // https://docs.layerzero.network/v2/developers/sui/oapp/overview#initialization-creating-your-oapp
@@ -102,6 +108,7 @@ fun init(otw: MESSENGER_OAPP, ctx: &mut TxContext) {
         oapp_admin_cap,
         mtoken_msg_cap: option::none(),
         upgrade_cap_id: option::none(),
+        eid_to_addr_len: table::new<u32, u8>(ctx),
         owner: ctx.sender(),
         paused: false,
     };
@@ -130,6 +137,7 @@ entry fun migrate(state: &mut State, ctx: &TxContext) {
     state.version = VERSION;
 }
 
+// step 1 of the ownership transfer process
 entry fun request_transfer_ownership(
     state: &State,
     new_owner: address,
@@ -145,6 +153,7 @@ entry fun request_transfer_ownership(
     transfer::share_object(req);
 }
 
+// step 2 of the ownership transfer process
 entry fun execute_transfer_ownership(
     state: &mut State,
     req: TransferOwnershipReq,
@@ -162,6 +171,7 @@ entry fun execute_transfer_ownership(
     event::emit(TransferOwnershipEvent { old_owner, new_owner, req_id });
 }
 
+// cancel the ownership transfer
 entry fun revoke_transfer_ownership(state: &State, req: TransferOwnershipReq, ctx: &TxContext) {
     state.check_version();
     state.check_owner(ctx);
@@ -214,18 +224,44 @@ entry fun set_oapp_info(
     );
 }
 
+// https://github.com/LayerZero-Labs/LayerZero-v2/blob/main/packages/layerzero-v2/sui/contracts/oapps/oapp/sources/endpoint_calls.move#L152
+entry fun skip(
+    state: &State,
+    my_oapp: &OApp,
+    endpoint: &EndpointV2,
+    messaging_channel: &mut MessagingChannel,
+    src_eid: u32,
+    sender: vector<u8>, // must be 32 bytes
+    nonce: u64,
+    ctx: &TxContext,
+) {
+    state.check_version();
+    state.check_owner(ctx);
+    endpoint_calls::skip(
+        my_oapp,
+        &state.oapp_admin_cap,
+        endpoint,
+        messaging_channel,
+        src_eid,
+        bytes32::from_bytes(sender),
+        nonce,
+    );
+}
+
 // https://docs.layerzero.network/v2/developers/sui/oapp/overview#peer-configuration-establishing-trust
 entry fun set_peer(
-    state: &State,
+    state: &mut State,
     my_oapp: &mut OApp,
     endpoint: &EndpointV2,
     channel: &mut MessagingChannel,
     eid: u32,
     peer: vector<u8>, // must be 32 bytes
+    addr_len: u8,
     ctx: &mut TxContext,
 ) {
     state.check_version();
     state.check_owner(ctx);
+    table_ext::upsert!(&mut state.eid_to_addr_len, eid, addr_len);
     my_oapp.set_peer(
         &state.oapp_admin_cap,
         endpoint,
@@ -236,6 +272,21 @@ entry fun set_peer(
     );
 }
 
+// https://docs.layerzero.network/v2/concepts/applications/oapp-standard#execution-options-and-enforced-settings
+entry fun set_enforced_options(
+    state: &State,
+    my_oapp: &mut OApp,
+    eid: u32,
+    msg_type: u16,
+    options: vector<u8>,
+    ctx: &TxContext,
+) {
+    state.check_version();
+    state.check_owner(ctx);
+    my_oapp.set_enforced_options(&state.oapp_admin_cap, eid, msg_type, options);
+}
+
+// pause the messenger
 entry fun set_paused(state: &mut State, paused: bool, ctx: &TxContext) {
     state.check_version();
     state.check_owner(ctx);
@@ -299,12 +350,12 @@ public fun confirm_quote_send(
 // === Send Functions ===
 // https://docs.layerzero.network/v2/developers/sui/oapp/overview#sending-messages-the-call-pattern
 
-public fun send_mint_budget_and_refund(
+public fun send_mint_budget(
     state: &State,
     mt_state: &mut MtState<XAUM>,
     my_oapp: &mut OApp,
     dst_eid: u32,
-    extra_options: vector<u8>, // TODO
+    extra_options: vector<u8>,
     native_token_fee: Coin<SUI>,
     refund_address: address,
     amount: u64,
@@ -315,39 +366,6 @@ public fun send_mint_budget_and_refund(
 
     let msg_cap = state.borrow_messenger_cap();
     let msg_data = mt_state.cc_send_mint_budget(msg_cap, amount, ctx);
-    let send_ctx = SendContext { is_token: false, msg_data: msg_data };
-    let options = my_oapp.combine_options(dst_eid, SEND_MINT_BUDGET_TYPE, extra_options);
-    let lz_call = my_oapp.lz_send_and_refund(
-        &state.oapp_call_cap,
-        dst_eid,
-        msg_data,
-        options,
-        native_token_fee,
-        option::none(), // zro_token_fee
-        refund_address,
-        ctx,
-    );
-
-    (lz_call, send_ctx)
-}
-
-public fun send_mint_budget(
-    state: &State,
-    mt_state: &mut MtState<XAUM>,
-    my_oapp: &mut OApp,
-    dst_eid: u32,
-    extra_options: vector<u8>, // TODO
-    native_token_fee: Coin<SUI>,
-    refund_address: Option<address>,
-    amount: u64,
-    ctx: &mut TxContext,
-): (Call<SendParam, MessagingReceipt>, SendContext) {
-    state.check_version();
-    state.check_paused();
-
-    let msg_cap = state.borrow_messenger_cap();
-    let msg_data = mt_state.cc_send_mint_budget(msg_cap, amount, ctx);
-    let send_ctx = SendContext { is_token: false, msg_data: msg_data };
     let options = my_oapp.combine_options(dst_eid, SEND_MINT_BUDGET_TYPE, extra_options);
     let lz_call = my_oapp.lz_send(
         &state.oapp_call_cap,
@@ -356,42 +374,10 @@ public fun send_mint_budget(
         options,
         native_token_fee,
         option::none(), // zro_token_fee
-        refund_address,
+        option::some(refund_address),
         ctx,
     );
-
-    (lz_call, send_ctx)
-}
-
-public fun send_token_and_refund(
-    state: &State,
-    mt_state: &mut MtState<XAUM>,
-    my_oapp: &mut OApp,
-    dst_eid: u32,
-    extra_options: vector<u8>, // TODO
-    native_token_fee: Coin<SUI>,
-    refund_address: address,
-    receiver: vector<u8>,
-    xaum_token: Coin<XAUM>,
-    ctx: &mut TxContext,
-): (Call<SendParam, MessagingReceipt>, SendContext) {
-    state.check_version();
-    state.check_paused();
-
-    let msg_cap = state.borrow_messenger_cap();
-    let msg_data = mt_state.cc_send_token(msg_cap, ctx.sender(), receiver, xaum_token, ctx);
-    let send_ctx = SendContext { is_token: true, msg_data: msg_data };
-    let options = my_oapp.combine_options(dst_eid, SEND_TOKEN_TYPE, extra_options);
-    let lz_call = my_oapp.lz_send_and_refund(
-        &state.oapp_call_cap,
-        dst_eid,
-        msg_data,
-        options,
-        native_token_fee,
-        option::none(), // zro_token_fee
-        refund_address,
-        ctx,
-    );
+    let send_ctx = SendContext { is_token: false, msg_data: msg_data, call_id: lz_call.id() };
 
     (lz_call, send_ctx)
 }
@@ -401,19 +387,19 @@ public fun send_token(
     mt_state: &mut MtState<XAUM>,
     my_oapp: &mut OApp,
     dst_eid: u32,
-    extra_options: vector<u8>, // TODO
+    extra_options: vector<u8>,
     native_token_fee: Coin<SUI>,
-    refund_address: Option<address>,
+    refund_address: address,
     receiver: vector<u8>,
     xaum_token: Coin<XAUM>,
     ctx: &mut TxContext,
 ): (Call<SendParam, MessagingReceipt>, SendContext) {
     state.check_version();
     state.check_paused();
+    state.check_dst_addr(dst_eid, &receiver);
 
     let msg_cap = state.borrow_messenger_cap();
     let msg_data = mt_state.cc_send_token(msg_cap, ctx.sender(), receiver, xaum_token, ctx);
-    let send_ctx = SendContext { is_token: true, msg_data: msg_data };
     let options = my_oapp.combine_options(dst_eid, SEND_TOKEN_TYPE, extra_options);
     let lz_call = my_oapp.lz_send(
         &state.oapp_call_cap,
@@ -422,9 +408,10 @@ public fun send_token(
         options,
         native_token_fee,
         option::none(), // zro_token_fee
-        refund_address,
+        option::some(refund_address),
         ctx,
     );
+    let send_ctx = SendContext { is_token: true, msg_data: msg_data, call_id: lz_call.id() };
 
     (lz_call, send_ctx)
 }
@@ -436,12 +423,14 @@ public fun confirm_send(
     send_ctx: SendContext,
 ): (MessagingReceipt, Option<Coin<SUI>>) {
     state.check_version();
-    // TODO: check more
+    // TODO: more checks?
+
+    let SendContext { is_token, msg_data, call_id } = send_ctx;
+    assert!(lz_call.id() == call_id, EInvalidSendContext);
 
     let (param, messaging_receipt) = my_oapp.confirm_lz_send(&state.oapp_call_cap, lz_call);
 
     // emit events
-    let SendContext { is_token, msg_data } = send_ctx;
     if (is_token) {
         event::emit(CCSendTokenEvent {
             guid: messaging_receipt.guid(),
@@ -483,6 +472,7 @@ public fun lz_receive(
     ctx: &mut TxContext,
 ) {
     state.check_version();
+    // only check paused in the send functions
     // state.check_paused();
 
     let param = my_oapp.lz_receive(&state.oapp_call_cap, call);
@@ -537,6 +527,13 @@ fun check_owner(state: &State, ctx: &TxContext) {
 fun borrow_messenger_cap(state: &State): &MessengerCap {
     assert!(state.mtoken_msg_cap.is_some(), ENoMessengerCap);
     state.mtoken_msg_cap.borrow()
+}
+
+fun check_dst_addr(state: &State, eid: u32, addr: &vector<u8>) {
+    let dst_addr_len = (*state.eid_to_addr_len.borrow(eid)) as u64;
+    if (dst_addr_len != 0) {
+        assert!(addr.length() == dst_addr_len, EReceiverLen);
+    }
 }
 
 // === Test Functions ===

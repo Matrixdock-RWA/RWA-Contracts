@@ -8,7 +8,7 @@ use sui::package::test_publish;
 use sui::test_scenario;
 
 // constants are not exported, so we need to redefine them here
-const VERSION: u64 = 1;
+const VERSION: u64 = 2;
 
 // test addresses
 const SYS: address = @0x0;

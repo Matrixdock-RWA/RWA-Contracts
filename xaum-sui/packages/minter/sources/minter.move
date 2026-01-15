@@ -20,7 +20,7 @@ const EInsufficientBalance: u64 = 202;
 const EInvalidTimestamp: u64 = 203;
 
 // === Constants ===
-const VERSION: u64 = 1;
+const VERSION: u64 = 2;
 
 // const PREPRICE_DECIMAL: u8 = 6; // 6 decimal places for preprice
 // const SLIPPAGE_DECIMAL: u8 = 6; // 6 decimal places for slippage

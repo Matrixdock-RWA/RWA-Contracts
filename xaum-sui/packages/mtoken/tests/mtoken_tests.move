@@ -14,9 +14,10 @@ use sui::test_scenario;
 use sui::url;
 
 // constants are not exported, so we need to redefine them here
-const VERSION: u64 = 1;
+const VERSION: u64 = 2;
 const INIT_DELAY: u64 = 5;
 const MIN_DELAY: u64 = 3600;
+const MAX_DELAY: u64 = 3600 * 48;
 const REQ_TTL: u64 = 3600;
 
 // test addresses
@@ -616,6 +617,14 @@ fun set_delay_req_err_too_short() {
     let mut scenario = init_xaum();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY-1);
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::EDelayTooLong)]
+fun set_delay_req_err_too_long() {
+    let mut scenario = init_xaum();
+    let _clock = clock::create_for_testing(scenario.ctx());
+    request_set_delay(&mut scenario, &_clock, ADMIN, MAX_DELAY+1);
     abort
 }
 

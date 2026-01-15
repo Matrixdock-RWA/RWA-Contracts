@@ -15,11 +15,14 @@ use xaum::xaum::XAUM;
 // https://github.com/LayerZero-Labs/LayerZero-v2/blob/main/packages/layerzero-v2/sui/contracts/oapps/oft/oft/sources/oft_ptb_builder.move#L19
 const LZ_RECEIVE_INFO_VERSION_1: u16 = 1;
 
+// https://github.com/LayerZero-Labs/LayerZero-v2/blob/main/packages/layerzero-v2/sui/contracts/oapps/oft/oft/sources/oft_ptb_builder.move#L21
+public struct MsgPtbBuilder {}
+
 // https://github.com/LayerZero-Labs/LayerZero-v2/blob/main/packages/layerzero-v2/sui/contracts/oapps/oft/oft/sources/oft_ptb_builder.move#L31
 public fun lz_receive_info(state: &State, mt_state: &MtState<XAUM>, my_oapp: &OApp): vector<u8> {
     let lz_receive_move_calls = vector[
         move_call::create(
-            package::package_of_type<State>(), // package_name
+            msg_package(), // package_name
             b"ptb_builder".to_ascii_string(), // module_name
             b"build_lz_receive_ptb".to_ascii_string(), // function_name
             vector[
@@ -47,7 +50,7 @@ public fun build_lz_receive_ptb(
     let mut builder = move_calls_builder::new();
     builder.add(
         move_call::create(
-            package::package_of_type<State>(), // package_name
+            msg_package(), // package_name
             b"messenger_oapp".to_ascii_string(), // module_name
             b"lz_receive".to_ascii_string(), // function_name
             vector[
@@ -62,4 +65,10 @@ public fun build_lz_receive_ptb(
         ),
     );
     builder.build()
+}
+
+// Returns the current package address of the MsgPtbBuilder
+// When upgrading messenger_lz, create a new struct (e.g., MsgPtbBuilder2)
+public fun msg_package(): address {
+    package::package_of_type<MsgPtbBuilder>()
 }
