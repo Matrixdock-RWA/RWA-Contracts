@@ -124,9 +124,7 @@ entry fun init_messenger_cap(state: &mut State, mtoken_msg_cap: MessengerCap, ct
 
 entry fun init_upgrade_cap_id(state: &mut State, upgrade_cap: &UpgradeCap, ctx: &TxContext) {
     state.check_owner(ctx);
-    let package_addr = address::from_ascii_bytes(type_name::with_original_ids<State>()
-        .address_string()
-        .as_bytes());
+    let package_addr = state.package_address();
     assert!(upgrade_cap.package().to_address() == package_addr, EUpgradeCapInvalid);
     state.upgrade_cap_id.fill(object::id(upgrade_cap));
 }
