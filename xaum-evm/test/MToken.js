@@ -114,7 +114,7 @@ describe("MTokenALL", function () {
       const eftEvent = 'Set' + _Field + 'Effected';
 
       it(c + "." + setter, async function () {
-        const { mt, nft, reserveFeed, operator, packSigner, alice } = await loadFixture(deployTestFixture);
+        const { mt, nft, reserveFeed, operator, packSigner, owner, alice } = await loadFixture(deployTestFixture);
         
         const _c = c == "mt" ? mt : nft.connect(operator);
         let _initVal = initVal;
@@ -154,14 +154,14 @@ describe("MTokenALL", function () {
         expect(await _c[next]()).to.equal(newVal);
         expect(await _c[etNext]()).to.equal(ts2 + delay);
 
-        // test revode
+        // test revoke
         await mt.setRevoker(alice.address);
         await time.increase(delay * 3);
         await mt.setRevoker(alice.address);
-        await _c.connect(alice)[revoker]();
+        await _c.connect(revoker == "revokeNextRevoker" ? owner : alice)[revoker]();
         expect(await _c[etNext]()).to.equal(0);
         await expect(_c.connect(packSigner)[revoker]())
-          .to.be.revertedWithCustomError(_c, "NotRevoker")
+          .to.be.revertedWithCustomError(_c, revoker == "revokeNextRevoker" ? "OwnableUnauthorizedAccount" : "NotRevoker")
           .withArgs(packSigner.address);
 
         // test set by non-privileged addr
@@ -208,6 +208,7 @@ describe("MTokenALL", function () {
         ["OwnableUnauthorizedAccount", mt.connect(alice).setOperator(alice.address)],
         ["OwnableUnauthorizedAccount", mt.connect(alice).setRevoker(alice.address)],
         ["OwnableUnauthorizedAccount", mt.connect(alice).setDisableCcSend(true)],
+        ["OwnableUnauthorizedAccount", mt.connect(alice).revokeNextRevoker()],
         // onlyOperator
         ["NotOperator", mt.connect(alice).addToBlockedList(alice.address)],
         ["NotOperator", mt.connect(alice).removeFromBlockedList(alice.address)],
@@ -226,7 +227,6 @@ describe("MTokenALL", function () {
         ["NotRevoker", mt.connect(alice).revokeNextDelay()],
         ["NotRevoker", mt.connect(alice).revokeNextOperator()],
         ["NotRevoker", mt.connect(alice).revokeNextMessenger()],
-        ["NotRevoker", mt.connect(alice).revokeNextRevoker()],
       ];
 
       for (const [errType, testCase] of testCases) {

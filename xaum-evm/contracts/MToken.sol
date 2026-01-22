@@ -271,7 +271,7 @@ contract MToken is MTokenBase, ICCClient {
         etNextMessenger = 0;
     }
 
-    function revokeNextRevoker() public onlyRevoker {
+    function revokeNextRevoker() public onlyOwner {
         etNextRevoker = 0;
     }
 
