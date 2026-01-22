@@ -436,7 +436,6 @@ contract MToken is MTokenBase, ICCClient {
         message = msgOfCcSendMintBudget(value);
         mintBudget -= value;
         emit CCSendMintBudget(value);
-        return message;
     }
 
     // finish a cross-chain token transfer

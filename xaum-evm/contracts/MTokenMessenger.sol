@@ -215,6 +215,5 @@ contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
         if (msg.value - fee > 0) {
             payable(msg.sender).sendValue(msg.value - fee);
         }
-        return messageId;
     }
 }
