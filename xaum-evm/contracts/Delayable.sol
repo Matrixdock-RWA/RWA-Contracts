@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.24;
 
-import "./DelayedUpgradeable.sol";
+import {DelayedUpgradeable} from "./DelayedUpgradeable.sol";
 
 abstract contract Delayable is DelayedUpgradeable {
-
     uint64 constant MIN_DELAY = 1 hours;
 
     uint64 public delay;
@@ -115,5 +114,4 @@ abstract contract Delayable is DelayedUpgradeable {
     function revokeNextOperator() public onlyRevoker {
         etNextOperator = 0;
     }
-
 }

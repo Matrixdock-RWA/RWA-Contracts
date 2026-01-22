@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PermitUpgradeable.sol";
-import "./DelayedUpgradeable.sol";
-import "./interfaces/ICCClient.sol";
+import {ERC20PermitUpgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PermitUpgradeable.sol";
+import {DelayedUpgradeable} from "./DelayedUpgradeable.sol";
+import {ICCClient} from "./interfaces/ICCClient.sol";
 // import "hardhat/console.sol";
 
 abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
