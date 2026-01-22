@@ -21,8 +21,8 @@ contract BullionMinter is DelayedUpgradeable {
         address _owner,
         address _poolAccountA,
         address _poolAccountB,
-        address[] memory _tokensAcceptedByA,
-        address[] memory _tokensAcceptedByB
+        address[] calldata _tokensAcceptedByA,
+        address[] calldata _tokensAcceptedByB
     ) internal onlyInitializing {
         __Ownable_init_unchained(_owner);
         poolAccountA = _poolAccountA;
@@ -39,8 +39,8 @@ contract BullionMinter is DelayedUpgradeable {
         address _owner,
         address _poolAccountA,
         address _poolAccountB,
-        address[] memory _tokensAcceptedByA,
-        address[] memory _tokensAcceptedByB
+        address[] calldata _tokensAcceptedByA,
+        address[] calldata _tokensAcceptedByB
     ) public initializer {
         __Minter_init(_owner, _poolAccountA, _poolAccountB, _tokensAcceptedByA, _tokensAcceptedByB);
     }

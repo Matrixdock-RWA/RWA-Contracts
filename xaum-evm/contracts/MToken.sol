@@ -359,8 +359,8 @@ contract MToken is MTokenBase, ICCClient {
     }
 
     function multiTransfer(
-        address[] memory _recipients,
-        uint256[] memory _values
+        address[] calldata _recipients,
+        uint256[] calldata _values
     ) public onlyNotBlocked {
         if (_recipients.length != _values.length) {
             revert ArgsMismatch();
