@@ -98,19 +98,18 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
         uint value,
         bytes calldata _options
     ) external payable onlyLZNotPaused returns (bytes32 messageId) {
-        bytes memory _data = ICCClient(ccClient).ccSendToken(
-            msg.sender,
-            recipient,
-            value
-        );
-        messageId = sendThroughLZ(_dstEid, _data, _options, msg.value);
-
         MsgLzStorage storage $ = _getMsgLzStorage();
         uint8 dstAddrLen = $.eidToAddrLen[_dstEid];
         if (dstAddrLen != 0 && recipient.length != dstAddrLen) {
             revert InvalidRecipientLength(dstAddrLen, uint8(recipient.length));
         }
 
+        bytes memory _data = ICCClient(ccClient).ccSendToken(
+            msg.sender,
+            recipient,
+            value
+        );
+        messageId = sendThroughLZ(_dstEid, _data, _options, msg.value);
         emit CCSendTokenLZ(messageId, _data);
     }
 
