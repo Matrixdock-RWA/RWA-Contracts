@@ -61,8 +61,8 @@ contract MToken is MTokenBase, ICCClient {
     uint64 constant MIN_DELAY = 1 hours;
     uint64 constant MAX_DELAY = 48 hours;
 
-    uint constant TagSendToken = 2;
-    uint constant TagSendMintBudget = 3;
+    uint constant TAG_SEND_TOKEN = 2;
+    uint constant TAG_SEND_MINT_BUDGET = 3;
 
     uint8 constant LOCAL_DECIMALS = 18;
     uint8 constant SHARED_DECIMALS = 9;
@@ -401,7 +401,7 @@ contract MToken is MTokenBase, ICCClient {
         value = convertToSharedDecimals(value);
         bytes memory senderBytes = abi.encodePacked(sender);
         bytes memory body = abi.encode(senderBytes, receiverBytes, value);
-        return abi.encode(TagSendToken, body);
+        return abi.encode(TAG_SEND_TOKEN, body);
     }
 
     // called by the messenger contract to initialize a cross-chain token transfer
@@ -424,7 +424,7 @@ contract MToken is MTokenBase, ICCClient {
     ) public view returns (bytes memory message) {
         _checkMintBudget(value);
         value = uint112(convertToSharedDecimals(value));
-        return abi.encode(TagSendMintBudget, abi.encode(value));
+        return abi.encode(TAG_SEND_MINT_BUDGET, abi.encode(value));
     }
 
     // called by the messenger contract to initialize a cross-chain mint-budget transfer
@@ -463,9 +463,9 @@ contract MToken is MTokenBase, ICCClient {
     // called by the messenger contract to handle a received cross-chain message
     function ccReceive(bytes calldata message) public onlyMessenger {
         (uint tag, bytes memory data) = abi.decode(message, (uint, bytes));
-        if (tag == TagSendToken) {
+        if (tag == TAG_SEND_TOKEN) {
             ccReceiveToken(data);
-        } else if (tag == TagSendMintBudget) {
+        } else if (tag == TAG_SEND_MINT_BUDGET) {
             ccReceiveMintBudget(data);
         } else {
             revert InvalidMsg(tag);

@@ -12,9 +12,10 @@ contract BullionMinter is DelayedUpgradeable {
     address public poolAccountB; //rwa pool
     mapping(address token => bool accepted) public acceptedByA;
     mapping(address token => bool accepted) public acceptedByB;
-    uint8 constant public prepriceDecimal = 6;
-    uint8 constant public slippageDecimal = 6;
-    uint constant public delayMax = 59;
+
+    uint8 public constant PREPRICE_DECIMAL = 6;
+    uint8 public constant SLIPPAGE_DECIMAL = 6;
+    uint public constant DELAY_MAX = 59;
 
     function __Minter_init(
         address _owner,
@@ -80,7 +81,7 @@ contract BullionMinter is DelayedUpgradeable {
     // Most parameters are not checked here and are handled by the off-chain service.
     function requestToMint(address transferredToken, address forToken, uint amount, uint preprice, uint slippage, uint timestamp, bytes calldata extraData) external {
         require(acceptedByA[transferredToken], "INVALID_TOKEN_FOR_MINTING");
-        require(block.timestamp <= timestamp + delayMax, "INVALID_TIMESTAMP");
+        require(block.timestamp <= timestamp + DELAY_MAX, "INVALID_TIMESTAMP");
         IERC20(transferredToken).safeTransferFrom(msg.sender, poolAccountA, amount);
         emit MintRequest(transferredToken, forToken, msg.sender, poolAccountA, amount, preprice, slippage, extraData);
     }
@@ -88,7 +89,7 @@ contract BullionMinter is DelayedUpgradeable {
     // Most parameters are not checked here and are handled by the off-chain service.
     function requestToRedeem(address transferredToken, address forToken, uint amount, uint preprice, uint slippage, uint timestamp, bytes calldata extraData) external {
         require(acceptedByB[transferredToken], "INVALID_TOKEN_FOR_REDEEMING");
-        require(block.timestamp <= timestamp + delayMax, "INVALID_TIMESTAMP");
+        require(block.timestamp <= timestamp + DELAY_MAX, "INVALID_TIMESTAMP");
         IERC20(transferredToken).safeTransferFrom(msg.sender, poolAccountB, amount);
         emit RedeemRequest(transferredToken, forToken, msg.sender, poolAccountB, amount, preprice, slippage, extraData);
     }
