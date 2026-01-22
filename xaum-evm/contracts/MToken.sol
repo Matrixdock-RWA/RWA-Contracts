@@ -37,7 +37,7 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
     address public nftContract;
 
     // suspicious accounts can be blocked
-    mapping(address => bool) public isBlocked;
+    mapping(address account => bool blocked) public isBlocked;
 
     bool public disableCcSend;
 
