@@ -23,6 +23,7 @@ abstract contract DelayedUpgradeable is OwnableUpgradeable, UUPSUpgradeable {
         address _newImplementation,
         bytes memory _data
     ) public onlyOwner {
+        _checkZeroAddress(_newImplementation);
         nextImplementation = _newImplementation;
         nextUpgradeToAndCallDataHash = keccak256(_data);
         etNextUpgradeToAndCall = uint64(block.timestamp) + getDelay();

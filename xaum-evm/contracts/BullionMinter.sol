@@ -59,21 +59,25 @@ contract BullionMinter is DelayedUpgradeable {
     }
 
     function setPoolAccountA(address _poolAccountA) onlyOwner() external {
+        _checkZeroAddress(_poolAccountA);
         poolAccountA = _poolAccountA;
         emit SetPoolAccountA(_poolAccountA);
     }
 
     function setPoolAccountB(address _poolAccountB) onlyOwner() external {
+        _checkZeroAddress(_poolAccountB);
         poolAccountB = _poolAccountB;
         emit SetPoolAccountB(_poolAccountB);
     }
 
     function setAcceptedByA(address token, bool accepted) onlyOwner() external {
+        _checkZeroAddress(token);
         acceptedByA[token] = accepted;
         emit SetAcceptedByA(token, accepted);
     }
 
     function setAcceptedByB(address token, bool accepted) onlyOwner() external {
+        _checkZeroAddress(token);
         acceptedByB[token] = accepted;
         emit SetAcceptedByB(token, accepted);
     }

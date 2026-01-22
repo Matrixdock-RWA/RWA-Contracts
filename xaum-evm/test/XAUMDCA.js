@@ -1249,10 +1249,8 @@ describe("XAUMDCA", function () {
                     .to.be.revertedWithCustomError(_c, "TooEarlyToUpgradeToAndCall");
 
                 // zeroAddr
-                await _c.connect(owner).requestUpgradeToAndCall(zeroAddr, "0x");
-                await time.increase(delay);
-                await expect(_c.connect(owner).upgradeToAndCall(zeroAddr, "0x"))
-                    .to.be.reverted;
+                await expect(_c.connect(owner).requestUpgradeToAndCall(zeroAddr, "0x"))
+                    .to.be.revertedWithCustomError(_c, "ZeroAddress");
 
                 // ok
                 await _c.connect(owner).requestUpgradeToAndCall(nft2impl.target, "0x");
