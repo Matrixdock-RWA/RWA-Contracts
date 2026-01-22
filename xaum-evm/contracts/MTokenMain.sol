@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.24;
 
-import "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
-import "./MToken.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+import {MToken} from "./MToken.sol";
 
 // this contract will be deployed on Ethereum
 contract MTokenMain is MToken {
+    using SafeCast for uint;
+
     uint constant ORACLE_OFFLINE_THRESHOLD = 2 days;
 
     event SetReserveFeedRequest(address oldAddr, address newAddr, uint64 et);
@@ -90,13 +93,13 @@ contract MTokenMain is MToken {
         if (int(_usedReserve) > reserveFromFeed) {
             revert ReserveNotEnough(reserveFromFeed, int(_usedReserve));
         }
-        mintBudget += uint112(mintBudgetDelta);
-        usedReserve = uint112(_usedReserve);
+        mintBudget += mintBudgetDelta;
+        usedReserve = _usedReserve.toUint112();
     }
 
     function decreaseMintBudget(uint112 mintBudgetDelta) public onlyOperator {
         uint _usedReserve = usedReserve - mintBudgetDelta;
         mintBudget -= mintBudgetDelta;
-        usedReserve = uint112(_usedReserve);
+        usedReserve = _usedReserve.toUint112();
     }
 }

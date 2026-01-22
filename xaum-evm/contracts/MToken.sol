@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.24;
 
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {ERC20PermitUpgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PermitUpgradeable.sol";
 import {DelayedUpgradeable} from "./DelayedUpgradeable.sol";
 import {ICCClient} from "./interfaces/ICCClient.sol";
@@ -58,6 +59,8 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
 
 // this contract will be deployed on EVM-compatible chains other than Ethereum
 contract MToken is MTokenBase, ICCClient {
+    using SafeCast for uint;
+
     uint64 constant MIN_DELAY = 1 hours;
     uint64 constant MAX_DELAY = 48 hours;
 
@@ -320,7 +323,7 @@ contract MToken is MTokenBase, ICCClient {
             }
         }
         _checkMintBudget(amount);
-        mintBudget = uint112(mintBudget - amount);
+        mintBudget = (mintBudget - amount).toUint112();
         _mint(receiver, amount);
         return true;
     }
@@ -333,7 +336,7 @@ contract MToken is MTokenBase, ICCClient {
     ) public onlyOperatorAndNft {
         _burn(operator, amount);
         emit Redeem(customer, amount, data);
-        mintBudget += uint112(amount);
+        mintBudget += amount.toUint112();
     }
 
     function transfer(
@@ -423,7 +426,7 @@ contract MToken is MTokenBase, ICCClient {
         uint112 value
     ) public view returns (bytes memory message) {
         _checkMintBudget(value);
-        value = uint112(convertToSharedDecimals(value));
+        value = convertToSharedDecimals(value).toUint112();
         return abi.encode(TAG_SEND_MINT_BUDGET, abi.encode(value));
     }
 
@@ -454,7 +457,7 @@ contract MToken is MTokenBase, ICCClient {
     // finish a cross-chain mint-budget transfer
     function ccReceiveMintBudget(bytes memory message) internal {
         uint112 value = abi.decode(message, (uint112));
-        value = uint112(convertToLocalDecimals(value));
+        value = convertToLocalDecimals(value).toUint112();
         mintBudget += value;
         emit CCReceiveMintBudget(value);
     }
