@@ -43,9 +43,11 @@ abstract contract MTokenMessengerBaseUpgradeable is DelayedUpgradeable {
             delay = _delay;
             emit SetDelayEffected(_delay);
         } else {
+            uint64 _currDelay = delay;
+            uint64 _etNextDelay = uint64(block.timestamp) + _currDelay;
             nextDelay = _delay;
-            etNextDelay = uint64(block.timestamp) + delay;
-            emit SetDelayRequest(delay, _delay, etNextDelay);
+            etNextDelay = _etNextDelay;
+            emit SetDelayRequest(_currDelay, _delay, _etNextDelay);
         }
     }
 

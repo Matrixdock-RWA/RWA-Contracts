@@ -200,9 +200,11 @@ contract MToken is MTokenBase, ICCClient {
             delay = _delay;
             emit SetDelayEffected(_delay);
         } else {
+            uint64 _currDelay = delay;
+            uint64 _etNextDelay = uint64(block.timestamp) + _currDelay;
             nextDelay = _delay;
-            etNextDelay = uint64(block.timestamp) + delay;
-            emit SetDelayRequest(delay, _delay, etNextDelay);
+            etNextDelay = _etNextDelay;
+            emit SetDelayRequest(_currDelay, _delay, _etNextDelay);
         }
     }
 
@@ -214,8 +216,9 @@ contract MToken is MTokenBase, ICCClient {
             emit SetMessengerEffected(_messenger);
         } else {
             nextMessenger = _messenger;
-            etNextMessenger = uint64(block.timestamp) + delay;
-            emit SetMessengerRequest(messenger, _messenger, etNextMessenger);
+            uint64 _etNextMessenger = uint64(block.timestamp) + delay;
+            etNextMessenger = _etNextMessenger;
+            emit SetMessengerRequest(messenger, _messenger, _etNextMessenger);
         }
     }
 
@@ -235,8 +238,9 @@ contract MToken is MTokenBase, ICCClient {
             emit SetRevokerEffected(_revoker);
         } else {
             nextRevoker = _revoker;
-            etNextRevoker = uint64(block.timestamp) + delay;
-            emit SetRevokerRequest(revoker, _revoker, etNextRevoker);
+            uint64 _etNextRevoker = uint64(block.timestamp) + delay;
+            etNextRevoker = _etNextRevoker;
+            emit SetRevokerRequest(revoker, _revoker, _etNextRevoker);
         }
     }
 
@@ -248,8 +252,9 @@ contract MToken is MTokenBase, ICCClient {
             emit SetOperatorEffected(_operator);
         } else {
             nextOperator = _operator;
-            etNextOperator = uint64(block.timestamp) + delay;
-            emit SetOperatorRequest(operator, _operator, etNextOperator);
+            uint64 _etNextOperator = uint64(block.timestamp) + delay;
+            etNextOperator = _etNextOperator;
+            emit SetOperatorRequest(operator, _operator, _etNextOperator);
         }
     }
 

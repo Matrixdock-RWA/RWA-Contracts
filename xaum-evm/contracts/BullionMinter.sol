@@ -86,16 +86,18 @@ contract BullionMinter is DelayedUpgradeable {
     function requestToMint(address transferredToken, address forToken, uint amount, uint preprice, uint slippage, uint timestamp, bytes calldata extraData) external {
         require(acceptedByA[transferredToken], "INVALID_TOKEN_FOR_MINTING");
         require(block.timestamp <= timestamp + DELAY_MAX, "INVALID_TIMESTAMP");
-        IERC20(transferredToken).safeTransferFrom(msg.sender, poolAccountA, amount);
-        emit MintRequest(transferredToken, forToken, msg.sender, poolAccountA, amount, preprice, slippage, extraData);
+        address _poolAccountA = poolAccountA;
+        IERC20(transferredToken).safeTransferFrom(msg.sender, _poolAccountA, amount);
+        emit MintRequest(transferredToken, forToken, msg.sender, _poolAccountA, amount, preprice, slippage, extraData);
     }
 
     // Most parameters are not checked here and are handled by the off-chain service.
     function requestToRedeem(address transferredToken, address forToken, uint amount, uint preprice, uint slippage, uint timestamp, bytes calldata extraData) external {
         require(acceptedByB[transferredToken], "INVALID_TOKEN_FOR_REDEEMING");
         require(block.timestamp <= timestamp + DELAY_MAX, "INVALID_TIMESTAMP");
-        IERC20(transferredToken).safeTransferFrom(msg.sender, poolAccountB, amount);
-        emit RedeemRequest(transferredToken, forToken, msg.sender, poolAccountB, amount, preprice, slippage, extraData);
+        address _poolAccountB = poolAccountB;
+        IERC20(transferredToken).safeTransferFrom(msg.sender, _poolAccountB, amount);
+        emit RedeemRequest(transferredToken, forToken, msg.sender, _poolAccountB, amount, preprice, slippage, extraData);
     }
 
     // rescue ERC20 tokens which were accidentally sent to this contract

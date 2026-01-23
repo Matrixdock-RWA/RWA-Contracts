@@ -71,9 +71,11 @@ abstract contract Delayable is DelayedUpgradeable {
             delay = _delay;
             emit SetDelayEffected(_delay);
         } else {
+            uint64 _currDelay = delay;
+            uint64 _etNextDelay = uint64(block.timestamp) + _currDelay;
             nextDelay = _delay;
-            etNextDelay = uint64(block.timestamp) + delay;
-            emit SetDelayRequest(delay, _delay, etNextDelay);
+            etNextDelay = _etNextDelay;
+            emit SetDelayRequest(_currDelay, _delay, _etNextDelay);
         }
     }
 
@@ -81,16 +83,17 @@ abstract contract Delayable is DelayedUpgradeable {
         etNextDelay = 0;
     }
 
-    function setRevoker(address newRevoker) public onlyOwner {
-        _checkZeroAddress(newRevoker);
+    function setRevoker(address _revoker) public onlyOwner {
+        _checkZeroAddress(_revoker);
         uint64 et = etNextRevoker;
-        if (newRevoker == nextRevoker && et != 0 && et < block.timestamp) {
-            revoker = newRevoker;
-            emit SetRevokerEffected(newRevoker);
+        if (_revoker == nextRevoker && et != 0 && et < block.timestamp) {
+            revoker = _revoker;
+            emit SetRevokerEffected(_revoker);
         } else {
-            nextRevoker = newRevoker;
-            etNextRevoker = uint64(block.timestamp) + delay;
-            emit SetRevokerRequest(revoker, newRevoker, etNextRevoker);
+            nextRevoker = _revoker;
+            uint64 _etNextRevoker = uint64(block.timestamp) + delay;
+            etNextRevoker = _etNextRevoker;
+            emit SetRevokerRequest(revoker, _revoker, _etNextRevoker);
         }
     }
 
@@ -98,16 +101,17 @@ abstract contract Delayable is DelayedUpgradeable {
         etNextRevoker = 0;
     }
 
-    function setOperator(address newOperator) public onlyOwner {
-        _checkZeroAddress(newOperator);
+    function setOperator(address _operator) public onlyOwner {
+        _checkZeroAddress(_operator);
         uint64 et = etNextOperator;
-        if (newOperator == nextOperator && et != 0 && et < block.timestamp) {
-            operator = newOperator;
-            emit SetOperatorEffected(newOperator);
+        if (_operator == nextOperator && et != 0 && et < block.timestamp) {
+            operator = _operator;
+            emit SetOperatorEffected(_operator);
         } else {
-            nextOperator = newOperator;
-            etNextOperator = uint64(block.timestamp) + delay;
-            emit SetOperatorRequest(operator, newOperator, etNextOperator);
+            nextOperator = _operator;
+            uint64 _etNextOperator = uint64(block.timestamp) + delay;
+            etNextOperator = _etNextOperator;
+            emit SetOperatorRequest(operator, _operator, _etNextOperator);
         }
     }
 
