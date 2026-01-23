@@ -115,6 +115,24 @@ fun cc_send_mint_budget_err_not_enough() {
     scenario.end();
 }
 
+#[test, expected_failure(abort_code = mtoken::EZeroValue)]
+fun cc_send_mint_budget_err_zero_value() {
+    let mut scenario = init_xaum();
+    scenario.next_tx(ADMIN);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        mtoken::cc_new_messenger_cap(&mut state, ADMIN, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+    scenario.next_tx(ADMIN);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        let msg_cap = scenario.take_from_sender<MessengerCap>();
+        mtoken::cc_send_mint_budget(&mut state, &msg_cap, 0, scenario.ctx());
+    };
+    abort
+}
+
 #[test]
 fun cc_send_mint_budget_ok() {
     let mut scenario = init_xaum();
@@ -161,6 +179,33 @@ fun cc_send_token_err_invalid_messenger_cap() {
             ADMIN,
             b"BOB",
             coin::zero<XAUM>(scenario.ctx()),
+            scenario.ctx(),
+        );
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::EZeroValue)]
+fun cc_send_token_err_zero_value() {
+    let mut scenario = init_xaum();
+    scenario.next_tx(ADMIN);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        mtoken::cc_new_messenger_cap(&mut state, ALICE, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+
+    scenario.next_tx(ALICE);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        let msg_cap = scenario.take_from_sender<MessengerCap>();
+        let token = coin::zero<XAUM>(scenario.ctx());
+        mtoken::cc_send_token(
+            &mut state,
+            &msg_cap,
+            ADMIN,
+            b"Alice",
+            token,
             scenario.ctx(),
         );
     };

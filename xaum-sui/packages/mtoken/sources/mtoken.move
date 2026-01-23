@@ -31,6 +31,7 @@ const EInvalidMessageType: u64 = 111;
 const EInvalidMessengerCap: u64 = 112;
 const ERedeemAmountNotMatch: u64 = 113;
 const EDelayTooLong: u64 = 114;
+const EZeroValue: u64 = 115;
 
 // === Constants ===
 
@@ -569,6 +570,7 @@ public fun cc_send_mint_budget<T>(
     check_version(state);
     check_operator(state, ctx);
     check_messenger_cap(state, msg_cap);
+    check_non_zero(amount);
     deduct_mint_budget(state, amount);
     event::emit(CCSendMintBudgetEvent { amount });
     msg_of_cc_send_mint_budget(amount)
@@ -588,6 +590,7 @@ public fun cc_send_token<T>(
 ): vector<u8> {
     check_version(state);
     check_messenger_cap(state, msg_cap);
+    check_non_zero(token.balance().value());
     // TODO: check if sender is in the blocked list
     // TODO: check if receiver is a valid address
     let amount = token.balance().value();
@@ -695,6 +698,10 @@ fun check_messenger_cap<T>(state: &State<T>, cap: &MessengerCap) {
     let valid_capId = df::borrow(&state.id, MessengerCapKey {});
     let cap_id = object::id(cap);
     assert!(cap_id == valid_capId, EInvalidMessengerCap);
+}
+
+fun check_non_zero(amount: u64) {
+    assert!(amount > 0, EZeroValue);
 }
 
 fun deduct_mint_budget<T>(state: &mut State<T>, amount: u64) {
