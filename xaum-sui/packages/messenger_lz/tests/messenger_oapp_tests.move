@@ -42,7 +42,7 @@ fun register_oapp(scenario: &mut test_scenario::Scenario, caller: address) {
         let state = scenario.take_shared<State>();
         let my_oapp = scenario.take_shared<OApp>();
         let mut endpoint = scenario.take_shared<EndpointV2>();
-        let lz_receive_info = vector::empty();
+        let lz_receive_info = vector[];
         state.register_oapp(
             &my_oapp,
             &mut endpoint,
@@ -193,7 +193,7 @@ fun send_mint_budget(
             &mut mt_state,
             &mut my_oapp,
             dst_eid,
-            vector::empty(),
+            vector[],
             coin::zero<SUI>(scenario.ctx()),
             amount,
             scenario.ctx(),
@@ -221,7 +221,7 @@ fun send_token(
             &mut mt_state,
             &mut my_oapp,
             dst_eid,
-            vector::empty(),
+            vector[],
             coin::zero<SUI>(scenario.ctx()),
             receiver,
             token,
@@ -297,7 +297,7 @@ fun register_oapp_ok() {
 fun set_oapp_info_err_not_owner() {
     let mut scenario = init_messenger_oapp();
     register_oapp(&mut scenario, ADMIN);
-    set_oapp_info(&mut scenario, ALICE, vector::empty());
+    set_oapp_info(&mut scenario, ALICE, vector[]);
     abort
 }
 
@@ -305,7 +305,7 @@ fun set_oapp_info_err_not_owner() {
 fun set_oapp_info_ok() {
     let mut scenario = init_messenger_oapp();
     register_oapp(&mut scenario, ADMIN);
-    set_oapp_info(&mut scenario, ADMIN, vector::empty());
+    set_oapp_info(&mut scenario, ADMIN, vector[]);
     scenario.end();
 }
 
@@ -321,7 +321,7 @@ fun skip_err_not_owner() {
 fun set_peer_err_not_owner() {
     let mut scenario = init_messenger_oapp();
     register_oapp(&mut scenario, ADMIN);
-    set_peer(&mut scenario, ALICE, 123, vector::empty(), 20);
+    set_peer(&mut scenario, ALICE, 123, vector[], 20);
     abort
 }
 
@@ -337,7 +337,7 @@ fun set_peer_ok() {
 fun set_enforced_options_err_not_owner() {
     let mut scenario = init_messenger_oapp();
     register_oapp(&mut scenario, ADMIN);
-    set_enforced_options(&mut scenario, ALICE, 123, 1, vector::empty());
+    set_enforced_options(&mut scenario, ALICE, 123, 1, vector[]);
     abort
 }
 

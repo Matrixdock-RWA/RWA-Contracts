@@ -149,9 +149,9 @@ public struct MintReq has key {
     et: u64,
 }
 
-public struct TreasuryCapKey has copy, drop, store {}
-public struct DenyCapKey has copy, drop, store {}
-public struct MessengerCapKey has copy, drop, store {}
+public struct TreasuryCapKey() has copy, drop, store;
+public struct DenyCapKey() has copy, drop, store;
+public struct MessengerCapKey() has copy, drop, store;
 
 public struct State<phantom T> has key, store {
     id: UID,
@@ -231,8 +231,8 @@ public fun create_coin<T: drop>(
         delay: init_delay,
         mint_budget: 0,
     };
-    dof::add(&mut state.id, TreasuryCapKey {}, treasury_cap);
-    dof::add(&mut state.id, DenyCapKey {}, deny_cap);
+    dof::add(&mut state.id, TreasuryCapKey(), treasury_cap);
+    dof::add(&mut state.id, DenyCapKey(), deny_cap);
 
     // https://docs.sui.io/concepts/object-ownership/shared
     transfer::public_share_object(metadata);
@@ -554,7 +554,7 @@ entry fun cc_new_messenger_cap<T>(state: &mut State<T>, holder: address, ctx: &m
         id: object::new(ctx),
     };
 
-    let key = MessengerCapKey {};
+    let key = MessengerCapKey();
     df::remove_if_exists<MessengerCapKey, sui::object::ID>(&mut state.id, key);
     df::add(&mut state.id, key, object::id(&cap));
 
@@ -695,7 +695,7 @@ fun check_revoker<T>(state: &State<T>, ctx: &TxContext) {
 }
 
 fun check_messenger_cap<T>(state: &State<T>, cap: &MessengerCap) {
-    let valid_capId = df::borrow(&state.id, MessengerCapKey {});
+    let valid_capId = df::borrow(&state.id, MessengerCapKey());
     let cap_id = object::id(cap);
     assert!(cap_id == valid_capId, EInvalidMessengerCap);
 }
@@ -710,15 +710,15 @@ fun deduct_mint_budget<T>(state: &mut State<T>, amount: u64) {
 }
 
 fun borrow_treasury_cap<T>(state: &State<T>): &TreasuryCap<T> {
-    dof::borrow(&state.id, TreasuryCapKey {})
+    dof::borrow(&state.id, TreasuryCapKey())
 }
 
 fun borrow_treasury_cap_mut<T>(state: &mut State<T>): &mut TreasuryCap<T> {
-    dof::borrow_mut(&mut state.id, TreasuryCapKey {})
+    dof::borrow_mut(&mut state.id, TreasuryCapKey())
 }
 
 fun borrow_deny_cap_mut<T>(state: &mut State<T>): &mut DenyCapV2<T> {
-    dof::borrow_mut(&mut state.id, DenyCapKey {})
+    dof::borrow_mut(&mut state.id, DenyCapKey())
 }
 
 // === Test Functions ===

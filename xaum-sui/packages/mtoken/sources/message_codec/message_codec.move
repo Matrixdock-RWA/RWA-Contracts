@@ -188,7 +188,7 @@ fun decode_cc_token_message(message: vector<u8>): CCInboundToken {
     assert!(receiver.length() == SUI_ADDR_LENGTH, EInvalidReceiverLength);
 
     CCInboundToken {
-        sender: sender,
+        sender,
         receiver: address::from_bytes(receiver),
         amount: to_local_decimals(amount),
     }

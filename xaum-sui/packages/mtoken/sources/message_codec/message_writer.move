@@ -7,7 +7,7 @@ public struct MessageWriter {
 }
 
 public fun new(): MessageWriter {
-    MessageWriter { msg: vector::empty() }
+    MessageWriter { msg: vector[] }
 }
 
 public fun write_data_pad32(writer: &mut MessageWriter, data: vector<u8>) {
@@ -23,7 +23,7 @@ public fun write_data_pad32(writer: &mut MessageWriter, data: vector<u8>) {
 
 public fun write_u256(writer: &mut MessageWriter, val: u256) {
     let mut bytes = bcs::to_bytes(&val); // little endian
-    vector::reverse(&mut bytes); // now big endian
+    bytes.reverse(); // now big endian
     writer.write_data_pad32(bytes);
 }
 

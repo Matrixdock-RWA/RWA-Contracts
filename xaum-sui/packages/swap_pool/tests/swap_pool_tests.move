@@ -254,7 +254,7 @@ fun set_xaum_price_oracle_feed_id_err_not_owner() {
     scenario.next_tx(ALICE);
     {
         let mut state = scenario.take_shared<State>();
-        swap_pool::set_xaum_price_oracle_feed_id(&mut state, vector::empty(), scenario.ctx());
+        swap_pool::set_xaum_price_oracle_feed_id(&mut state, vector[], scenario.ctx());
     };
     abort
 }

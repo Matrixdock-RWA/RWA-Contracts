@@ -430,7 +430,7 @@ public fun get_twap_price_from_dex<XAUM, Y>(
 ): u256 {
     let seconds_ago = vector[TWAP_INTERVAL, 0];
     let (tick_cumulative, _cumulative_liquidity) = pool::observe(pool, seconds_ago, clock);
-    assert!(vector::length(&tick_cumulative) == 2, EInvalidTickCumulativeLength);
+    assert!(tick_cumulative.length() == 2, EInvalidTickCumulativeLength);
     // (tick_cumulative[1] - tick_cumulative[0]) / TWAP_INTERVAL
     let tick_avg = i64::div(
         i64::sub(tick_cumulative[1], tick_cumulative[0]),
