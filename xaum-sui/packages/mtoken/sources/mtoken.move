@@ -190,7 +190,7 @@ revoke_set_operator      |       |          |   ✓     |          |
 revoke_set_delay         |       |          |   ✓     |          |         
 revoke_mint_to           |       |          |   ✓     |          |         
 cc_new_messenger_cap     |   ✓   |          |         |          |         
-cc_send_mint_budget      |       |          |         | ✓        |         
+cc_send_mint_budget      |       |   ✓      |         | ✓        |         
 cc_send_token            |       |          |         | ✓        |         
 cc_receive               |       |          |         | ✓        |         
 */
