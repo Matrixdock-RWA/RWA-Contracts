@@ -355,7 +355,6 @@ public fun send_mint_budget(
     dst_eid: u32,
     extra_options: vector<u8>,
     native_token_fee: Coin<SUI>,
-    refund_address: address,
     amount: u64,
     ctx: &mut TxContext,
 ): (Call<SendParam, MessagingReceipt>, SendContext) {
@@ -372,7 +371,7 @@ public fun send_mint_budget(
         options,
         native_token_fee,
         option::none(), // zro_token_fee
-        option::some(refund_address),
+        option::some(ctx.sender()),
         ctx,
     );
     let send_ctx = SendContext { is_token: false, msg_data: msg_data, call_id: lz_call.id() };
@@ -387,7 +386,6 @@ public fun send_token(
     dst_eid: u32,
     extra_options: vector<u8>,
     native_token_fee: Coin<SUI>,
-    refund_address: address,
     receiver: vector<u8>,
     xaum_token: Coin<XAUM>,
     ctx: &mut TxContext,
@@ -406,7 +404,7 @@ public fun send_token(
         options,
         native_token_fee,
         option::none(), // zro_token_fee
-        option::some(refund_address),
+        option::some(ctx.sender()),
         ctx,
     );
     let send_ctx = SendContext { is_token: true, msg_data: msg_data, call_id: lz_call.id() };

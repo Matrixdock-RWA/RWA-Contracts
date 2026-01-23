@@ -195,7 +195,6 @@ fun send_mint_budget(
             dst_eid,
             vector::empty(),
             coin::zero<SUI>(scenario.ctx()),
-            caller, // refund address
             amount,
             scenario.ctx(),
         );
@@ -224,7 +223,6 @@ fun send_token(
             dst_eid,
             vector::empty(),
             coin::zero<SUI>(scenario.ctx()),
-            caller, // refund address
             receiver,
             token,
             scenario.ctx(),
