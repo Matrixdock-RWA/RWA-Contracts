@@ -27,10 +27,10 @@ contract BullionMinter is DelayedUpgradeable {
         __Ownable_init_unchained(_owner);
         poolAccountA = _poolAccountA;
         poolAccountB = _poolAccountB;
-        for(uint i=0; i<_tokensAcceptedByA.length; i++) {
+        for (uint i; i < _tokensAcceptedByA.length; i++) {
             acceptedByA[_tokensAcceptedByA[i]] = true;
         }
-        for(uint i=0; i<_tokensAcceptedByB.length; i++) {
+        for (uint i; i < _tokensAcceptedByB.length; i++) {
             acceptedByB[_tokensAcceptedByB[i]] = true;
         }
     }
