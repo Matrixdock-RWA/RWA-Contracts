@@ -184,6 +184,7 @@ contract MToken is MTokenBase, ICCClient {
     }
 
     function setDisableCcSend(bool b) public onlyOwner {
+        // note: missing event to be added in future update
         disableCcSend = b;
     }
 
@@ -226,6 +227,7 @@ contract MToken is MTokenBase, ICCClient {
     function setNFTContract(address _nftContract) public onlyOwner {
         _checkZeroAddress(_nftContract);
         if (nftContract == address(0)) {
+            // note: missing event to be added in future update
             nftContract = _nftContract;
         }
     }
@@ -268,22 +270,27 @@ contract MToken is MTokenBase, ICCClient {
     }
 
     function revokeNextDelay() public onlyRevoker {
+        // note: missing event to be added in future update
         etNextDelay = 0;
     }
 
     function revokeNextOperator() public onlyRevoker {
+        // note: missing event to be added in future update
         etNextOperator = 0;
     }
 
     function revokeNextMessenger() public onlyRevoker {
+        // note: missing event to be added in future update
         etNextMessenger = 0;
     }
 
     function revokeNextRevoker() public onlyOwner {
+        // note: missing event to be added in future update
         etNextRevoker = 0;
     }
 
     function revokeNextUpgrade() public onlyRevoker {
+        // note: missing event to be added in future update
         etNextUpgradeToAndCall = 0;
     }
 
@@ -298,16 +305,20 @@ contract MToken is MTokenBase, ICCClient {
     }
 
     // NFT Contract packs tokens into one NFT.
+    // note: allows blocked tokenOwner by design
     function pack(address tokenOwner, uint amount) public onlyNFTContract {
         _transfer(tokenOwner, msg.sender, amount);
     }
 
     // NFT Contract unpacks a NFT and return the tokens to tokenOwner
+    // note: allows blocked tokenOwner by design
     function unpack(address tokenOwner, uint amount) public onlyNFTContract {
         _transfer(msg.sender, tokenOwner, amount);
     }
 
     // mint new tokens to 'receiver'
+    // note: allows minting to blocked recipient by design
+    // note: nonce used off-chain only, no on-chain validation by design
     function mintTo(
         address receiver,
         uint amount,
@@ -334,6 +345,7 @@ contract MToken is MTokenBase, ICCClient {
     }
 
     // redeem tokens owned by operator
+    // note: allows redeeming for blocked customer by design
     function redeem(
         uint amount,
         address customer,
@@ -344,6 +356,7 @@ contract MToken is MTokenBase, ICCClient {
         mintBudget += amount.toUint112();
     }
 
+    // note: allows transfer to blocked recipient by design
     function transfer(
         address _recipient,
         uint256 _amount
@@ -354,6 +367,7 @@ contract MToken is MTokenBase, ICCClient {
         return super.transfer(_recipient, _amount);
     }
 
+    // note: allows transfer to blocked recipient by design
     function transferFrom(
         address _sender,
         address _recipient,
@@ -366,6 +380,7 @@ contract MToken is MTokenBase, ICCClient {
         return super.transferFrom(_sender, _recipient, _amount);
     }
 
+    // note: allows transfer to blocked recipient by design
     function multiTransfer(
         address[] calldata _recipients,
         uint256[] calldata _values
@@ -402,6 +417,7 @@ contract MToken is MTokenBase, ICCClient {
         uint256 value
     ) public view returns (bytes memory message) {
         _checkBlocked(sender);
+        // note: blocked receiver only checked for EVM chains by design
         if (receiverBytes.length == 20) {
             address receiver = address(bytes20(receiverBytes));
             _checkBlocked(receiver);
@@ -439,6 +455,8 @@ contract MToken is MTokenBase, ICCClient {
     function ccSendMintBudget(
         uint112 value
     ) public onlyMessenger returns (bytes memory message) {
+        // note: we are very careful with any third-party contracts the operator calls
+        // to avoid unintended shuffling of cross-chain mint budgets
         _checkOperator(tx.origin);
         _checkZeroValue(value);
         message = msgOfCcSendMintBudget(value);
@@ -447,6 +465,9 @@ contract MToken is MTokenBase, ICCClient {
     }
 
     // finish a cross-chain token transfer
+    // note: mints tokens without checking chain's mintBudget; it is by design
+    // that a chain's totalSupply can exceed its mintBudget via cross-chain transfers
+    // note: allows minting to blocked receiver by design
     function ccReceiveToken(bytes memory message) internal {
         (bytes memory senderBytes, bytes memory receiverBytes, uint value) = abi
             .decode(message, (bytes, bytes, uint));

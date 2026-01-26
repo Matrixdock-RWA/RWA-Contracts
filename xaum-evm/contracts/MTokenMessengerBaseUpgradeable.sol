@@ -52,6 +52,7 @@ abstract contract MTokenMessengerBaseUpgradeable is DelayedUpgradeable {
     }
 
     function revokeNextUpgrade() public onlyOwner {
+        // note: missing event to be added in future update
         etNextUpgradeToAndCall = 0;
     }
 }

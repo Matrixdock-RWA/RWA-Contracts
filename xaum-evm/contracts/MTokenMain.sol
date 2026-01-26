@@ -86,6 +86,8 @@ contract MTokenMain is MToken {
 
         if (updatedAt + ORACLE_OFFLINE_THRESHOLD < block.timestamp) {
             // use fallback reserve feed
+            // note: fallback feed doesn't require strong timeliness guarantees
+            // hence doesn't use staleness check by design
             (, reserveFromFeed, , , ) = AggregatorV3Interface(fallbackFeed)
                 .latestRoundData();
         }

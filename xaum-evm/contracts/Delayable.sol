@@ -58,6 +58,7 @@ abstract contract Delayable is DelayedUpgradeable {
     }
 
     function revokeNextUpgrade() public onlyRevoker {
+        // note: missing event to be added in future update
         etNextUpgradeToAndCall = 0;
     }
 
@@ -80,6 +81,7 @@ abstract contract Delayable is DelayedUpgradeable {
     }
 
     function revokeNextDelay() public onlyRevoker {
+        // note: missing event to be added in future update
         etNextDelay = 0;
     }
 
@@ -98,6 +100,7 @@ abstract contract Delayable is DelayedUpgradeable {
     }
 
     function revokeNextRevoker() public onlyOwner {
+        // note: missing event to be added in future update
         etNextRevoker = 0;
     }
 
@@ -116,6 +119,7 @@ abstract contract Delayable is DelayedUpgradeable {
     }
 
     function revokeNextOperator() public onlyRevoker {
+        // note: missing event to be added in future update
         etNextOperator = 0;
     }
 }
