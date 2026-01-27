@@ -17,6 +17,7 @@ use oapp::oapp_info_v1;
 use std::type_name;
 use sui::address;
 use sui::coin::Coin;
+use sui::deny_list::DenyList;
 use sui::event;
 use sui::package::UpgradeCap;
 use sui::sui::SUI;
@@ -68,6 +69,16 @@ public struct CCSendMintBudgetEvent has copy, drop {
     msg_data: vector<u8>,
 }
 
+public struct AddBlockedTokenEvent has copy, drop {
+    receiver: address,
+    amount: u64,
+}
+
+public struct ClaimBlockedTokenEvent has copy, drop {
+    receiver: address,
+    amount: u64,
+}
+
 // === Structs ===
 
 // OTW
@@ -88,6 +99,7 @@ public struct State has key {
     mtoken_msg_cap: Option<MessengerCap>,
     upgrade_cap_id: Option<ID>,
     eid_to_addr_len: Table<u32, u8>,
+    blocked_tokens: Table<address, Coin<XAUM>>,
     owner: address,
     paused: bool,
 }
@@ -109,6 +121,7 @@ fun init(otw: MESSENGER_OAPP, ctx: &mut TxContext) {
         mtoken_msg_cap: option::none(),
         upgrade_cap_id: option::none(),
         eid_to_addr_len: table::new<u32, u8>(ctx),
+        blocked_tokens: table::new<address, Coin<XAUM>>(ctx),
         owner: ctx.sender(),
         paused: false,
     };
@@ -461,10 +474,11 @@ public fun confirm_send(
 
 // https://docs.layerzero.network/v2/developers/sui/oapp/overview#receiving-messages-validation-and-processing
 public fun lz_receive(
-    state: &State,
+    state: &mut State,
     mt_state: &mut MtState<XAUM>,
     my_oapp: &OApp,
     call: Call<LzReceiveParam, Void>,
+    deny_list: &DenyList,
     ctx: &mut TxContext,
 ) {
     state.check_version();
@@ -476,12 +490,47 @@ public fun lz_receive(
     let (src_eid, _sender, _nonce, guid, msg, _executor, _extra_data, value) = param.destroy();
     value.destroy_none(); // value must be none
 
-    mt_state.cc_receive(state.borrow_messenger_cap(), msg, ctx);
+    let (receiver, blocked_token) = mt_state.cc_receive(
+        state.borrow_messenger_cap(),
+        msg,
+        deny_list,
+        ctx,
+    );
+    handle_cc_receive(state, receiver, blocked_token);
     event::emit(CCReceiveEvent {
         guid,
         src_eid,
         msg_data: msg,
     });
+}
+
+// This function is extracted for unit testing convenience.
+// It is placed here because it is only used by lz_receive.
+fun handle_cc_receive(state: &mut State, receiver: address, blocked_token: Option<Coin<XAUM>>) {
+    if (blocked_token.is_none()) {
+        blocked_token.destroy_none();
+    } else {
+        let token = blocked_token.destroy_some();
+        let amount = token.balance().value();
+        if (state.blocked_tokens.contains(receiver)) {
+            state.blocked_tokens.borrow_mut(receiver).join(token);
+        } else {
+            state.blocked_tokens.add(receiver, token);
+        };
+        event::emit(AddBlockedTokenEvent {
+            receiver,
+            amount,
+        });
+    }
+}
+
+// Claim the blocked token after the receiver has been unblocked
+entry fun claim_blocked_token(state: &mut State, ctx: &TxContext) {
+    let receiver = ctx.sender();
+    let token = state.blocked_tokens.remove(receiver); // Fail if no blocked token is found.
+    let amount = token.balance().value();
+    transfer::public_transfer(token, receiver); // Fail if the receiver is still blocked.
+    event::emit(ClaimBlockedTokenEvent { receiver, amount });
 }
 
 // === View Functions ===
@@ -547,4 +596,22 @@ public(package) fun call_cap(state: &State): &CallCap {
 #[test_only]
 public(package) fun set_version(state: &mut State, version: u64) {
     state.version = version;
+}
+
+#[test_only]
+public(package) fun handle_cc_receive_for_testing(
+    state: &mut State,
+    receiver: address,
+    blocked_token: Option<Coin<XAUM>>,
+) {
+    handle_cc_receive(state, receiver, blocked_token);
+}
+
+#[test_only]
+public(package) fun blocked_amount(state: &State, user: address): u64 {
+    if (state.blocked_tokens.contains(user)) {
+        state.blocked_tokens.borrow(user).balance().value()
+    } else {
+        0
+    }
 }

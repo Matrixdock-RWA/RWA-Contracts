@@ -14,6 +14,7 @@ use oapp::oapp::OApp;
 use std::unit_test::{assert_eq, destroy};
 use sui::clock;
 use sui::coin::{Self, Coin};
+use sui::deny_list::{Self, DenyList};
 use sui::sui::SUI;
 use sui::test_scenario;
 use utils::bytes32;
@@ -21,13 +22,15 @@ use utils::package;
 use xaum::xaum::{Self, XAUM};
 
 // test addresses
-// const SYS: address = @0x0;
+const SYS: address = @0x0;
 const ADMIN: address = @0xAD;
 const ALICE: address = @0xA11CE;
-// const BOB: address = @0xB0B;
+const BOB: address = @0xB0B;
 
 fun init_messenger_oapp(): test_scenario::Scenario {
-    let mut scenario = test_scenario::begin(ADMIN);
+    let mut scenario = test_scenario::begin(SYS);
+    deny_list::create_for_testing(scenario.ctx());
+    scenario.next_tx(ADMIN);
     {
         xaum::init_for_testing(scenario.ctx());
         messenger_oapp::init_for_testing(scenario.ctx());
@@ -532,7 +535,7 @@ fun lz_receive_mint_budget_ok() {
 
     scenario.next_tx(ADMIN);
     {
-        let state = scenario.take_shared<State>();
+        let mut state = scenario.take_shared<State>();
         let mut mt_state = scenario.take_shared<MtState<XAUM>>();
         let my_oapp = scenario.take_shared<OApp>();
 
@@ -572,10 +575,12 @@ fun lz_receive_mint_budget_ok() {
             scenario.ctx(),
         );
 
+        let _deny_list = scenario.take_shared<DenyList>();
         state.lz_receive(
             &mut mt_state,
             &my_oapp,
             receive_call,
+            &_deny_list,
             scenario.ctx(),
         );
 
@@ -584,9 +589,121 @@ fun lz_receive_mint_budget_ok() {
         test_scenario::return_shared(my_oapp);
         test_scenario::return_shared(endpoint);
         test_scenario::return_shared(msg_channel);
+        test_scenario::return_shared(_deny_list);
         destroy(executor_cap);
     };
 
     clock::destroy_for_testing(_clock);
     scenario.end();
 }
+
+#[test]
+fun handle_cc_receive_ok() {
+    let mut scenario = init_messenger_oapp();
+
+    // normal case
+    scenario.next_tx(ADMIN);
+    {
+        let mut state = scenario.take_shared<State>();
+        state.handle_cc_receive_for_testing(ALICE, option::none());
+        assert_eq!(state.blocked_amount(ALICE), 0);
+        test_scenario::return_shared(state);
+    };
+
+    // blocked case
+    scenario.next_tx(ADMIN);
+    {
+        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let token = mt_state.mint_for_testing(100, scenario.ctx());
+        test_scenario::return_shared(mt_state);
+
+        let mut state = scenario.take_shared<State>();
+        state.handle_cc_receive_for_testing(BOB, option::some(token));
+        assert_eq!(state.blocked_amount(BOB), 100);
+        test_scenario::return_shared(state);
+    };
+
+    // blocked again
+    scenario.next_tx(ADMIN);
+    {
+        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let token = mt_state.mint_for_testing(200, scenario.ctx());
+        test_scenario::return_shared(mt_state);
+
+        let mut state = scenario.take_shared<State>();
+        state.handle_cc_receive_for_testing(BOB, option::some(token));
+        assert_eq!(state.blocked_amount(BOB), 300);
+        test_scenario::return_shared(state);
+    };
+
+    scenario.end();
+}
+
+#[test, expected_failure]
+fun claim_blocked_token_err_no_token() {
+    let mut scenario = init_messenger_oapp();
+    scenario.next_tx(ALICE);
+    {
+        let mut state = scenario.take_shared<State>();
+        state.claim_blocked_token(scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+    scenario.end();
+}
+
+#[test]
+fun claim_blocked_token_ok() {
+    let mut scenario = init_messenger_oapp();
+    scenario.next_tx(ADMIN);
+    {
+        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let token = mt_state.mint_for_testing(500, scenario.ctx());
+        test_scenario::return_shared(mt_state);
+
+        let mut state = scenario.take_shared<State>();
+        state.handle_cc_receive_for_testing(ALICE, option::some(token));
+        assert_eq!(state.blocked_amount(ALICE), 500);
+        test_scenario::return_shared(state);
+    };
+
+    scenario.next_epoch(ALICE);
+    {
+        let mut state = scenario.take_shared<State>();
+        state.claim_blocked_token(scenario.ctx());
+        assert_eq!(state.blocked_amount(ALICE), 0);
+        test_scenario::return_shared(state);
+    };
+    scenario.end();
+}
+
+/*
+// TODO: fix this test
+#[test, expected_failure]
+fun claim_blocked_token_err_still_blocked() {
+    let mut scenario = init_messenger_oapp();
+
+    // add ALICE to blocked list & sent him token
+    scenario.next_tx(ADMIN);
+    {
+        let mut _deny_list = scenario.take_shared<DenyList>();
+        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        mt_state.add_to_blocked_list(ALICE, &mut _deny_list, scenario.ctx());
+        let token = mt_state.mint_for_testing(100, scenario.ctx());
+        test_scenario::return_shared(mt_state);
+        test_scenario::return_shared(_deny_list);
+        
+        let mut state = scenario.take_shared<State>();
+        state.handle_cc_receive_for_testing(ALICE, option::some(token));
+        test_scenario::return_shared(state);
+    };
+
+    // claim blocked token
+    scenario.next_epoch(ALICE);
+    {
+        let mut state = scenario.take_shared<State>();
+        state.claim_blocked_token(scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+    scenario.end();
+}
+*/

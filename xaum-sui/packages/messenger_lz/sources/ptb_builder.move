@@ -58,6 +58,7 @@ public fun build_lz_receive_ptb(
                 argument::create_object(object::id_address(mt_state)),
                 argument::create_object(object::id_address(my_oapp)),
                 argument::create_id(ptb_builder_helper::lz_receive_call_id()),
+                argument::create_object(@0x403), // deny_list
             ], // args
             vector[], // type_args
             false, // is_builder_call

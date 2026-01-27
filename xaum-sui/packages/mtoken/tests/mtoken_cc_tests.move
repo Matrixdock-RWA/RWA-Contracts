@@ -4,8 +4,10 @@ module mtoken::mtoken_cc_tests;
 use mtoken::message_codec;
 use mtoken::mt::{Self, MT as XAUM};
 use mtoken::mtoken::{Self, MessengerCap};
+use std::unit_test::{assert_eq, destroy};
 use sui::clock;
 use sui::coin::{Self, Coin};
+use sui::deny_list::{Self, DenyList};
 use sui::test_scenario;
 
 // constants are not exported, so we need to redefine them here
@@ -18,6 +20,7 @@ const ALICE: address = @0xA11CE;
 
 fun init_xaum(): test_scenario::Scenario {
     let mut scenario = test_scenario::begin(SYS);
+    deny_list::create_for_testing(scenario.ctx());
     scenario.next_tx(ADMIN);
     {
         mt::init_for_testing(scenario.ctx(), INIT_DELAY);
@@ -282,7 +285,14 @@ fun cc_receive_err_invalid_messenger_cap() {
     {
         let mut state = scenario.take_shared<mtoken::State<XAUM>>();
         let msg_cap = scenario.take_from_sender<MessengerCap>();
-        mtoken::cc_receive(&mut state, &msg_cap, b"msg", scenario.ctx());
+        let _deny_list = scenario.take_shared<DenyList>();
+        let (_receiver, _opt) = mtoken::cc_receive(
+            &mut state,
+            &msg_cap,
+            b"msg",
+            &_deny_list,
+            scenario.ctx(),
+        );
     };
     abort
 }
@@ -300,7 +310,14 @@ fun cc_receive_err_invalid_message() {
     {
         let mut state = scenario.take_shared<mtoken::State<XAUM>>();
         let msg_cap = scenario.take_from_sender<MessengerCap>();
-        mtoken::cc_receive(&mut state, &msg_cap, b"msg", scenario.ctx());
+        let _deny_list = scenario.take_shared<DenyList>();
+        let (_receiver, _opt) = mtoken::cc_receive(
+            &mut state,
+            &msg_cap,
+            b"msg",
+            &_deny_list,
+            scenario.ctx(),
+        );
     };
     abort
 }
@@ -332,9 +349,70 @@ fun cc_receive_token_ok() {
     {
         let mut state = scenario.take_shared<mtoken::State<XAUM>>();
         let msg_cap = scenario.take_from_sender<MessengerCap>();
-        mtoken::cc_receive(&mut state, &msg_cap, msg, scenario.ctx());
+        let _deny_list = scenario.take_shared<DenyList>();
+        let (_receiver, _opt) = mtoken::cc_receive(
+            &mut state,
+            &msg_cap,
+            msg,
+            &_deny_list,
+            scenario.ctx(),
+        );
+        _opt.destroy_none();
         scenario.return_to_sender(msg_cap);
         test_scenario::return_shared(state);
+        test_scenario::return_shared(_deny_list);
+    };
+
+    scenario.end();
+}
+
+#[test]
+fun cc_receive_blocked_token_ok() {
+    // prettier-ignore
+    let msg = vector[
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x40,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xe0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x60,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xa0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x22, // amount
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x20,
+        9, 8, 7, 6, 5, 4, 3, 2, 1, 9, 8, 7, 6, 5, 4, 3, 2, 1, 9, 8, 7, 6, 5, 4, 3, 2, 1, 9, 8, 7, 6, 5, // sender
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x20,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x0B, 0x0B, // receiver
+    ];
+
+    let mut scenario = init_xaum();
+    scenario.next_tx(ADMIN);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        let mut _deny_list = scenario.take_shared<DenyList>();
+        mtoken::cc_new_messenger_cap(&mut state, ADMIN, scenario.ctx());
+        state.add_to_blocked_list(@0xB0B, &mut _deny_list, scenario.ctx());
+        test_scenario::return_shared(state);
+        test_scenario::return_shared(_deny_list);
+    };
+    scenario.next_epoch(ADMIN);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        let msg_cap = scenario.take_from_sender<MessengerCap>();
+        let _deny_list = scenario.take_shared<DenyList>();
+        let (receiver, blocked_token) = mtoken::cc_receive(
+            &mut state,
+            &msg_cap,
+            msg,
+            &_deny_list,
+            scenario.ctx(),
+        );
+        assert_eq!(receiver, @0xB0B);
+        assert_eq!(blocked_token.is_some(), true);
+        scenario.return_to_sender(msg_cap);
+        test_scenario::return_shared(state);
+        test_scenario::return_shared(_deny_list);
+
+        let token = blocked_token.destroy_some();
+        assert_eq!(token.balance().value(), 0x22);
+        destroy(token);
     };
 
     scenario.end();
@@ -361,9 +439,18 @@ fun cc_receive_mint_budget_ok() {
     {
         let mut state = scenario.take_shared<mtoken::State<XAUM>>();
         let msg_cap = scenario.take_from_sender<MessengerCap>();
-        mtoken::cc_receive(&mut state, &msg_cap, msg, scenario.ctx());
+        let _deny_list = scenario.take_shared<DenyList>();
+        let (_receiver, _opt) = mtoken::cc_receive(
+            &mut state,
+            &msg_cap,
+            msg,
+            &_deny_list,
+            scenario.ctx(),
+        );
+        _opt.destroy_none();
         scenario.return_to_sender(msg_cap);
         test_scenario::return_shared(state);
+        test_scenario::return_shared(_deny_list);
     };
 
     scenario.end();

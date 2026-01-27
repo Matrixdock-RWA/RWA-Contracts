@@ -105,6 +105,12 @@ public struct CCReceiveTokenEvent has copy, drop {
     amount: u64,
 }
 
+public struct CCBlockedTokenEvent has copy, drop {
+    sender: vector<u8>,
+    receiver: address,
+    amount: u64,
+}
+
 public struct CCSendMintBudgetEvent has copy, drop {
     amount: u64,
 }
@@ -607,8 +613,9 @@ public fun cc_receive<T>(
     state: &mut State<T>,
     msg_cap: &MessengerCap,
     msg: vector<u8>,
+    deny_list: &DenyList,
     ctx: &mut TxContext,
-) {
+): (address, Option<Coin<T>>) {
     check_version(state);
     check_messenger_cap(state, msg_cap);
 
@@ -617,12 +624,19 @@ public fun cc_receive<T>(
         let amount = decoded_msg.extract_mint_budget();
         state.mint_budget = state.mint_budget + amount;
         event::emit(CCReceiveMintBudgetEvent { amount });
+        (@0x0, option::none())
     } else {
         assert!(decoded_msg.is_token(), EInvalidMessageType);
         let (sender, receiver, amount) = decoded_msg.extract_token_info();
         let minted_coin = coin::mint<T>(state.borrow_treasury_cap_mut(), amount, ctx);
-        transfer::public_transfer(minted_coin, receiver);
-        event::emit(CCReceiveTokenEvent { sender, receiver, amount });
+        if (!coin::deny_list_v2_contains_current_epoch<T>(deny_list, receiver, ctx)) {
+            transfer::public_transfer(minted_coin, receiver);
+            event::emit(CCReceiveTokenEvent { sender, receiver, amount });
+            (receiver, option::none())
+        } else {
+            event::emit(CCBlockedTokenEvent { sender, receiver, amount });
+            (receiver, option::some(minted_coin))
+        }
     }
 }
 
