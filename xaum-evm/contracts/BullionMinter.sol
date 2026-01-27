@@ -13,9 +13,12 @@ contract BullionMinter is DelayedUpgradeable {
     mapping(address token => bool accepted) public acceptedByA;
     mapping(address token => bool accepted) public acceptedByB;
 
+    uint public constant DELAY_MAX = 59;
+
+    // note: not currently used but retained for historical reasons
+    // to make it easier to view these two values
     uint8 public constant PREPRICE_DECIMAL = 6;
     uint8 public constant SLIPPAGE_DECIMAL = 6;
-    uint public constant DELAY_MAX = 59;
 
     function __Minter_init(
         address _owner,
@@ -83,6 +86,9 @@ contract BullionMinter is DelayedUpgradeable {
     }
 
     // Most parameters are not checked here and are handled by the off-chain service.
+    // note: owner is trusted not to front-run by changing poolAccountA; owner is securely
+    // held in the wallet's escrow system; every owner transaction undergoes a two-step
+    // process of signature and verification
     function requestToMint(address transferredToken, address forToken, uint amount, uint preprice, uint slippage, uint timestamp, bytes calldata extraData) external {
         require(acceptedByA[transferredToken], "INVALID_TOKEN_FOR_MINTING");
         require(block.timestamp <= timestamp + DELAY_MAX, "INVALID_TIMESTAMP");
@@ -92,6 +98,9 @@ contract BullionMinter is DelayedUpgradeable {
     }
 
     // Most parameters are not checked here and are handled by the off-chain service.
+    // note: owner is trusted not to front-run by changing poolAccountB; owner is securely
+    // held in the wallet's escrow system; every owner transaction undergoes a two-step
+    // process of signature and verification
     function requestToRedeem(address transferredToken, address forToken, uint amount, uint preprice, uint slippage, uint timestamp, bytes calldata extraData) external {
         require(acceptedByB[transferredToken], "INVALID_TOKEN_FOR_REDEEMING");
         require(block.timestamp <= timestamp + DELAY_MAX, "INVALID_TIMESTAMP");

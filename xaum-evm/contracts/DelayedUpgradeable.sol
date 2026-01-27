@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
+// note: using OwnableUpgradeable instead of Ownable2StepUpgradeable by design for now
 abstract contract DelayedUpgradeable is OwnableUpgradeable, UUPSUpgradeable {
     // upgradeToAndCall() is delayed
     address public nextImplementation;

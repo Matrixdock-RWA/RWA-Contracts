@@ -120,6 +120,9 @@ contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
         );
     }
 
+    // note: unlike LayerZero component, there is no way to specifically pause CCIP
+    // send transactions. To pause CCIP requires enabling disableCcSend which will
+    // pause both CCIP & LayerZero send txns. We are gradually deprecating CCIP
     function sendTokenToChain(
         uint64 destinationChainSelector,
         bytes calldata messageReceiver,
