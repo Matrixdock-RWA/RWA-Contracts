@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
-import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 
+// note: using OwnableUpgradeable instead of Ownable2StepUpgradeable by design for now
 abstract contract DelayedUpgradeable is OwnableUpgradeable, UUPSUpgradeable {
     // upgradeToAndCall() is delayed
     address public nextImplementation;
@@ -23,6 +24,7 @@ abstract contract DelayedUpgradeable is OwnableUpgradeable, UUPSUpgradeable {
         address _newImplementation,
         bytes memory _data
     ) public onlyOwner {
+        _checkZeroAddress(_newImplementation);
         nextImplementation = _newImplementation;
         nextUpgradeToAndCallDataHash = keccak256(_data);
         etNextUpgradeToAndCall = uint64(block.timestamp) + getDelay();

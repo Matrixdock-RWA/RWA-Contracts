@@ -14,11 +14,11 @@ contract FallbackReserveFeed is Ownable, AggregatorV3Interface {
     constructor(address initialOwner) Ownable(initialOwner) {}
 
     function decimals() external pure returns (uint8) {
-        return 18;
+        return 9;
     }
 
     function description() external pure returns (string memory) {
-        return "MatrixDock Bullion Reserve";
+        return "MatrixDock Silver (XAGm) Reserve";
     }
 
     function version() external pure returns (uint256) {
@@ -60,6 +60,6 @@ contract FallbackReserveFeed is Ownable, AggregatorV3Interface {
             uint80 /*answeredInRound*/
         )
     {
-        return (roundId, reserve, uint(updatedAt), uint(updatedAt), roundId);
+        return (roundId, reserve, uint256(updatedAt), uint256(updatedAt), roundId);
     }
 }

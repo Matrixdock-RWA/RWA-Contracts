@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.24;
 
-import "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PermitUpgradeable.sol";
-import "./DelayedUpgradeable.sol";
-import "./interfaces/ICCClient.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {ERC20PermitUpgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PermitUpgradeable.sol";
+import {DelayedUpgradeable} from "./DelayedUpgradeable.sol";
+import {ICCClient} from "./interfaces/ICCClient.sol";
 // import "hardhat/console.sol";
 
 abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
@@ -25,27 +26,24 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
     address public nextRevoker;
     uint64 public etNextRevoker; //effective time
 
-    // the messager contract takes care of cross-chain task
-    address public messager;
-    address public nextMessager;
-    uint64 public etNextMessager; //effective time
+    // the messenger contract takes care of cross-chain task
+    address public messenger;
+    address public nextMessenger;
+    uint64 public etNextMessenger; //effective time
 
     // the delayed minting requests are stored in requestMap
-    mapping(bytes32 requestHash => uint effectiveTime) public requestMap;
-
-    // the gold NFT contract for bullions
-    address public nftContract;
+    mapping(bytes32 requestHash => uint256 effectiveTime) public requestMap;
 
     // suspicious accounts can be blocked
-    mapping(address => bool) public isBlocked;
+    mapping(address account => bool blocked) public isBlocked;
 
     bool public disableCcSend;
 
     /* Main Chain */
 
-    // usedReserve = Sum of each chain's totalSupply and mintBudget
-    // usedReserve <= Chainlink's PoR
-    uint112 public usedReserve;
+    // totalTokenObligation = Sum of each chain's totalSupply and mintBudget
+    // totalTokenObligation * ozPerToken <= Chainlink's PoR
+    uint112 public totalTokenObligation;
 
     // ChainLink PoR
     address public reserveFeed;
@@ -55,30 +53,32 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
     address public nextFallbackFeed;
     uint64 public etNextFallbackFeed; //effective time
 
-    // fee-on-transfer (basis points, 10000 = 100%)
-    address public feeRecipient;
-    address public nextFeeRecipient;
-    uint64 public etNextFeeRecipient; //effective time
+    // the address that collects the fee tokens
+    address public feeCollector;
+    address public nextFeeCollector;
+    uint64 public etNextFeeCollector; //effective time
 
-    uint16 public feeBP; // e.g. 30 = 0.3%
-    uint16 public nextFeeBP;
-    uint64 public etNextFeeBP; //effective time
-
-    uint maxFee; // in local decimals
-    uint nextMaxFee;
-    uint64 etNextMaxFee; //effective time
+    uint64 public lastReconcileTime; // timestamp of the last reconcile (fee minting), rounded to daily boundary
+    uint64 public ozPerTokenBaseTime; // timestamp of the update of annualFeeRate & ozPerTokenBase, rounded to daily boundary
+    uint64 public annualFeeRate; // the annual fee rate, 9 decimals
+    uint64 public ozPerTokenBase; // calculated when annualFeeRate is updated, 9 decimals
 }
 
 // this contract will be deployed on EVM-compatible chains other than Ethereum
-contract MToken is MTokenBase, ICCIPClient {
+contract MToken is MTokenBase, ICCClient {
+    using SafeCast for uint256;
+
     uint64 constant MIN_DELAY = 1 hours;
+    uint64 constant MAX_DELAY = 48 hours;
 
-    uint constant TagSendToken = 2;
-    uint constant TagSendMintBudget = 3;
+    uint256 constant TAG_SEND_TOKEN = 2;
+    uint256 constant TAG_SEND_MINT_BUDGET = 3;
 
-    uint16 constant MAX_FEE_BP_CAP = 1000; // 10%
-    uint256 constant MAX_FEE_CAP = 50000 * 10 ** 18; // 50k
-    uint256 constant FEE_BASE = 10000;
+    uint64 constant SECONDS_PER_DAY = 24 * 3600; // lastReconcileTime & ozPerTokenBaseTime are rounded to daily boundary
+    uint64 constant DAYS_PER_YEAR = 365; // dailyFeeRate is annualFeeRate / DAYS_PER_YEAR
+    uint64 constant FEE_RATE_BASE = 10 ** 9; // feeRate is 9 decimals
+    uint64 constant OZ_RATIO_BASE = 10 ** 9; // ozPerToken is 9 decimals
+    uint64 constant MAX_ANNUAL_FEE_RATE = FEE_RATE_BASE / 10; // 10%
 
     event SetDelayRequest(uint64 oldDelay, uint64 newDelay, uint64 et);
     event SetDelayEffected(uint64 newDelay);
@@ -86,33 +86,25 @@ contract MToken is MTokenBase, ICCIPClient {
     event SetOperatorEffected(address newAddr);
     event SetRevokerRequest(address oldAddr, address newAddr, uint64 et);
     event SetRevokerEffected(address newAddr);
-    event SetMessagerRequest(address oldAddr, address newAddr, uint64 et);
-    event SetMessagerEffected(address newAddr);
+    event SetMessengerRequest(address oldAddr, address newAddr, uint64 et);
+    event SetMessengerEffected(address newAddr);
     event BlockPlaced(address indexed _user);
     event BlockReleased(address indexed _user);
-    event CCSendToken(
-        address indexed sender,
-        address indexed receiver,
-        uint value
-    );
+    event CCSendToken(address indexed sender, bytes receiver, uint256 value);
     event CCSendMintBudget(uint112 value);
-    event CCReceiveToken(
-        address indexed sender,
-        address indexed receiver,
-        uint value
-    );
+    event CCSendMintBudgetManually(uint112 value);
+    event CCReceiveToken(bytes sender, address indexed receiver, uint256 value);
     event CCReceiveMintBudget(uint112 value);
-    event Redeem(address indexed customer, uint amount, bytes data);
-    event MintRequest(address indexed receiver, uint amount, uint nonce);
+    event CCReceiveMintBudgetManually(uint112 value);
+    event Redeem(address indexed customer, uint256 amount, bytes data);
+    event MintRequest(address indexed receiver, uint256 amount, uint256 nonce);
     event RequestRevoked(bytes32 indexed req);
-    event SetFeeBPRequest(uint16 oldBP, uint16 newBP, uint64 et);
-    event SetFeeBPEffected(uint16 newBP);
-    event SetMaxFeeRequest(uint256 oldMaxFee, uint256 newMaxFee, uint64 et);
-    event SetMaxFeeEffected(uint256 newMaxFee);
-    event SetFeeRecipientRequest(address oldAddr, address newAddr, uint64 et);
-    event SetFeeRecipientEffected(address newAddr);
-    event ControllerTransfer(
-        address _controller,
+    event UpdateAnnualFeeRate(
+        uint64 newAnnualFeeRate,
+        uint64 newOzPerTokenBase,
+        uint64 roundedUpdateTime
+    );
+    event ForcedTransfer(
         address indexed _from,
         address indexed _to,
         uint256 _value,
@@ -123,29 +115,23 @@ contract MToken is MTokenBase, ICCIPClient {
     error BlockedAccount(address);
     error NotOperator(address);
     error NotRevoker(address);
-    error NotNftContract(address);
-    error NotMessager(address);
-    error NotOperatorNorNft(address);
-    error MintBudgetNotEnough(uint budget, uint amount);
+    error NotMessenger(address);
+    error MintBudgetNotEnough(uint256 budget, uint256 amount);
     error TransferToContract();
     error ZeroValue();
     error ArgsMismatch();
-    error TooEarlyToExecute(address receiver, uint amount, uint nonce);
+    error TooEarlyToExecute(address receiver, uint256 amount, uint256 nonce);
     error CcSendDisabled();
-    error InvalidMsg(uint tag);
+    error InvalidMsg(uint256 tag);
     error DelayTooSmall();
-    error FeeBPTooLarge(uint16 bp);
-    error MaxFeeTooLarge(uint256 maxFee);
+    error DelayTooLarge();
+    error InvalidReceiver(uint256 length);
+    error PrecisionLost();
+    error AnnualFeeRateTooLarge();
+    error OzPerTokenBaseTooLarge();
 
     modifier onlyNotBlocked() {
         _checkBlocked(_msgSender());
-        _;
-    }
-
-    modifier onlyOperatorAndNft() {
-        if (msg.sender != operator && msg.sender != nftContract) {
-            revert NotOperatorNorNft(msg.sender);
-        }
         _;
     }
 
@@ -161,16 +147,9 @@ contract MToken is MTokenBase, ICCIPClient {
         _;
     }
 
-    modifier onlyMessager() {
-        if (msg.sender != messager) {
-            revert NotMessager(msg.sender);
-        }
-        _;
-    }
-
-    modifier onlyNFTContract() {
-        if (msg.sender != nftContract) {
-            revert NotNftContract(msg.sender);
+    modifier onlyMessenger() {
+        if (msg.sender != messenger) {
+            revert NotMessenger(msg.sender);
         }
         _;
     }
@@ -187,13 +166,13 @@ contract MToken is MTokenBase, ICCIPClient {
         }
     }
 
-    function _checkMintBudget(uint amount) private view {
+    function _checkMintBudget(uint256 amount) private view {
         if (amount > mintBudget) {
             revert MintBudgetNotEnough(mintBudget, amount);
         }
     }
 
-    function _checkZeroValue(uint value) private pure {
+    function _checkZeroValue(uint256 value) private pure {
         if (value == 0) {
             revert ZeroValue();
         }
@@ -203,16 +182,71 @@ contract MToken is MTokenBase, ICCIPClient {
         string memory name,
         string memory symbol,
         address _owner,
-        address _operator
+        address _operator,
+        uint64 _annualFeeRate,
+        uint64 _ozPerTokenBase
     ) internal onlyInitializing {
-        __ERC20_init_unchained(name, symbol);
-        __EIP712_init_unchained(symbol, "1");
-        __ERC20Permit_init_unchained(symbol);
-        __Ownable_init_unchained(_owner);
+        __ERC20_init(name, symbol);
+        __ERC20Permit_init(symbol);
+        __Ownable_init(_owner);
+        __MTOKEN_init_unchained(_operator, _annualFeeRate, _ozPerTokenBase);
+    }
+
+    function __MTOKEN_init_unchained(
+        address _operator,
+        uint64 _annualFeeRate,
+        uint64 _ozPerTokenBase
+    ) internal onlyInitializing {
         operator = _operator;
+
+        checkAnnualFeeRate(_annualFeeRate);
+        if (_ozPerTokenBase > OZ_RATIO_BASE) {
+            revert OzPerTokenBaseTooLarge();
+        }
+
+        uint64 _currDayStartTime = currentDayStartTime();
+        lastReconcileTime = _currDayStartTime;
+        ozPerTokenBaseTime = _currDayStartTime;
+        annualFeeRate = _annualFeeRate;
+        ozPerTokenBase = _ozPerTokenBase;
+    }
+
+    // _annualFeeRate can not be greater than MAX_ANNUAL_FEE_RATE (10%)
+    function checkAnnualFeeRate(uint64 _annualFeeRate) private pure {
+        if (_annualFeeRate > MAX_ANNUAL_FEE_RATE) {
+            revert AnnualFeeRateTooLarge();
+        }
+    }
+
+    // current day start time, rounded to daily boundary
+    function currentDayStartTime() internal view returns (uint64) {
+        return (block.timestamp.toUint64() / SECONDS_PER_DAY) * SECONDS_PER_DAY;
+    }
+
+    // ozPerTokenBase - annualFeeRate*daysElapsed/365
+    function ozPerToken() public view returns (uint64) {
+        uint64 daysElapsed = (block.timestamp.toUint64() - ozPerTokenBaseTime) / SECONDS_PER_DAY;
+        return ozPerTokenBase - (annualFeeRate * daysElapsed) / DAYS_PER_YEAR;
+    }
+
+    // get oz amount from token amount
+    function getOzAmount(uint256 tokenAmount) public view returns (uint256) {
+        return (tokenAmount * ozPerToken()) / OZ_RATIO_BASE;
+    }
+
+    function updateAnnualFeeRate(uint64 _annualFeeRate) public onlyOwner {
+        checkAnnualFeeRate(_annualFeeRate);
+        uint64 _ozPerTokenBase = ozPerToken();
+        uint64 _ozPerTokenBaseTime = currentDayStartTime();
+
+        annualFeeRate = _annualFeeRate;
+        ozPerTokenBase = _ozPerTokenBase;
+        ozPerTokenBaseTime = _ozPerTokenBaseTime;
+        emit UpdateAnnualFeeRate(_annualFeeRate, _ozPerTokenBase, _ozPerTokenBaseTime);
     }
 
     function setDisableCcSend(bool b) public onlyOwner {
+        // note: missing event to be added in future update
         disableCcSend = b;
     }
 
@@ -220,36 +254,34 @@ contract MToken is MTokenBase, ICCIPClient {
         if (_delay < MIN_DELAY) {
             revert DelayTooSmall();
         }
+        if (_delay > MAX_DELAY) {
+            revert DelayTooLarge();
+        }
 
         uint64 et = etNextDelay;
         if (_delay == nextDelay && et != 0 && et < block.timestamp) {
             delay = _delay;
             emit SetDelayEffected(_delay);
         } else {
+            uint64 _currDelay = delay;
+            uint64 _etNextDelay = uint64(block.timestamp) + _currDelay;
             nextDelay = _delay;
-            etNextDelay = uint64(block.timestamp) + delay;
-            emit SetDelayRequest(delay, _delay, etNextDelay);
+            etNextDelay = _etNextDelay;
+            emit SetDelayRequest(_currDelay, _delay, _etNextDelay);
         }
     }
 
-    function setMessager(address _messager) public onlyOwner {
-        _checkZeroAddress(_messager);
-        uint64 et = etNextMessager;
-        if (_messager == nextMessager && et != 0 && et < block.timestamp) {
-            messager = _messager;
-            emit SetMessagerEffected(_messager);
+    function setMessenger(address _messenger) public onlyOwner {
+        _checkZeroAddress(_messenger);
+        uint64 et = etNextMessenger;
+        if (_messenger == nextMessenger && et != 0 && et < block.timestamp) {
+            messenger = _messenger;
+            emit SetMessengerEffected(_messenger);
         } else {
-            nextMessager = _messager;
-            etNextMessager = uint64(block.timestamp) + delay;
-            emit SetMessagerRequest(messager, _messager, etNextMessager);
-        }
-    }
-
-    // init nftContract. can only be called once
-    function setNFTContract(address _nftContract) public onlyOwner {
-        _checkZeroAddress(_nftContract);
-        if (nftContract == address(0)) {
-            nftContract = _nftContract;
+            nextMessenger = _messenger;
+            uint64 _etNextMessenger = uint64(block.timestamp) + delay;
+            etNextMessenger = _etNextMessenger;
+            emit SetMessengerRequest(messenger, _messenger, _etNextMessenger);
         }
     }
 
@@ -261,8 +293,9 @@ contract MToken is MTokenBase, ICCIPClient {
             emit SetRevokerEffected(_revoker);
         } else {
             nextRevoker = _revoker;
-            etNextRevoker = uint64(block.timestamp) + delay;
-            emit SetRevokerRequest(revoker, _revoker, etNextRevoker);
+            uint64 _etNextRevoker = uint64(block.timestamp) + delay;
+            etNextRevoker = _etNextRevoker;
+            emit SetRevokerRequest(revoker, _revoker, _etNextRevoker);
         }
     }
 
@@ -274,58 +307,10 @@ contract MToken is MTokenBase, ICCIPClient {
             emit SetOperatorEffected(_operator);
         } else {
             nextOperator = _operator;
-            etNextOperator = uint64(block.timestamp) + delay;
-            emit SetOperatorRequest(operator, _operator, etNextOperator);
+            uint64 _etNextOperator = uint64(block.timestamp) + delay;
+            etNextOperator = _etNextOperator;
+            emit SetOperatorRequest(operator, _operator, _etNextOperator);
         }
-    }
-
-    function setFeeBP(uint16 _feeBP) public onlyOwner {
-        if (_feeBP > MAX_FEE_BP_CAP) {
-            revert FeeBPTooLarge(_feeBP);
-        }
-        uint64 et = etNextFeeBP;
-        if (_feeBP == nextFeeBP && et != 0 && et < block.timestamp) {
-            feeBP = _feeBP;
-            emit SetFeeBPEffected(_feeBP);
-        } else {
-            nextFeeBP = _feeBP;
-            etNextFeeBP = uint64(block.timestamp) + delay;
-            emit SetFeeBPRequest(feeBP, _feeBP, etNextFeeBP);
-        }
-    }
-
-    function setMaxFee(uint _maxFee) public onlyOwner {
-        if (_maxFee > MAX_FEE_CAP) {
-            revert MaxFeeTooLarge(_maxFee);
-        }
-        uint64 et = etNextMaxFee;
-        if (_maxFee == nextMaxFee && et != 0 && et < block.timestamp) {
-            maxFee = _maxFee;
-            emit SetMaxFeeEffected(_maxFee);
-        } else {
-            nextMaxFee = _maxFee;
-            etNextMaxFee = uint64(block.timestamp) + delay;
-            emit SetMaxFeeRequest(maxFee, _maxFee, etNextMaxFee);
-        }
-    }
-
-    function setFeeRecipient(address _recipient) public onlyOwner {
-        _checkZeroAddress(_recipient);
-        uint64 et = etNextFeeRecipient;
-        if (_recipient == nextFeeRecipient && et != 0 && et < block.timestamp) {
-            feeRecipient = _recipient;
-            emit SetFeeRecipientEffected(_recipient);
-        } else {
-            nextFeeRecipient = _recipient;
-            etNextFeeRecipient = uint64(block.timestamp) + delay;
-            emit SetFeeRecipientRequest(feeRecipient, _recipient, etNextFeeRecipient);
-        }
-    }
-
-    // controller transfer not fee deducted
-    function controllerTransfer(address _from, address _to, uint256 _value, bytes calldata _data, bytes calldata _operatorData) external onlyOwner {
-        _transfer(_from, _to, _value);
-        emit ControllerTransfer(msg.sender, _from, _to, _value, _data, _operatorData);
     }
 
     function getDelay() internal view override returns (uint64) {
@@ -338,34 +323,27 @@ contract MToken is MTokenBase, ICCIPClient {
     }
 
     function revokeNextDelay() public onlyRevoker {
+        // note: missing event to be added in future update
         etNextDelay = 0;
     }
 
     function revokeNextOperator() public onlyRevoker {
+        // note: missing event to be added in future update
         etNextOperator = 0;
     }
 
-    function revokeNextMessager() public onlyRevoker {
-        etNextMessager = 0;
+    function revokeNextMessenger() public onlyRevoker {
+        // note: missing event to be added in future update
+        etNextMessenger = 0;
     }
 
-    function revokeNextRevoker() public onlyRevoker {
+    function revokeNextRevoker() public onlyOwner {
+        // note: missing event to be added in future update
         etNextRevoker = 0;
     }
 
-    function revokeNextFeeRecipient() public onlyRevoker {
-        etNextFeeRecipient = 0;
-    }
-
-    function revokeNextFeeBP() public onlyRevoker {
-        etNextFeeBP = 0;
-    }
-
-    function revokeNextMaxFee() public onlyRevoker {
-        etNextMaxFee = 0;
-    }
-
     function revokeNextUpgrade() public onlyRevoker {
+        // note: missing event to be added in future update
         etNextUpgradeToAndCall = 0;
     }
 
@@ -379,24 +357,16 @@ contract MToken is MTokenBase, ICCIPClient {
         emit BlockReleased(_user);
     }
 
-    // NFT Contract packs tokens into one NFT.
-    function pack(address tokenOwner, uint amount) public onlyNFTContract {
-        _transfer(tokenOwner, msg.sender, amount);
-    }
-
-    // NFT Contract unpacks a NFT and return the tokens to tokenOwner
-    function unpack(address tokenOwner, uint amount) public onlyNFTContract {
-        _transfer(msg.sender, tokenOwner, amount);
-    }
-
     // mint new tokens to 'receiver'
+    // note: allows minting to blocked recipient by design
+    // note: nonce used off-chain only, no on-chain validation by design
     function mintTo(
         address receiver,
-        uint amount,
-        uint nonce
-    ) public onlyOperatorAndNft returns (bool) {
+        uint256 amount,
+        uint256 nonce
+    ) public onlyOperator returns (bool) {
         bytes32 req = keccak256(abi.encode(receiver, amount, nonce));
-        uint et = requestMap[req];
+        uint256 et = requestMap[req];
         if (et == 0) {
             // add a record for this mint-request and exit
             requestMap[req] = block.timestamp + delay;
@@ -409,23 +379,26 @@ contract MToken is MTokenBase, ICCIPClient {
                 revert TooEarlyToExecute(receiver, amount, nonce);
             }
         }
+
         _checkMintBudget(amount);
-        mintBudget = uint112(mintBudget - amount);
+        mintBudget = (mintBudget - amount).toUint112();
         _mint(receiver, amount);
         return true;
     }
 
     // redeem tokens owned by operator
+    // note: allows redeeming for blocked customer by design
     function redeem(
-        uint amount,
+        uint256 amount,
         address customer,
         bytes calldata data
-    ) public onlyOperatorAndNft {
+    ) public onlyOperator {
         _burn(operator, amount);
         emit Redeem(customer, amount, data);
-        mintBudget += uint112(amount);
+        mintBudget += amount.toUint112();
     }
 
+    // note: allows transfer to blocked recipient by design
     function transfer(
         address _recipient,
         uint256 _amount
@@ -433,14 +406,10 @@ contract MToken is MTokenBase, ICCIPClient {
         if (_recipient == address(this)) {
             revert TransferToContract();
         }
-        uint fee = calcFee(_amount);
-        if (fee > 0) {
-            super.transfer(feeRecipient, fee);
-            _amount -= fee;
-        }
         return super.transfer(_recipient, _amount);
     }
 
+    // note: allows transfer to blocked recipient by design
     function transferFrom(
         address _sender,
         address _recipient,
@@ -450,17 +419,13 @@ contract MToken is MTokenBase, ICCIPClient {
             revert TransferToContract();
         }
         _checkBlocked(_sender);
-        uint fee = calcFee(_amount);
-        if (fee > 0) {
-            super.transferFrom(_sender, feeRecipient, fee);
-            _amount -= fee;
-        }
         return super.transferFrom(_sender, _recipient, _amount);
     }
 
+    // note: allows transfer to blocked recipient by design
     function multiTransfer(
-        address[] memory _recipients,
-        uint256[] memory _values
+        address[] calldata _recipients,
+        uint256[] calldata _values
     ) public onlyNotBlocked {
         if (_recipients.length != _values.length) {
             revert ArgsMismatch();
@@ -470,33 +435,47 @@ contract MToken is MTokenBase, ICCIPClient {
         }
     }
 
+    // forced transfer by owner
+    function forcedTransfer(
+        address _from,
+        address _to,
+        uint256 _value,
+        bytes calldata _data,
+        bytes calldata _extraData
+    ) external onlyOwner {
+        _transfer(_from, _to, _value);
+        emit ForcedTransfer(_from, _to, _value, _data, _extraData);
+    }
+
     //-------------
+
     // get cross-chain message to estimate cross-chain fees
     function msgOfCcSendToken(
         address sender,
-        address receiver,
+        bytes calldata receiverBytes,
         uint256 value
     ) public view returns (bytes memory message) {
         _checkBlocked(sender);
-        _checkBlocked(receiver);
-        return abi.encode(TagSendToken, abi.encode(sender, receiver, value));
+        // note: blocked receiver only checked for EVM chains by design
+        if (receiverBytes.length == 20) {
+            address receiver = address(bytes20(receiverBytes));
+            _checkBlocked(receiver);
+        }
+        bytes memory senderBytes = abi.encodePacked(sender);
+        bytes memory body = abi.encode(senderBytes, receiverBytes, value);
+        return abi.encode(TAG_SEND_TOKEN, body);
     }
 
-    // called by the messager contract to initialize a cross-chain token transfer
+    // called by the messenger contract to initialize a cross-chain token transfer
     function ccSendToken(
         address sender,
-        address receiver,
+        bytes calldata receiver,
         uint256 value
-    ) public onlyMessager returns (bytes memory message) {
+    ) public onlyMessenger returns (bytes memory message) {
         if (disableCcSend) {
             revert CcSendDisabled();
         }
         _checkZeroValue(value);
-        uint fee = calcFee(value);
-        if (fee > 0) {
-            _transfer(sender, feeRecipient, fee);
-            value -= fee;
-        }
         _burn(sender, value);
         emit CCSendToken(sender, receiver, value);
         return msgOfCcSendToken(sender, receiver, value);
@@ -506,29 +485,35 @@ contract MToken is MTokenBase, ICCIPClient {
         uint112 value
     ) public view returns (bytes memory message) {
         _checkMintBudget(value);
-        return abi.encode(TagSendMintBudget, abi.encode(value));
+        return abi.encode(TAG_SEND_MINT_BUDGET, abi.encode(value));
     }
 
-    // called by the messager contract to initialize a cross-chain mint-budget transfer
+    // called by the messenger contract to initialize a cross-chain mint-budget transfer
     function ccSendMintBudget(
         uint112 value
-    ) public onlyMessager returns (bytes memory message) {
+    ) public onlyMessenger returns (bytes memory message) {
+        // note: we are very careful with any third-party contracts the operator calls
+        // to avoid unintended shuffling of cross-chain mint budgets
         _checkOperator(tx.origin);
         _checkZeroValue(value);
         message = msgOfCcSendMintBudget(value);
         mintBudget -= value;
         emit CCSendMintBudget(value);
-        return message;
     }
 
     // finish a cross-chain token transfer
+    // note: mints tokens without checking chain's mintBudget; it is by design
+    // that a chain's totalSupply can exceed its mintBudget via cross-chain transfers
+    // note: allows minting to blocked receiver by design
     function ccReceiveToken(bytes memory message) internal {
-        (address sender, address receiver, uint value) = abi.decode(
-            message,
-            (address, address, uint)
-        );
+        (bytes memory senderBytes, bytes memory receiverBytes, uint256 value) = abi
+            .decode(message, (bytes, bytes, uint256));
+        if (receiverBytes.length != 20) {
+            revert InvalidReceiver(receiverBytes.length);
+        }
+        address receiver = address(bytes20(receiverBytes));
         _mint(receiver, value);
-        emit CCReceiveToken(sender, receiver, value);
+        emit CCReceiveToken(senderBytes, receiver, value);
     }
 
     // finish a cross-chain mint-budget transfer
@@ -538,23 +523,31 @@ contract MToken is MTokenBase, ICCIPClient {
         emit CCReceiveMintBudget(value);
     }
 
-    // called by the messager contract to handle a received cross-chain message
-    function ccReceive(bytes calldata message) public onlyMessager {
-        (uint tag, bytes memory data) = abi.decode(message, (uint, bytes));
-        if (tag == TagSendToken) {
+    // called by the messenger contract to handle a received cross-chain message
+    function ccReceive(bytes calldata message) public onlyMessenger {
+        (uint256 tag, bytes memory data) = abi.decode(message, (uint256, bytes));
+        if (tag == TAG_SEND_TOKEN) {
             ccReceiveToken(data);
-        } else if (tag == TagSendMintBudget) {
+        } else if (tag == TAG_SEND_MINT_BUDGET) {
             ccReceiveMintBudget(data);
         } else {
             revert InvalidMsg(tag);
         }
     }
 
-    function calcFee(uint _value) public view returns (uint) {
-        uint fee = _value * feeBP / FEE_BASE;
-        if (fee > maxFee) {
-            fee = maxFee;
-        }
-        return fee;
+    //-------------
+    // when cross-chain bridge is not available,
+    // we can use these functions to manually send and receive mint budget
+
+    function ccSendMintBudgetManually(uint112 value) public onlyOperator {
+        _checkZeroValue(value);
+        _checkMintBudget(value);
+        mintBudget -= value;
+        emit CCSendMintBudgetManually(value);
+    }
+
+    function ccReceiveMintBudgetManually(uint112 value) public onlyOperator {
+        mintBudget += value;
+        emit CCReceiveMintBudgetManually(value);
     }
 }
