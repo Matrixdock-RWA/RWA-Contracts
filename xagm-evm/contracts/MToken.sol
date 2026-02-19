@@ -211,6 +211,10 @@ contract MToken is MTokenBase, ICCClient {
         ozPerTokenBase = _ozPerTokenBase;
     }
 
+    function decimals() public pure override returns (uint8) {
+        return 9;
+    }
+
     // _annualFeeRate can not be greater than MAX_ANNUAL_FEE_RATE (10%)
     function checkAnnualFeeRate(uint64 _annualFeeRate) private pure {
         if (_annualFeeRate > MAX_ANNUAL_FEE_RATE) {

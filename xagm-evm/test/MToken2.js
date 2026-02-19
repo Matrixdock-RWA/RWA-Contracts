@@ -82,6 +82,7 @@ describe("MToken2", function () {
     expect(await mt.annualFeeRate()).to.equal(DEFAULT_FEE_RATE_ANNUAL);
     expect(await mt.ozPerTokenBase()).to.equal(DEFAULT_OZ_PER_TOKEN_BASE);
     expect(await mt.feeCollector()).to.equal(feeCollector.address);
+    expect(await mt.decimals()).to.equal(9);
   });
 
   it("ozPerToken", async function () {
