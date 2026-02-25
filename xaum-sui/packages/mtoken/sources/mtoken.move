@@ -29,7 +29,6 @@ const EReqExpired: u64 = 109;
 const EUpgradeCapIdNotNone: u64 = 110;
 const EInvalidMessageType: u64 = 111;
 const EInvalidMessengerCap: u64 = 112;
-const ERedeemAmountNotMatch: u64 = 113;
 const EDelayTooLong: u64 = 114;
 const EZeroValue: u64 = 115;
 
@@ -81,10 +80,6 @@ public struct MintEvent has copy, drop {
 public struct RedeemEvent has copy, drop {
     from_address: address,
     amount: u64,
-}
-public struct RedeemEventExtraData has copy, drop {
-    customer: address,
-    data: vector<u8>,
 }
 
 public struct BlockEvent has copy, drop {
@@ -508,22 +503,14 @@ entry fun revoke_mint_to<T>(state: &State<T>, req: MintReq, ctx: &TxContext) {
 }
 
 // https://docs.sui.io/references/framework/sui-framework/coin#0x2_coin_burn
-entry fun redeem<T>(
-    state: &mut State<T>,
-    to_be_burnt: Coin<T>,
-    amount: u64,
-    customer: address,
-    data: vector<u8>,
-    ctx: &TxContext,
-) {
+entry fun redeem<T>(state: &mut State<T>, to_be_burnt: Coin<T>, ctx: &TxContext) {
     check_version(state);
     check_operator(state, ctx);
-    assert!(to_be_burnt.balance().value() == amount, ERedeemAmountNotMatch);
     let from_address = ctx.sender();
+    let amount = to_be_burnt.balance().value();
     coin::burn<T>(state.borrow_treasury_cap_mut(), to_be_burnt);
     state.mint_budget = state.mint_budget + amount;
     event::emit(RedeemEvent { from_address, amount });
-    event::emit(RedeemEventExtraData { customer, data });
 }
 
 // https://github.com/MystenLabs/sui/blob/main/crates/sui-framework/docs/sui-framework/coin.md#0x2_coin_deny_list_v2_add
@@ -755,14 +742,6 @@ public(package) fun new_mint_event(
 #[test_only]
 public(package) fun new_redeem_event(from_address: address, amount: u64): RedeemEvent {
     RedeemEvent { from_address, amount }
-}
-
-#[test_only]
-public(package) fun new_redeem_event_extra_data(
-    customer: address,
-    data: vector<u8>,
-): RedeemEventExtraData {
-    RedeemEventExtraData { customer, data }
 }
 
 #[test_only]

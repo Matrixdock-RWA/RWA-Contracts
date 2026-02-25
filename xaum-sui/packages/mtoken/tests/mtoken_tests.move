@@ -815,18 +815,11 @@ fun mint_revoke_ok() {
     scenario.end();
 }
 
-fun redeem(
-    scenario: &mut test_scenario::Scenario,
-    caller: address,
-    to_be_burnt: Coin<XAUM>,
-    amount: u64,
-    customer: address,
-    data: vector<u8>,
-) {
+fun redeem(scenario: &mut test_scenario::Scenario, caller: address, to_be_burnt: Coin<XAUM>) {
     scenario.next_tx(caller);
     {
         let mut state = scenario.take_shared<mtoken::State<XAUM>>();
-        mtoken::redeem(&mut state, to_be_burnt, amount, customer, data, scenario.ctx());
+        mtoken::redeem(&mut state, to_be_burnt, scenario.ctx());
         test_scenario::return_shared(state);
     };
 }
@@ -836,16 +829,7 @@ fun redeem_err_not_operator() {
     let mut scenario = init_xaum();
     let _clock = clock::create_for_testing(scenario.ctx());
     let to_be_burnt = coin::from_balance(balance::zero<XAUM>(), scenario.ctx());
-    redeem(&mut scenario, ALICE, to_be_burnt, 80, BOB, b"data");
-    abort
-}
-
-#[test, expected_failure(abort_code = mtoken::ERedeemAmountNotMatch)]
-fun redeem_err_amount_not_match() {
-    let mut scenario = init_xaum();
-    let _clock = clock::create_for_testing(scenario.ctx());
-    let to_be_burnt = coin::from_balance(balance::zero<XAUM>(), scenario.ctx());
-    redeem(&mut scenario, ADMIN, to_be_burnt, 80, BOB, b"data");
+    redeem(&mut scenario, ALICE, to_be_burnt);
     abort
 }
 
@@ -866,16 +850,11 @@ fun redeem_ok() {
         let mut state = scenario.take_shared<mtoken::State<XAUM>>();
         let mut _xaum = scenario.take_from_sender<Coin<XAUM>>();
         let to_be_burnt = _xaum.split(30, scenario.ctx());
-        let amount = to_be_burnt.balance().value();
-        mtoken::redeem(&mut state, to_be_burnt, amount, BOB, b"data", scenario.ctx());
-        assert_eq!(event::num_events(), 2);
+        mtoken::redeem(&mut state, to_be_burnt, scenario.ctx());
+        assert_eq!(event::num_events(), 1);
         assert_eq!(
             event::events_by_type<mtoken::RedeemEvent>().pop_back(),
             mtoken::new_redeem_event(ADMIN, 30),
-        );
-        assert_eq!(
-            event::events_by_type<mtoken::RedeemEventExtraData>().pop_back(),
-            mtoken::new_redeem_event_extra_data(BOB, b"data"),
         );
         scenario.return_to_sender(_xaum);
         test_scenario::return_shared(state);

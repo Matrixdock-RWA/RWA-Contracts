@@ -1,18 +1,13 @@
-/*
 #[test_only]
 module xaum::xaum_tests;
-// uncomment this line to import the module
-// use xaum::xaum;
 
-const ENotImplemented: u64 = 0;
+use sui::test_scenario;
+use xaum::xaum;
 
 #[test]
 fun test_xaum() {
-    // pass
+    let mut scenario = test_scenario::begin(@0x0);
+    scenario.next_tx(@0xAD);
+    xaum::init_for_testing(scenario.ctx());
+    scenario.end();
 }
-
-#[test, expected_failure(abort_code = ::xaum::xaum_tests::ENotImplemented)]
-fun test_xaum_fail() {
-    abort ENotImplemented
-}
-*/
