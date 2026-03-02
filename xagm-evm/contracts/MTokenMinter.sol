@@ -53,9 +53,9 @@ contract MTokenMinter is DelayedUpgradeable {
     event SetAcceptedByA(address token, bool accepted);
     event SetAcceptedByB(address token, bool accepted);
     event MintRequest(address indexed transferredToken, address indexed forToken,
-               address indexed requestor, address pool, uint256 amount, uint256 preprice, uint256 slippage, bytes extraData);
+               address indexed requestor, address pool, uint256 amount, uint256 preprice, uint256 slippage);
     event RedeemRequest(address indexed transferredToken, address indexed forToken,
-               address indexed requestor, address pool, uint256 amount, uint256 preprice, uint256 slippage, bytes extraData);
+               address indexed requestor, address pool, uint256 amount, uint256 preprice, uint256 slippage);
 
     function getDelay() internal pure override returns (uint64) {
         return 3600 * 12; //upgrade must be delayed by 12 hours
@@ -89,24 +89,24 @@ contract MTokenMinter is DelayedUpgradeable {
     // note: owner is trusted not to front-run by changing poolAccountA; owner is securely
     // held in the wallet's escrow system; every owner transaction undergoes a two-step
     // process of signature and verification
-    function requestToMint(address transferredToken, address forToken, uint256 amount, uint256 preprice, uint256 slippage, uint256 timestamp, bytes calldata extraData) external {
+    function requestToMint(address transferredToken, address forToken, uint256 amount, uint256 preprice, uint256 slippage, uint256 timestamp) external {
         require(acceptedByA[transferredToken], "INVALID_TOKEN_FOR_MINTING");
         require(block.timestamp <= timestamp + DELAY_MAX, "INVALID_TIMESTAMP");
         address _poolAccountA = poolAccountA;
         IERC20(transferredToken).safeTransferFrom(msg.sender, _poolAccountA, amount);
-        emit MintRequest(transferredToken, forToken, msg.sender, _poolAccountA, amount, preprice, slippage, extraData);
+        emit MintRequest(transferredToken, forToken, msg.sender, _poolAccountA, amount, preprice, slippage);
     }
 
     // Most parameters are not checked here and are handled by the off-chain service.
     // note: owner is trusted not to front-run by changing poolAccountB; owner is securely
     // held in the wallet's escrow system; every owner transaction undergoes a two-step
     // process of signature and verification
-    function requestToRedeem(address transferredToken, address forToken, uint256 amount, uint256 preprice, uint256 slippage, uint256 timestamp, bytes calldata extraData) external {
+    function requestToRedeem(address transferredToken, address forToken, uint256 amount, uint256 preprice, uint256 slippage, uint256 timestamp) external {
         require(acceptedByB[transferredToken], "INVALID_TOKEN_FOR_REDEEMING");
         require(block.timestamp <= timestamp + DELAY_MAX, "INVALID_TIMESTAMP");
         address _poolAccountB = poolAccountB;
         IERC20(transferredToken).safeTransferFrom(msg.sender, _poolAccountB, amount);
-        emit RedeemRequest(transferredToken, forToken, msg.sender, _poolAccountB, amount, preprice, slippage, extraData);
+        emit RedeemRequest(transferredToken, forToken, msg.sender, _poolAccountB, amount, preprice, slippage);
     }
 
     // rescue ERC20 tokens which were accidentally sent to this contract
