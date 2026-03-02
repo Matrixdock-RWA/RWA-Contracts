@@ -15,7 +15,7 @@ const DEFAULT_OZ_PER_TOKEN_BASE = 1.0e9; // 1.0
 const currDayStartTS = Math.floor((Date.now() / 1000 / SECONDS_PER_DAY)) * SECONDS_PER_DAY;
 
 
-describe("MToken2", function () {
+describe("MTokenDilution", function () {
 
   async function deployTestFixture() {
     const [owner, operator, feeCollector, alice, bob] = await ethers.getSigners();
@@ -251,6 +251,12 @@ describe("MToken2", function () {
       const {mt, alice} = await loadFixture(deployTestFixture);
       await expect(mt.connect(alice).reconcileSupply(1000e9))
         .to.be.revertedWithCustomError(mt, "NotFeeCollector");
+    });
+
+    it("reconcile: ZeroValue", async function () {
+      const {mt, feeCollector} = await loadFixture(deployTestFixture);
+      await expect(mt.connect(feeCollector).reconcileSupply(0))
+        .to.be.revertedWithCustomError(mt, "ZeroValue");
     });
 
     it("reconcile: TooEarlyToReconcile", async function () {

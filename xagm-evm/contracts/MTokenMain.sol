@@ -170,6 +170,8 @@ contract MTokenMain is MToken {
 
     // mint fee tokens to the fee collector
     function reconcileSupply(uint112 amount) public onlyFeeCollector {
+        _checkZeroValue(amount);
+
         // check and update lastReconcileTime
         uint64 _lastReconcileTime = lastReconcileTime;
         uint64 newReconcileTime = currentDayStartTime();

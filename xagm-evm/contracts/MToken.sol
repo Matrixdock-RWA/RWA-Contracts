@@ -171,7 +171,7 @@ contract MToken is MTokenBase, ICCClient {
         }
     }
 
-    function _checkZeroValue(uint256 value) private pure {
+    function _checkZeroValue(uint256 value) internal pure {
         if (value == 0) {
             revert ZeroValue();
         }
