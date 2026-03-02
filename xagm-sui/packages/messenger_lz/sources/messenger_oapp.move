@@ -24,7 +24,7 @@ use sui::sui::SUI;
 use sui::table::{Self, Table};
 use utils::bytes32::{Self, Bytes32};
 use utils::table_ext;
-use xaum::xaum::XAUM;
+use xagm::xagm::XAGM;
 
 // === Errors ===
 const EWrongVersion: u64 = 1;
@@ -99,7 +99,7 @@ public struct State has key {
     mtoken_msg_cap: Option<MessengerCap>,
     upgrade_cap_id: Option<ID>,
     eid_to_addr_len: Table<u32, u8>,
-    blocked_tokens: Table<address, Coin<XAUM>>,
+    blocked_tokens: Table<address, Coin<XAGM>>,
     owner: address,
     paused: bool,
 }
@@ -121,7 +121,7 @@ fun init(otw: MESSENGER_OAPP, ctx: &mut TxContext) {
         mtoken_msg_cap: option::none(),
         upgrade_cap_id: option::none(),
         eid_to_addr_len: table::new<u32, u8>(ctx),
-        blocked_tokens: table::new<address, Coin<XAUM>>(ctx),
+        blocked_tokens: table::new<address, Coin<XAGM>>(ctx),
         owner: ctx.sender(),
         paused: false,
     };
@@ -363,7 +363,7 @@ public fun confirm_quote_send(
 
 public fun send_mint_budget(
     state: &State,
-    mt_state: &mut MtState<XAUM>,
+    mt_state: &mut MtState<XAGM>,
     my_oapp: &mut OApp,
     dst_eid: u32,
     extra_options: vector<u8>,
@@ -394,13 +394,13 @@ public fun send_mint_budget(
 
 public fun send_token(
     state: &State,
-    mt_state: &mut MtState<XAUM>,
+    mt_state: &mut MtState<XAGM>,
     my_oapp: &mut OApp,
     dst_eid: u32,
     extra_options: vector<u8>,
     native_token_fee: Coin<SUI>,
     receiver: vector<u8>,
-    xaum_token: Coin<XAUM>,
+    xagm_token: Coin<XAGM>,
     ctx: &mut TxContext,
 ): (Call<SendParam, MessagingReceipt>, SendContext) {
     state.check_version();
@@ -408,7 +408,7 @@ public fun send_token(
     state.check_dst_addr(dst_eid, &receiver);
 
     let msg_cap = state.borrow_messenger_cap();
-    let msg_data = mt_state.cc_send_token(msg_cap, ctx.sender(), receiver, xaum_token, ctx);
+    let msg_data = mt_state.cc_send_token(msg_cap, ctx.sender(), receiver, xagm_token, ctx);
     let options = my_oapp.combine_options(dst_eid, SEND_TOKEN_TYPE, extra_options);
     let lz_call = my_oapp.lz_send(
         &state.oapp_call_cap,
@@ -475,7 +475,7 @@ public fun confirm_send(
 // https://docs.layerzero.network/v2/developers/sui/oapp/overview#receiving-messages-validation-and-processing
 public fun lz_receive(
     state: &mut State,
-    mt_state: &mut MtState<XAUM>,
+    mt_state: &mut MtState<XAGM>,
     my_oapp: &OApp,
     call: Call<LzReceiveParam, Void>,
     deny_list: &DenyList,
@@ -506,7 +506,7 @@ public fun lz_receive(
 
 // This function is extracted for unit testing convenience.
 // It is placed here because it is only used by lz_receive.
-fun handle_cc_receive(state: &mut State, receiver: address, blocked_token: Option<Coin<XAUM>>) {
+fun handle_cc_receive(state: &mut State, receiver: address, blocked_token: Option<Coin<XAGM>>) {
     if (blocked_token.is_none()) {
         blocked_token.destroy_none();
     } else {
@@ -602,7 +602,7 @@ public(package) fun set_version(state: &mut State, version: u64) {
 public(package) fun handle_cc_receive_for_testing(
     state: &mut State,
     receiver: address,
-    blocked_token: Option<Coin<XAUM>>,
+    blocked_token: Option<Coin<XAGM>>,
 ) {
     handle_cc_receive(state, receiver, blocked_token);
 }

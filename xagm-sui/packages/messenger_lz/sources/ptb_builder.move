@@ -10,7 +10,7 @@ use ptb_move_call::move_calls_builder;
 use sui::bcs;
 use utils::buffer_writer;
 use utils::package;
-use xaum::xaum::XAUM;
+use xagm::xagm::XAGM;
 
 // https://github.com/LayerZero-Labs/LayerZero-v2/blob/main/packages/layerzero-v2/sui/contracts/oapps/oft/oft/sources/oft_ptb_builder.move#L19
 const LZ_RECEIVE_INFO_VERSION_1: u16 = 1;
@@ -19,7 +19,7 @@ const LZ_RECEIVE_INFO_VERSION_1: u16 = 1;
 public struct MsgPtbBuilder {}
 
 // https://github.com/LayerZero-Labs/LayerZero-v2/blob/main/packages/layerzero-v2/sui/contracts/oapps/oft/oft/sources/oft_ptb_builder.move#L31
-public fun lz_receive_info(state: &State, mt_state: &MtState<XAUM>, my_oapp: &OApp): vector<u8> {
+public fun lz_receive_info(state: &State, mt_state: &MtState<XAGM>, my_oapp: &OApp): vector<u8> {
     let lz_receive_move_calls = vector[
         move_call::create(
             msg_package(), // package_name
@@ -44,7 +44,7 @@ public fun lz_receive_info(state: &State, mt_state: &MtState<XAUM>, my_oapp: &OA
 // https://github.com/LayerZero-Labs/LayerZero-v2/blob/main/packages/layerzero-v2/sui/contracts/oapps/oft/oft/sources/oft_ptb_builder.move#L69
 public fun build_lz_receive_ptb(
     state: &State,
-    mt_state: &MtState<XAUM>,
+    mt_state: &MtState<XAGM>,
     my_oapp: &OApp,
 ): vector<MoveCall> {
     let mut builder = move_calls_builder::new();

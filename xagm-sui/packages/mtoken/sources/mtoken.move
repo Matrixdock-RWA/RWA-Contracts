@@ -31,6 +31,10 @@ const EInvalidMessageType: u64 = 111;
 const EInvalidMessengerCap: u64 = 112;
 const EDelayTooLong: u64 = 114;
 const EZeroValue: u64 = 115;
+const EAnnualFeeRateTooLarge: u64 = 116;
+const EAnnualFeeRateAlreadyInitialized: u64 = 117;
+const EAnnualFeeRateNotInitialized: u64 = 118;
+const EOzPerTokenBaseTooLarge: u64 = 119;
 
 // === Constants ===
 
@@ -39,6 +43,12 @@ const VERSION: u64 = 2;
 const MIN_DELAY: u64 = 3600; // 1 hour
 const MAX_DELAY: u64 = 3600 * 48; // 48 hours
 const REQ_TTL: u64 = 3600; // 1 hour, time to live after effective
+
+const SECONDS_PER_DAY: u64 = 24 * 3600; // ozPerTokenBaseTime are rounded to daily boundary
+const DAYS_PER_YEAR: u64 = 365; // dailyFeeRate is annualFeeRate / DAYS_PER_YEAR
+const FEE_RATE_BASE: u64 = 1000000000; // feeRate is 9 decimals
+const OZ_RATIO_BASE: u64 = 1000000000; // ozPerToken is 9 decimals
+const MAX_ANNUAL_FEE_RATE: u64 = FEE_RATE_BASE / 10; // 10%
 
 // === Events ===
 
@@ -88,6 +98,20 @@ public struct BlockEvent has copy, drop {
 
 public struct UnblockEvent has copy, drop {
     user_address: address,
+}
+
+public struct UpdateAnnualFeeRateEvent has copy, drop {
+    annual_fee_rate: u64,
+    oz_per_token_base: u64,
+    oz_per_token_base_time: u64,
+}
+
+public struct CCSendMintBudgetManuallyEvent has copy, drop {
+    amount: u64,
+}
+
+public struct CCReceiveMintBudgetManuallyEvent has copy, drop {
+    amount: u64,
 }
 
 public struct CCReceiveMintBudgetEvent has copy, drop {
@@ -154,6 +178,8 @@ public struct TreasuryCapKey() has copy, drop, store;
 public struct DenyCapKey() has copy, drop, store;
 public struct MessengerCapKey() has copy, drop, store;
 
+// The state of the MToken contract.
+// The type parameter T is unused here but preserved for backward compatibility.
 public struct State<phantom T> has key, store {
     id: UID,
     version: u64,
@@ -163,8 +189,12 @@ public struct State<phantom T> has key, store {
     revoker: address,
     delay: u64,
     mint_budget: u64,
+    oz_per_token_base_time: u64, // timestamp of the update of annualFeeRate & ozPerTokenBase, rounded to daily boundary
+    oz_per_token_base: u64, // calculated when annualFeeRate is updated, 9 decimals
+    annual_fee_rate: u64, // the annual fee rate, 9 decimals
 }
 
+// The Capability to communicate with the Messenger contract.
 public struct MessengerCap has key, store {
     id: UID,
 }
@@ -231,6 +261,9 @@ public fun create_coin<T: drop>(
         revoker: owner,
         delay: init_delay,
         mint_budget: 0,
+        oz_per_token_base_time: 0, // will be set by init_annual_fee_rate
+        oz_per_token_base: 0, // will be set by init_annual_fee_rate
+        annual_fee_rate: 0, // will be set by init_annual_fee_rate
     };
     dof::add(&mut state.id, TreasuryCapKey(), treasury_cap);
     dof::add(&mut state.id, DenyCapKey(), deny_cap);
@@ -238,6 +271,24 @@ public fun create_coin<T: drop>(
     // https://docs.sui.io/concepts/object-ownership/shared
     transfer::public_share_object(metadata);
     transfer::public_share_object(state);
+}
+
+// can be called only once
+entry fun init_annual_fee_rate<T>(
+    state: &mut State<T>,
+    annual_fee_rate: u64,
+    oz_per_token_base: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    check_owner(state, ctx);
+    check_annual_fee_rate(annual_fee_rate);
+    assert!(oz_per_token_base <= OZ_RATIO_BASE, EOzPerTokenBaseTooLarge);
+    assert!(state.oz_per_token_base_time == 0, EAnnualFeeRateAlreadyInitialized);
+
+    state.oz_per_token_base_time = current_day_start_time(clock);
+    state.oz_per_token_base = oz_per_token_base;
+    state.annual_fee_rate = annual_fee_rate;
 }
 
 entry fun init_upgrade_cap_id<T>(state: &mut State<T>, upgrade_cap: &UpgradeCap, ctx: &TxContext) {
@@ -454,6 +505,30 @@ entry fun revoke_set_delay<T>(state: &State<T>, req: SetDelayReq, ctx: &TxContex
     id.delete();
 }
 
+entry fun update_annual_fee_rate<T>(
+    state: &mut State<T>,
+    annual_fee_rate: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    check_version(state);
+    check_owner(state, ctx);
+    check_annual_fee_rate(annual_fee_rate);
+    assert!(state.oz_per_token_base_time > 0, EAnnualFeeRateNotInitialized);
+
+    let oz_per_token_base = state.oz_per_token(clock);
+    let oz_per_token_base_time = current_day_start_time(clock);
+
+    state.annual_fee_rate = annual_fee_rate;
+    state.oz_per_token_base = oz_per_token_base;
+    state.oz_per_token_base_time = oz_per_token_base_time;
+    event::emit(UpdateAnnualFeeRateEvent {
+        annual_fee_rate,
+        oz_per_token_base,
+        oz_per_token_base_time,
+    });
+}
+
 // https://docs.sui.io/references/framework/sui-framework/coin#function-mint
 // https://docs.sui.io/references/framework/sui-framework/coin#0x2_coin_mint_and_transfer
 
@@ -552,6 +627,26 @@ entry fun cc_new_messenger_cap<T>(state: &mut State<T>, holder: address, ctx: &m
     df::add(&mut state.id, key, object::id(&cap));
 
     transfer::transfer(cap, holder);
+}
+
+// when cross-chain bridge is not available,
+// we can use this function to manually send mint budget
+entry fun cc_send_mint_budget_manually<T>(state: &mut State<T>, amount: u64, ctx: &TxContext) {
+    check_non_zero(amount);
+    check_version(state);
+    check_operator(state, ctx);
+    deduct_mint_budget(state, amount);
+    event::emit(CCSendMintBudgetManuallyEvent { amount });
+}
+
+// when cross-chain bridge is not available,
+// we can use this function to manually receive mint budget
+entry fun cc_receive_mint_budget_manually<T>(state: &mut State<T>, amount: u64, ctx: &TxContext) {
+    check_non_zero(amount);
+    check_version(state);
+    check_operator(state, ctx);
+    state.mint_budget = state.mint_budget + amount;
+    event::emit(CCReceiveMintBudgetManuallyEvent { amount });
 }
 
 public fun cc_send_mint_budget<T>(
@@ -657,12 +752,37 @@ public fun mint_budget<T>(state: &State<T>): u64 {
     state.mint_budget
 }
 
+public fun oz_per_token_base_time<T>(state: &State<T>): u64 {
+    state.oz_per_token_base_time
+}
+
+public fun annual_fee_rate<T>(state: &State<T>): u64 {
+    state.annual_fee_rate
+}
+
+public fun oz_per_token_base<T>(state: &State<T>): u64 {
+    state.oz_per_token_base
+}
+
 public fun package_address<T>(_state: &State<T>): address {
     address::from_ascii_bytes(type_name::with_original_ids<State<T>>().address_string().as_bytes())
 }
 
 public fun total_supply<T>(state: &State<T>): u64 {
     coin::total_supply<T>(state.borrow_treasury_cap())
+}
+
+// ozPerTokenBase - annualFeeRate*daysElapsed/365
+public fun oz_per_token<T>(state: &State<T>, clock: &Clock): u64 {
+    let seconds_elapsed = clock.timestamp_ms() / 1000 - state.oz_per_token_base_time;
+    let days_elapsed = seconds_elapsed / SECONDS_PER_DAY;
+    state.oz_per_token_base - (state.annual_fee_rate * days_elapsed) / DAYS_PER_YEAR
+}
+
+// get oz amount from token amount
+public fun get_oz_amount<T>(state: &State<T>, token_amount: u64, clock: &Clock): u64 {
+    let oz_per_token = state.oz_per_token(clock) as u128;
+    ((token_amount as u128 * oz_per_token) / (OZ_RATIO_BASE as u128)) as u64
 }
 
 // === Private Functions ===
@@ -705,6 +825,11 @@ fun check_non_zero(amount: u64) {
     assert!(amount > 0, EZeroValue);
 }
 
+// _annualFeeRate can not be greater than MAX_ANNUAL_FEE_RATE
+fun check_annual_fee_rate(_annual_fee_rate: u64) {
+    assert!(_annual_fee_rate <= MAX_ANNUAL_FEE_RATE, EAnnualFeeRateTooLarge);
+}
+
 fun deduct_mint_budget<T>(state: &mut State<T>, amount: u64) {
     assert!(state.mint_budget >= amount, EMintBudgetNotEnough);
     state.mint_budget = state.mint_budget - amount;
@@ -720,6 +845,11 @@ fun borrow_treasury_cap_mut<T>(state: &mut State<T>): &mut TreasuryCap<T> {
 
 fun borrow_deny_cap_mut<T>(state: &mut State<T>): &mut DenyCapV2<T> {
     dof::borrow_mut(&mut state.id, DenyCapKey())
+}
+
+// current day start time, rounded to daily boundary
+fun current_day_start_time(clock: &Clock): u64 {
+    (clock.timestamp_ms() / 1000 / SECONDS_PER_DAY) * SECONDS_PER_DAY
 }
 
 // === Test Functions ===
@@ -752,6 +882,29 @@ public(package) fun new_block_event(user_address: address): BlockEvent {
 #[test_only]
 public(package) fun new_unblock_event(user_address: address): UnblockEvent {
     UnblockEvent { user_address }
+}
+
+#[test_only]
+public(package) fun new_update_annual_fee_rate_event(
+    annual_fee_rate: u64,
+    oz_per_token_base: u64,
+    oz_per_token_base_time: u64,
+): UpdateAnnualFeeRateEvent {
+    UpdateAnnualFeeRateEvent { annual_fee_rate, oz_per_token_base, oz_per_token_base_time }
+}
+
+#[test_only]
+public(package) fun new_cc_send_mint_budget_manually_event(
+    amount: u64,
+): CCSendMintBudgetManuallyEvent {
+    CCSendMintBudgetManuallyEvent { amount }
+}
+
+#[test_only]
+public(package) fun new_cc_receive_mint_budget_manually_event(
+    amount: u64,
+): CCReceiveMintBudgetManuallyEvent {
+    CCReceiveMintBudgetManuallyEvent { amount }
 }
 
 #[test_only]

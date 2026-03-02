@@ -1,11 +1,11 @@
-# XAUm-Sui
+# XAGm-Sui
 
-XAUm on the Sui blockchain.
+XAGm on the Sui blockchain.
 
 | Sui Package   | EVM Contract  |
 | ------------- | ------------- |
-| mtoken & xaum | MTokenSide    |
-| minter        | BullionMinter |
+| mtoken & xagm | MTokenSide    |
+| minter        | MTokenMinter  |
 
 ---
 

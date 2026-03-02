@@ -4,8 +4,8 @@ echo '===== test mtoken ====='
 cd $PKG_IDR/mtoken
 sui move test
 
-echo '===== test xaum ====='
-cd $PKG_IDR/xaum
+echo '===== test xagm ====='
+cd $PKG_IDR/xagm
 sui move test
 
 echo '===== test messenger_lz ====='

@@ -1,7 +1,7 @@
 #[test_only]
 module mtoken::mtoken_tests;
 
-use mtoken::mt::{Self, MT as XAUM};
+use mtoken::mt::{Self, MT as XAGM};
 use mtoken::mtoken;
 use std::unit_test::assert_eq;
 use sui::balance;
@@ -26,7 +26,7 @@ const ADMIN: address = @0xAD;
 const ALICE: address = @0xA11CE;
 const BOB: address = @0xB0B;
 
-fun init_xaum(): test_scenario::Scenario {
+fun init_xagm(): test_scenario::Scenario {
     let mut scenario = test_scenario::begin(SYS);
     deny_list::create_for_testing(scenario.ctx());
     scenario.next_tx(ADMIN);
@@ -43,8 +43,8 @@ fun set_description(
 ) {
     scenario.next_tx(caller);
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
-        let mut metadata = scenario.take_shared<CoinMetadata<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
+        let mut metadata = scenario.take_shared<CoinMetadata<XAGM>>();
         mtoken::update_description(
             &state,
             &mut metadata,
@@ -63,8 +63,8 @@ fun set_icon_url(
 ) {
     scenario.next_tx(caller);
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
-        let mut metadata = scenario.take_shared<CoinMetadata<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
+        let mut metadata = scenario.take_shared<CoinMetadata<XAGM>>();
         mtoken::update_icon_url(
             &state,
             &mut metadata,
@@ -84,7 +84,7 @@ fun request_set_owner(
 ) {
     scenario.next_tx(caller);
     {
-        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
         let upgrade_cap = test_publish(
             state.package_address().to_id(),
             scenario.ctx(),
@@ -100,7 +100,7 @@ fun request_set_owner(
 fun execute_set_owner(scenario: &mut test_scenario::Scenario, _clock: &Clock, caller: address) {
     scenario.next_tx(caller);
     {
-        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
         let req = scenario.take_shared<mtoken::TransferOwnershipReq>();
         mtoken::execute_transfer_ownership(&mut state, req, _clock, scenario.ctx());
         assert_eq!(state.owner(), caller);
@@ -112,7 +112,7 @@ fun execute_set_owner(scenario: &mut test_scenario::Scenario, _clock: &Clock, ca
 fun revoke_set_owner(scenario: &mut test_scenario::Scenario, caller: address) {
     scenario.next_tx(caller);
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
         let req = scenario.take_shared<mtoken::TransferOwnershipReq>();
         mtoken::revoke_transfer_ownership(&state, req, scenario.ctx());
         test_scenario::return_shared(state);
@@ -127,7 +127,7 @@ fun request_set_operator(
 ) {
     scenario.next_tx(caller);
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
         mtoken::request_set_operator(&state, new_operator, _clock, scenario.ctx());
         assert_eq!(state.operator(), caller);
         assert_eq!(event::num_events(), 1);
@@ -138,7 +138,7 @@ fun request_set_operator(
 fun execute_set_operator(scenario: &mut test_scenario::Scenario, _clock: &Clock, caller: address) {
     scenario.next_tx(caller);
     {
-        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
         let req = scenario.take_shared<mtoken::SetOperatorReq>();
         mtoken::execute_set_operator(&mut state, req, _clock, scenario.ctx());
         assert_eq!(event::num_events(), 1);
@@ -149,7 +149,7 @@ fun execute_set_operator(scenario: &mut test_scenario::Scenario, _clock: &Clock,
 fun revoke_set_operator(scenario: &mut test_scenario::Scenario, caller: address) {
     scenario.next_tx(caller);
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
         let req = scenario.take_shared<mtoken::SetOperatorReq>();
         mtoken::revoke_set_operator(&state, req, scenario.ctx());
         test_scenario::return_shared(state);
@@ -159,7 +159,7 @@ fun revoke_set_operator(scenario: &mut test_scenario::Scenario, caller: address)
 fun check_operator(scenario: &mut test_scenario::Scenario, operator: address) {
     scenario.next_tx(operator);
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
         assert_eq!(state.operator(), operator);
         test_scenario::return_shared(state);
     };
@@ -173,7 +173,7 @@ fun request_set_revoker(
 ) {
     scenario.next_tx(caller);
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
         mtoken::request_set_revoker(&state, new_revoker, _clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
@@ -182,7 +182,7 @@ fun request_set_revoker(
 fun execute_set_revoker(scenario: &mut test_scenario::Scenario, _clock: &Clock, caller: address) {
     scenario.next_tx(caller);
     {
-        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
         let req = scenario.take_shared<mtoken::SetRevokerReq>();
         mtoken::execute_set_revoker(&mut state, req, _clock, scenario.ctx());
         assert_eq!(event::num_events(), 1);
@@ -193,7 +193,7 @@ fun execute_set_revoker(scenario: &mut test_scenario::Scenario, _clock: &Clock, 
 fun revoke_set_revoker(scenario: &mut test_scenario::Scenario, caller: address) {
     scenario.next_tx(caller);
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
         let req = scenario.take_shared<mtoken::SetRevokerReq>();
         mtoken::revoke_set_revoker(&state, req, scenario.ctx());
         test_scenario::return_shared(state);
@@ -203,7 +203,7 @@ fun revoke_set_revoker(scenario: &mut test_scenario::Scenario, caller: address) 
 fun check_revoker(scenario: &mut test_scenario::Scenario, revoker: address) {
     scenario.next_tx(revoker);
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
         assert_eq!(state.revoker(), revoker);
         test_scenario::return_shared(state);
     };
@@ -212,7 +212,7 @@ fun check_revoker(scenario: &mut test_scenario::Scenario, revoker: address) {
 fun execute_set_delay(scenario: &mut test_scenario::Scenario, _clock: &Clock, caller: address) {
     scenario.next_tx(caller);
     {
-        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
         let req = scenario.take_shared<mtoken::SetDelayReq>();
         mtoken::execute_set_delay(&mut state, req, _clock, scenario.ctx());
         assert_eq!(event::num_events(), 1);
@@ -223,7 +223,7 @@ fun execute_set_delay(scenario: &mut test_scenario::Scenario, _clock: &Clock, ca
 fun revoke_set_delay(scenario: &mut test_scenario::Scenario, caller: address) {
     scenario.next_tx(caller);
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
         let req = scenario.take_shared<mtoken::SetDelayReq>();
         mtoken::revoke_set_delay(&state, req, scenario.ctx());
         test_scenario::return_shared(state);
@@ -233,7 +233,7 @@ fun revoke_set_delay(scenario: &mut test_scenario::Scenario, caller: address) {
 fun check_delay(scenario: &mut test_scenario::Scenario, caller: address, delay: u64) {
     scenario.next_tx(caller);
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
         assert_eq!(state.delay(), delay);
         test_scenario::return_shared(state);
     };
@@ -248,7 +248,7 @@ fun request_mint_to(
 ) {
     scenario.next_tx(caller);
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
         mtoken::request_mint_to(&state, recipient, amount, _clock, scenario.ctx());
         assert_eq!(event::num_events(), 1);
         test_scenario::return_shared(state);
@@ -258,7 +258,7 @@ fun request_mint_to(
 fun execute_mint_to(scenario: &mut test_scenario::Scenario, _clock: &Clock, caller: address) {
     scenario.next_tx(caller);
     {
-        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
         let req = scenario.take_shared<mtoken::MintReq>();
         mtoken::execute_mint_to(&mut state, req, _clock, scenario.ctx());
         assert_eq!(event::num_events(), 1);
@@ -273,7 +273,7 @@ fun execute_mint_to(scenario: &mut test_scenario::Scenario, _clock: &Clock, call
 fun revoke_mint_to(scenario: &mut test_scenario::Scenario, caller: address) {
     scenario.next_tx(caller);
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
         let req = scenario.take_shared<mtoken::MintReq>();
         mtoken::revoke_mint_to(&state, req, scenario.ctx());
         test_scenario::return_shared(state);
@@ -283,7 +283,7 @@ fun revoke_mint_to(scenario: &mut test_scenario::Scenario, caller: address) {
 fun set_mint_budget(scenario: &mut test_scenario::Scenario, caller: address, amount: u64) {
     scenario.next_tx(caller);
     {
-        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
         state.set_mint_budget(amount);
         test_scenario::return_shared(state);
     };
@@ -291,12 +291,12 @@ fun set_mint_budget(scenario: &mut test_scenario::Scenario, caller: address, amo
 
 #[test]
 fun init_ok() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
 
     // check State fields
     scenario.next_tx(ADMIN);
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
         assert_eq!(state.version(), VERSION);
         assert_eq!(state.owner(), ADMIN);
         assert_eq!(state.operator(), ADMIN);
@@ -309,7 +309,7 @@ fun init_ok() {
     // check metadata
     {
         let (decimals, symbol, name, description) = mt::metadata();
-        let metadata = scenario.take_shared<CoinMetadata<XAUM>>();
+        let metadata = scenario.take_shared<CoinMetadata<XAGM>>();
         assert_eq!(coin::get_decimals(&metadata), decimals);
         assert_eq!(coin::get_name(&metadata), name.to_string());
         assert_eq!(coin::get_symbol(&metadata), symbol.to_ascii_string());
@@ -324,14 +324,14 @@ fun init_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_description_err_not_owner() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     set_description(&mut scenario, ALICE, b"new description");
     abort
 }
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_icon_url_err_not_owner() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     set_icon_url(&mut scenario, ALICE, b"new/icon/url");
     abort
 }
@@ -340,7 +340,7 @@ fun set_icon_url_err_not_owner() {
 fun update_metadata_ok() {
     let new_description = b"new description";
     let new_icon_url = b"new/icon/url";
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
 
     // update metadata
     set_description(&mut scenario, ADMIN, new_description);
@@ -349,7 +349,7 @@ fun update_metadata_ok() {
     // check metadata
     scenario.next_tx(ALICE);
     {
-        let metadata = scenario.take_shared<CoinMetadata<XAUM>>();
+        let metadata = scenario.take_shared<CoinMetadata<XAGM>>();
         assert_eq!(coin::get_description(&metadata), new_description.to_string());
         assert_eq!(
             coin::get_icon_url(&metadata).extract(),
@@ -363,7 +363,7 @@ fun update_metadata_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_owner_req_err_not_owner() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_owner(&mut scenario, &_clock, ALICE, BOB);
     abort
@@ -371,7 +371,7 @@ fun set_owner_req_err_not_owner() {
 
 #[test, expected_failure(abort_code = mtoken::ENotNewOwner)]
 fun set_owner_exec_err_not_new_owner() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_owner(&mut scenario, &_clock, ADMIN, ALICE);
     execute_set_owner(&mut scenario, &_clock, BOB);
@@ -380,7 +380,7 @@ fun set_owner_exec_err_not_new_owner() {
 
 #[test, expected_failure(abort_code = mtoken::ENotEffective)]
 fun set_owner_exec_err_not_effective() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_owner(&mut scenario, &_clock, ADMIN, ALICE);
     execute_set_owner(&mut scenario, &_clock, ALICE);
@@ -389,7 +389,7 @@ fun set_owner_exec_err_not_effective() {
 
 #[test, expected_failure(abort_code = mtoken::EReqExpired)]
 fun set_owner_exec_err_expired() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let mut _clock = clock::create_for_testing(scenario.ctx());
     request_set_owner(&mut scenario, &_clock, ADMIN, ALICE);
     _clock.increment_for_testing(INIT_DELAY * 1000);
@@ -400,13 +400,13 @@ fun set_owner_exec_err_expired() {
 
 #[test, expected_failure(abort_code = mtoken::EUpgradeCapInvalid)]
 fun set_owner_req_err_upgrade_cap_invalid() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let mut _clock = clock::create_for_testing(scenario.ctx());
 
     // request
     scenario.next_tx(ADMIN);
     {
-        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
         let upgrade_cap = test_publish(
             state.package_address().to_id(),
             scenario.ctx(),
@@ -421,7 +421,7 @@ fun set_owner_req_err_upgrade_cap_invalid() {
 
 #[test]
 fun set_owner_ok() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let mut _clock = clock::create_for_testing(scenario.ctx());
 
     request_set_owner(&mut scenario, &_clock, ADMIN, ALICE);
@@ -431,7 +431,7 @@ fun set_owner_ok() {
     // check upgrade cap
     scenario.next_tx(ALICE);
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
         let upgrade_cap = scenario.take_from_sender<UpgradeCap>();
         assert_eq!(state.owner(), ALICE);
         assert_eq!(upgrade_cap.package(), state.package_address().to_id());
@@ -445,7 +445,7 @@ fun set_owner_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_owner_revoke_err_not_owner() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_owner(&mut scenario, &_clock, ADMIN, ALICE);
     revoke_set_owner(&mut scenario, ALICE);
@@ -454,7 +454,7 @@ fun set_owner_revoke_err_not_owner() {
 
 #[test]
 fun set_owner_revoke_ok() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_owner(&mut scenario, &_clock, ADMIN, ALICE);
     revoke_set_owner(&mut scenario, ADMIN);
@@ -473,7 +473,7 @@ fun set_owner_revoke_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_operator_req_err_not_owner() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_operator(&mut scenario, &_clock, ALICE, BOB);
     abort
@@ -481,7 +481,7 @@ fun set_operator_req_err_not_owner() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_operator_exec_err_not_owner() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_operator(&mut scenario, &_clock, ADMIN, BOB);
     execute_set_operator(&mut scenario, &_clock, ALICE);
@@ -490,7 +490,7 @@ fun set_operator_exec_err_not_owner() {
 
 #[test, expected_failure(abort_code = mtoken::ENotEffective)]
 fun set_operator_exec_err_not_effective() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let mut _clock = clock::create_for_testing(scenario.ctx());
     request_set_operator(&mut scenario, &_clock, ADMIN, ALICE);
     execute_set_operator(&mut scenario, &_clock, ADMIN);
@@ -499,7 +499,7 @@ fun set_operator_exec_err_not_effective() {
 
 #[test]
 fun set_operator_ok() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let mut _clock = clock::create_for_testing(scenario.ctx());
     request_set_operator(&mut scenario, &_clock, ADMIN, ALICE);
     check_operator(&mut scenario, ADMIN);
@@ -512,7 +512,7 @@ fun set_operator_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotRevoker)]
 fun set_operator_revoke_err_not_revoker() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_operator(&mut scenario, &_clock, ADMIN, ALICE);
     revoke_set_operator(&mut scenario, ALICE);
@@ -521,7 +521,7 @@ fun set_operator_revoke_err_not_revoker() {
 
 #[test]
 fun set_operator_revoke_ok() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_operator(&mut scenario, &_clock, ADMIN, ALICE);
     revoke_set_operator(&mut scenario, ADMIN);
@@ -532,7 +532,7 @@ fun set_operator_revoke_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_revoker_req_err_not_owner() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_revoker(&mut scenario, &_clock, ALICE, BOB);
     abort
@@ -540,7 +540,7 @@ fun set_revoker_req_err_not_owner() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_revoker_exec_err_not_owner() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_revoker(&mut scenario, &_clock, ADMIN, BOB);
     execute_set_revoker(&mut scenario, &_clock, ALICE);
@@ -549,7 +549,7 @@ fun set_revoker_exec_err_not_owner() {
 
 #[test, expected_failure(abort_code = mtoken::ENotEffective)]
 fun set_revoker_exec_err_not_effective() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_revoker(&mut scenario, &_clock, ADMIN, ALICE);
     execute_set_revoker(&mut scenario, &_clock, ADMIN);
@@ -558,7 +558,7 @@ fun set_revoker_exec_err_not_effective() {
 
 #[test]
 fun set_revoker_ok() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let mut _clock = clock::create_for_testing(scenario.ctx());
     request_set_revoker(&mut scenario, &_clock, ADMIN, ALICE);
     check_revoker(&mut scenario, ADMIN);
@@ -571,7 +571,7 @@ fun set_revoker_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_revoker_revoke_err_not_owner() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_revoker(&mut scenario, &_clock, ADMIN, ALICE);
     revoke_set_revoker(&mut scenario, ALICE);
@@ -580,7 +580,7 @@ fun set_revoker_revoke_err_not_owner() {
 
 #[test]
 fun set_revoker_revoke_ok() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_revoker(&mut scenario, &_clock, ADMIN, ALICE);
     revoke_set_revoker(&mut scenario, ADMIN);
@@ -597,7 +597,7 @@ fun request_set_delay(
 ) {
     scenario.next_tx(caller);
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
         mtoken::request_set_delay(&state, new_delay, _clock, scenario.ctx());
         assert_eq!(event::num_events(), 1);
         test_scenario::return_shared(state);
@@ -606,7 +606,7 @@ fun request_set_delay(
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_delay_req_err_not_owner() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_delay(&mut scenario, &_clock, ALICE, 1234);
     abort
@@ -614,7 +614,7 @@ fun set_delay_req_err_not_owner() {
 
 #[test, expected_failure(abort_code = mtoken::EDelayTooShort)]
 fun set_delay_req_err_too_short() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY-1);
     abort
@@ -622,7 +622,7 @@ fun set_delay_req_err_too_short() {
 
 #[test, expected_failure(abort_code = mtoken::EDelayTooLong)]
 fun set_delay_req_err_too_long() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_delay(&mut scenario, &_clock, ADMIN, MAX_DELAY+1);
     abort
@@ -630,7 +630,7 @@ fun set_delay_req_err_too_long() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_delay_exec_err_not_owner() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY+123);
     execute_set_delay(&mut scenario, &_clock, ALICE);
@@ -639,7 +639,7 @@ fun set_delay_exec_err_not_owner() {
 
 #[test, expected_failure(abort_code = mtoken::ENotEffective)]
 fun set_delay_exec_err_not_effective() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY+123);
     execute_set_delay(&mut scenario, &_clock, ADMIN);
@@ -648,7 +648,7 @@ fun set_delay_exec_err_not_effective() {
 
 #[test]
 fun set_delay_ok() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let mut _clock = clock::create_for_testing(scenario.ctx());
     request_set_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY+100);
     check_delay(&mut scenario, ADMIN, INIT_DELAY);
@@ -661,7 +661,7 @@ fun set_delay_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotRevoker)]
 fun set_delay_revoke_err_not_revoker() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY);
     revoke_set_delay(&mut scenario, ALICE);
@@ -670,7 +670,7 @@ fun set_delay_revoke_err_not_revoker() {
 
 #[test]
 fun set_delay_revoke_ok() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_set_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY+1);
     revoke_set_delay(&mut scenario, ADMIN);
@@ -681,7 +681,7 @@ fun set_delay_revoke_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOperator)]
 fun mint_req_err_not_operator() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_mint_to(&mut scenario, &_clock, ALICE, ALICE, 100);
     abort
@@ -689,7 +689,7 @@ fun mint_req_err_not_operator() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOperator)]
 fun mint_exec_err_not_operator() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_mint_to(&mut scenario, &_clock, ADMIN, ALICE, 100);
     execute_mint_to(&mut scenario, &_clock, ALICE);
@@ -698,7 +698,7 @@ fun mint_exec_err_not_operator() {
 
 #[test, expected_failure(abort_code = mtoken::ENotEffective)]
 fun mint_exec_err_not_effective() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_mint_to(&mut scenario, &_clock, ADMIN, ALICE, 100);
     execute_mint_to(&mut scenario, &_clock, ADMIN);
@@ -707,7 +707,7 @@ fun mint_exec_err_not_effective() {
 
 #[test, expected_failure(abort_code = mtoken::EMintBudgetNotEnough)]
 fun mint_exec_err_budget_not_enough() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let mut _clock = clock::create_for_testing(scenario.ctx());
     request_mint_to(&mut scenario, &_clock, ADMIN, ALICE, 100);
     _clock.increment_for_testing(INIT_DELAY * 1000);
@@ -717,7 +717,7 @@ fun mint_exec_err_budget_not_enough() {
 
 #[test]
 fun mint_ok() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let mut _clock = clock::create_for_testing(scenario.ctx());
     request_mint_to(&mut scenario, &_clock, ADMIN, ALICE, 100);
 
@@ -728,13 +728,13 @@ fun mint_ok() {
     // check supply & balance
     scenario.next_tx(ALICE);
     {
-        let _xaum = scenario.take_from_sender<Coin<XAUM>>();
-        assert_eq!(_xaum.balance().value(), 100);
-        scenario.return_to_sender(_xaum);
+        let _xagm = scenario.take_from_sender<Coin<XAGM>>();
+        assert_eq!(_xagm.balance().value(), 100);
+        scenario.return_to_sender(_xagm);
     };
     scenario.next_tx(ADMIN);
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
         assert_eq!(state.mint_budget(), 10000 - 100);
         assert_eq!(state.total_supply(), 100);
         test_scenario::return_shared(state);
@@ -745,7 +745,7 @@ fun mint_ok() {
 
 #[test]
 fun mint_twice_ok() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let mut _clock = clock::create_for_testing(scenario.ctx());
     set_mint_budget(&mut scenario, ADMIN, 1000);
 
@@ -755,14 +755,14 @@ fun mint_twice_ok() {
     execute_mint_to(&mut scenario, &_clock, ADMIN);
 
     scenario.next_tx(ALICE);
-    let id1 = scenario.most_recent_id_for_sender<Coin<XAUM>>().extract();
+    let id1 = scenario.most_recent_id_for_sender<Coin<XAGM>>().extract();
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
-        let _xaum = scenario.take_from_sender<Coin<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
+        let _xagm = scenario.take_from_sender<Coin<XAGM>>();
         assert_eq!(state.mint_budget(), 1000 - 100);
-        assert_eq!(_xaum.balance().value(), 100);
+        assert_eq!(_xagm.balance().value(), 100);
         test_scenario::return_shared(state);
-        scenario.return_to_sender(_xaum);
+        scenario.return_to_sender(_xagm);
     };
 
     // mint#2
@@ -771,25 +771,25 @@ fun mint_twice_ok() {
     execute_mint_to(&mut scenario, &_clock, ADMIN);
 
     scenario.next_tx(ALICE);
-    let id2 = scenario.most_recent_id_for_sender<Coin<XAUM>>().extract();
+    let id2 = scenario.most_recent_id_for_sender<Coin<XAGM>>().extract();
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
-        let _xaum = scenario.take_from_sender<Coin<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
+        let _xagm = scenario.take_from_sender<Coin<XAGM>>();
         assert_eq!(state.mint_budget(), 1000 - 180);
-        assert_eq!(_xaum.balance().value(), 80);
+        assert_eq!(_xagm.balance().value(), 80);
         test_scenario::return_shared(state);
-        scenario.return_to_sender(_xaum);
+        scenario.return_to_sender(_xagm);
     };
 
     // check all coins
     scenario.next_tx(ALICE);
     {
-        let _xaum1 = scenario.take_from_sender_by_id<Coin<XAUM>>(id1);
-        let _xaum2 = scenario.take_from_sender_by_id<Coin<XAUM>>(id2);
-        assert_eq!(_xaum1.balance().value(), 100);
-        assert_eq!(_xaum2.balance().value(), 80);
-        scenario.return_to_sender(_xaum1);
-        scenario.return_to_sender(_xaum2);
+        let _xagm1 = scenario.take_from_sender_by_id<Coin<XAGM>>(id1);
+        let _xagm2 = scenario.take_from_sender_by_id<Coin<XAGM>>(id2);
+        assert_eq!(_xagm1.balance().value(), 100);
+        assert_eq!(_xagm2.balance().value(), 80);
+        scenario.return_to_sender(_xagm1);
+        scenario.return_to_sender(_xagm2);
     };
 
     clock::destroy_for_testing(_clock);
@@ -798,7 +798,7 @@ fun mint_twice_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotRevoker)]
 fun mint_revoke_err_not_revoker() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_mint_to(&mut scenario, &_clock, ADMIN, ALICE, 80);
     revoke_mint_to(&mut scenario, ALICE);
@@ -807,7 +807,7 @@ fun mint_revoke_err_not_revoker() {
 
 #[test]
 fun mint_revoke_ok() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     request_mint_to(&mut scenario, &_clock, ADMIN, ALICE, 80);
     revoke_mint_to(&mut scenario, ADMIN);
@@ -815,10 +815,10 @@ fun mint_revoke_ok() {
     scenario.end();
 }
 
-fun redeem(scenario: &mut test_scenario::Scenario, caller: address, to_be_burnt: Coin<XAUM>) {
+fun redeem(scenario: &mut test_scenario::Scenario, caller: address, to_be_burnt: Coin<XAGM>) {
     scenario.next_tx(caller);
     {
-        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
         mtoken::redeem(&mut state, to_be_burnt, scenario.ctx());
         test_scenario::return_shared(state);
     };
@@ -826,16 +826,16 @@ fun redeem(scenario: &mut test_scenario::Scenario, caller: address, to_be_burnt:
 
 #[test, expected_failure(abort_code = mtoken::ENotOperator)]
 fun redeem_err_not_operator() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
-    let to_be_burnt = coin::from_balance(balance::zero<XAUM>(), scenario.ctx());
+    let to_be_burnt = coin::from_balance(balance::zero<XAGM>(), scenario.ctx());
     redeem(&mut scenario, ALICE, to_be_burnt);
     abort
 }
 
 #[test]
 fun redeem_ok() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let mut _clock = clock::create_for_testing(scenario.ctx());
 
     // mint
@@ -847,30 +847,30 @@ fun redeem_ok() {
     // burn
     scenario.next_tx(ADMIN);
     {
-        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
-        let mut _xaum = scenario.take_from_sender<Coin<XAUM>>();
-        let to_be_burnt = _xaum.split(30, scenario.ctx());
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
+        let mut _xagm = scenario.take_from_sender<Coin<XAGM>>();
+        let to_be_burnt = _xagm.split(30, scenario.ctx());
         mtoken::redeem(&mut state, to_be_burnt, scenario.ctx());
         assert_eq!(event::num_events(), 1);
         assert_eq!(
             event::events_by_type<mtoken::RedeemEvent>().pop_back(),
             mtoken::new_redeem_event(ADMIN, 30),
         );
-        scenario.return_to_sender(_xaum);
+        scenario.return_to_sender(_xagm);
         test_scenario::return_shared(state);
     };
 
     // check
     scenario.next_tx(ADMIN);
     {
-        let state = scenario.take_shared<mtoken::State<XAUM>>();
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
         assert_eq!(state.mint_budget(), 10000 - 70);
         assert_eq!(state.total_supply(), 70);
         test_scenario::return_shared(state);
 
-        let _xaum = scenario.take_from_sender<Coin<XAUM>>();
-        assert_eq!(_xaum.balance().value(), 70);
-        scenario.return_to_sender(_xaum);
+        let _xagm = scenario.take_from_sender<Coin<XAGM>>();
+        assert_eq!(_xagm.balance().value(), 70);
+        scenario.return_to_sender(_xagm);
     };
 
     clock::destroy_for_testing(_clock);
@@ -879,13 +879,13 @@ fun redeem_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOperator)]
 fun block_err_not_operator() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let mut _clock = clock::create_for_testing(scenario.ctx());
 
     // block
     scenario.next_tx(ALICE);
     {
-        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
         let mut _deny_list = scenario.take_shared<DenyList>();
         mtoken::add_to_blocked_list(&mut state, ALICE, &mut _deny_list, scenario.ctx());
     };
@@ -894,13 +894,13 @@ fun block_err_not_operator() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOperator)]
 fun unblock_err_not_operator() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let mut _clock = clock::create_for_testing(scenario.ctx());
 
     // unblock
     scenario.next_tx(ALICE);
     {
-        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
         let mut _deny_list = scenario.take_shared<DenyList>();
         mtoken::remove_from_blocked_list(&mut state, ALICE, &mut _deny_list, scenario.ctx());
     };
@@ -909,13 +909,13 @@ fun unblock_err_not_operator() {
 
 #[test]
 fun block_unblock_ok() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let mut _clock = clock::create_for_testing(scenario.ctx());
 
     // block
     scenario.next_tx(ADMIN);
     {
-        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
         let mut _deny_list = scenario.take_shared<DenyList>();
         mtoken::add_to_blocked_list(&mut state, ALICE, &mut _deny_list, scenario.ctx());
         assert_eq!(event::num_events(), 2);
@@ -924,14 +924,14 @@ fun block_unblock_ok() {
             mtoken::new_block_event(ALICE),
         );
         assert_eq!(
-            coin::deny_list_v2_contains_current_epoch<XAUM>(
+            coin::deny_list_v2_contains_current_epoch<XAGM>(
                 &_deny_list,
                 ALICE,
                 scenario.ctx(),
             ),
             false,
         );
-        assert_eq!(coin::deny_list_v2_contains_next_epoch<XAUM>(&_deny_list, ALICE), true);
+        assert_eq!(coin::deny_list_v2_contains_next_epoch<XAGM>(&_deny_list, ALICE), true);
         test_scenario::return_shared(state);
         test_scenario::return_shared(_deny_list);
     };
@@ -940,21 +940,21 @@ fun block_unblock_ok() {
     {
         let mut _deny_list = scenario.take_shared<DenyList>();
         assert_eq!(
-            coin::deny_list_v2_contains_current_epoch<XAUM>(
+            coin::deny_list_v2_contains_current_epoch<XAGM>(
                 &_deny_list,
                 ALICE,
                 scenario.ctx(),
             ),
             true,
         );
-        assert_eq!(coin::deny_list_v2_contains_next_epoch<XAUM>(&_deny_list, ALICE), true);
+        assert_eq!(coin::deny_list_v2_contains_next_epoch<XAGM>(&_deny_list, ALICE), true);
         test_scenario::return_shared(_deny_list);
     };
 
     // unblock
     scenario.next_tx(ADMIN);
     {
-        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
         let mut _deny_list = scenario.take_shared<DenyList>();
         mtoken::remove_from_blocked_list(&mut state, ALICE, &mut _deny_list, scenario.ctx());
         assert_eq!(event::num_events(), 1);
@@ -972,7 +972,7 @@ fun block_unblock_ok() {
 
 #[test]
 fun transfer_ok() {
-    let mut scenario = init_xaum();
+    let mut scenario = init_xagm();
     let mut _clock = clock::create_for_testing(scenario.ctx());
 
     // mint
@@ -984,18 +984,18 @@ fun transfer_ok() {
     // transfer
     scenario.next_tx(ALICE);
     {
-        let mut _xaum = scenario.take_from_sender<Coin<XAUM>>();
-        let to_be_send = _xaum.split(30, scenario.ctx());
+        let mut _xagm = scenario.take_from_sender<Coin<XAGM>>();
+        let to_be_send = _xagm.split(30, scenario.ctx());
         transfer::public_transfer(to_be_send, BOB);
-        scenario.return_to_sender(_xaum);
+        scenario.return_to_sender(_xagm);
     };
 
     // check
     scenario.next_tx(BOB);
     {
-        let mut _xaum = scenario.take_from_sender<Coin<XAUM>>();
-        assert_eq!(_xaum.balance().value(), 30);
-        scenario.return_to_sender(_xaum);
+        let mut _xagm = scenario.take_from_sender<Coin<XAGM>>();
+        assert_eq!(_xagm.balance().value(), 30);
+        scenario.return_to_sender(_xagm);
     };
 
     clock::destroy_for_testing(_clock);
@@ -1004,7 +1004,7 @@ fun transfer_ok() {
 
 // #[test, expected_failure]
 // fun transfer_err_denied_src() {
-//     let mut scenario = init_xaum();
+//     let mut scenario = init_xagm();
 //     let mut _clock = clock::create_for_testing(scenario.ctx());
 
 //     scenario.next_tx(SYS);
@@ -1015,7 +1015,7 @@ fun transfer_ok() {
 //     // mint
 //     scenario.next_tx(ADMIN);
 //     {
-//         let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+//         let mut state = scenario.take_shared<mtoken::State<XAGM>>();
 //         state.set_mint_budget(10000);
 //         mtoken::request_mint_to(&state, ALICE, 100, &_clock, scenario.ctx());
 //         test_scenario::return_shared(state);
@@ -1023,7 +1023,7 @@ fun transfer_ok() {
 //     _clock.increment_for_testing(INIT_DELAY * 1000);
 //     scenario.next_tx(ADMIN);
 //     {
-//         let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+//         let mut state = scenario.take_shared<mtoken::State<XAGM>>();
 //         let req = scenario.take_shared<mtoken::MintReq>();
 //         mtoken::execute_mint_to(&mut state, req, &_clock, scenario.ctx());
 //         test_scenario::return_shared(state);
@@ -1032,7 +1032,7 @@ fun transfer_ok() {
 //     // add in deny_list
 //     scenario.next_tx(ADMIN);
 //     {
-//         let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+//         let mut state = scenario.take_shared<mtoken::State<XAGM>>();
 //         let mut _deny_list = scenario.take_shared<DenyList>();
 //         mtoken::add_to_blocked_list(&mut state, ALICE, &mut _deny_list, scenario.ctx());
 //         mtoken::add_to_blocked_list(&mut state, BOB, &mut _deny_list, scenario.ctx());
@@ -1043,10 +1043,10 @@ fun transfer_ok() {
 //     // transfer
 //     scenario.next_epoch(ALICE);
 //     {
-//         let mut _xaum = scenario.take_from_sender<Coin<XAUM>>();
-//         let to_be_send = _xaum.split(30, scenario.ctx());
+//         let mut _xagm = scenario.take_from_sender<Coin<XAGM>>();
+//         let to_be_send = _xagm.split(30, scenario.ctx());
 //         transfer::public_transfer(to_be_send, BOB);
-//         scenario.return_to_sender(_xaum);
+//         scenario.return_to_sender(_xagm);
 //     };
 
 //     clock::destroy_for_testing(_clock);

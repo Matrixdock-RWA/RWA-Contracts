@@ -24,7 +24,7 @@ PtbMoveCall = { git = "https://github.com/LayerZero-Labs/LayerZero-v2.git", subd
 # Call = { local = "../../../../../LayerZero-v2/packages/layerzero-v2/sui/contracts/dynamic-call/call" }
 # Utils = { local = "../../../../../LayerZero-v2/packages/layerzero-v2/sui/contracts/utils" }
 MToken = { local = "../mtoken" }
-XAUM = { local = "../xaum" }
+XAGM = { local = "../xagm" }
 
 
 # To resolve a version conflict and force a specific version for dependency

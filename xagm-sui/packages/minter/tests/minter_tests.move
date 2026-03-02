@@ -3,13 +3,13 @@ module minter::minter_tests;
 
 use minter::minter;
 use std::type_name;
+use std::unit_test::assert_eq;
 use sui::clock;
 use sui::coin;
 use sui::event;
 use sui::package::{test_publish, UpgradeCap};
 use sui::sui::SUI;
 use sui::test_scenario as ts;
-use std::unit_test::assert_eq;
 
 const OWNER: address = @0xAD;
 const ALICE: address = @0xA;
@@ -17,7 +17,6 @@ const POOLA: address = @0xB;
 const POOLB: address = @0xC;
 const BOB: address = @0xD;
 const VERSION: u64 = 2;
-const EXTRADATA: vector<u8> = b"DATA";
 
 public struct USDT has drop {}
 
@@ -111,7 +110,6 @@ fun test_minter() {
             10,
             5,
             999,
-            EXTRADATA,
             &_clock,
             ts.ctx(),
         );
@@ -127,7 +125,6 @@ fun test_minter() {
                 100,
                 10,
                 5,
-                EXTRADATA,
             ),
         );
         transfer::public_transfer(usdt, ALICE);
@@ -153,7 +150,6 @@ fun test_minter() {
             10,
             5,
             999,
-            EXTRADATA,
             &_clock,
             ts.ctx(),
         );
@@ -169,7 +165,6 @@ fun test_minter() {
                 100,
                 10,
                 5,
-                EXTRADATA,
             ),
         );
         transfer::public_transfer(sui, ALICE);
@@ -216,7 +211,6 @@ fun invalid_token_for_mint_request() {
             10,
             5,
             999,
-            EXTRADATA,
             &_clock,
             ts.ctx(),
         );
@@ -255,7 +249,6 @@ fun insufficient_token_balance_for_mint_request() {
             10,
             5,
             999,
-            EXTRADATA,
             &_clock,
             ts.ctx(),
         );
@@ -294,7 +287,6 @@ fun invalid_timestamp_for_mint_request() {
             10,
             5,
             900,
-            EXTRADATA,
             &_clock,
             ts.ctx(),
         );
@@ -343,7 +335,6 @@ fun invalid_token_for_mint_when_remove_accepted_token() {
             10,
             5,
             1000,
-            EXTRADATA,
             &_clock,
             ts.ctx(),
         );
@@ -382,7 +373,6 @@ fun invalid_token_for_redeem_request() {
             10,
             5,
             999,
-            EXTRADATA,
             &_clock,
             ts.ctx(),
         );
@@ -421,7 +411,6 @@ fun invalid_timestamp_for_redeem_request() {
             10,
             5,
             900,
-            EXTRADATA,
             &_clock,
             ts.ctx(),
         );
@@ -460,7 +449,6 @@ fun insufficient_token_balance_for_redeem_request() {
             10,
             5,
             999,
-            EXTRADATA,
             &_clock,
             ts.ctx(),
         );

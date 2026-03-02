@@ -16,7 +16,7 @@ const BOB: address = @0xB0B;
 fun init_messenger_oapp(): test_scenario::Scenario {
     let mut scenario = test_scenario::begin(ADMIN);
     {
-        // xaum::init_for_testing(scenario.ctx());
+        // xagm::init_for_testing(scenario.ctx());
         messenger_oapp::init_for_testing(scenario.ctx());
         // endpoint_v2::init_for_test(scenario.ctx());
     };

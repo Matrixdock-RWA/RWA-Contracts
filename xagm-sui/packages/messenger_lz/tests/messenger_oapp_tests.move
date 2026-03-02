@@ -19,7 +19,7 @@ use sui::sui::SUI;
 use sui::test_scenario;
 use utils::bytes32;
 use utils::package;
-use xaum::xaum::{Self, XAUM};
+use xagm::xagm::{Self, XAGM};
 
 // test addresses
 const SYS: address = @0x0;
@@ -32,7 +32,7 @@ fun init_messenger_oapp(): test_scenario::Scenario {
     deny_list::create_for_testing(scenario.ctx());
     scenario.next_tx(ADMIN);
     {
-        xaum::init_for_testing(scenario.ctx());
+        xagm::init_for_testing(scenario.ctx());
         messenger_oapp::init_for_testing(scenario.ctx());
         endpoint_v2::init_for_test(scenario.ctx());
     };
@@ -165,7 +165,7 @@ fun create_new_messenger_cap(
 ) {
     scenario.next_tx(caller);
     {
-        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let mut mt_state = scenario.take_shared<MtState<XAGM>>();
         mt_state.cc_new_messenger_cap(holder, scenario.ctx());
         test_scenario::return_shared(mt_state);
     };
@@ -190,7 +190,7 @@ fun send_mint_budget(
     scenario.next_tx(caller);
     {
         let state = scenario.take_shared<State>();
-        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let mut mt_state = scenario.take_shared<MtState<XAGM>>();
         let mut my_oapp = scenario.take_shared<OApp>();
         let (_call, _send_ctx) = state.send_mint_budget(
             &mut mt_state,
@@ -212,13 +212,13 @@ fun send_token(
     scenario: &mut test_scenario::Scenario,
     caller: address,
     dst_eid: u32,
-    token: Coin<XAUM>,
+    token: Coin<XAGM>,
     receiver: vector<u8>,
 ): (Call<SendParam, MessagingReceipt>, SendContext) {
     scenario.next_tx(caller);
     {
         let state = scenario.take_shared<State>();
-        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let mut mt_state = scenario.take_shared<MtState<XAGM>>();
         let mut my_oapp = scenario.take_shared<OApp>();
         let (_call, _send_ctx) = state.send_token(
             &mut mt_state,
@@ -403,7 +403,7 @@ fun send_mint_budget_ok() {
 
     scenario.next_tx(ADMIN);
     {
-        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let mut mt_state = scenario.take_shared<MtState<XAGM>>();
         mt_state.set_mint_budget(10000);
         test_scenario::return_shared(mt_state);
     };
@@ -424,7 +424,7 @@ fun send_token_ok() {
 
     scenario.next_tx(ADMIN);
     {
-        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let mut mt_state = scenario.take_shared<MtState<XAGM>>();
         let token = mt_state.mint_for_testing(200, scenario.ctx());
         test_scenario::return_shared(mt_state);
 
@@ -451,7 +451,7 @@ fun send_token_err_paused() {
 
     scenario.next_tx(ADMIN);
     {
-        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let mut mt_state = scenario.take_shared<MtState<XAGM>>();
         let token = mt_state.mint_for_testing(200, scenario.ctx());
         test_scenario::return_shared(mt_state);
 
@@ -476,7 +476,7 @@ fun send_token_err_receiver_len_mismatch() {
 
     scenario.next_tx(ADMIN);
     {
-        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let mut mt_state = scenario.take_shared<MtState<XAGM>>();
         let token = mt_state.mint_for_testing(200, scenario.ctx());
         test_scenario::return_shared(mt_state);
 
@@ -497,7 +497,7 @@ fun lz_receive_info_ok() {
     scenario.next_tx(ADMIN);
     {
         let state = scenario.take_shared<State>();
-        let mt_state = scenario.take_shared<MtState<XAUM>>();
+        let mt_state = scenario.take_shared<MtState<XAGM>>();
         let my_oapp = scenario.take_shared<OApp>();
         let info = ptb_builder::lz_receive_info(&state, &mt_state, &my_oapp);
         std::debug::print(&info);
@@ -536,7 +536,7 @@ fun lz_receive_mint_budget_ok() {
     scenario.next_tx(ADMIN);
     {
         let mut state = scenario.take_shared<State>();
-        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let mut mt_state = scenario.take_shared<MtState<XAGM>>();
         let my_oapp = scenario.take_shared<OApp>();
 
         let endpoint = scenario.take_shared<EndpointV2>();
@@ -613,7 +613,7 @@ fun handle_cc_receive_ok() {
     // blocked case
     scenario.next_tx(ADMIN);
     {
-        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let mut mt_state = scenario.take_shared<MtState<XAGM>>();
         let token = mt_state.mint_for_testing(100, scenario.ctx());
         test_scenario::return_shared(mt_state);
 
@@ -626,7 +626,7 @@ fun handle_cc_receive_ok() {
     // blocked again
     scenario.next_tx(ADMIN);
     {
-        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let mut mt_state = scenario.take_shared<MtState<XAGM>>();
         let token = mt_state.mint_for_testing(200, scenario.ctx());
         test_scenario::return_shared(mt_state);
 
@@ -656,7 +656,7 @@ fun claim_blocked_token_ok() {
     let mut scenario = init_messenger_oapp();
     scenario.next_tx(ADMIN);
     {
-        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let mut mt_state = scenario.take_shared<MtState<XAGM>>();
         let token = mt_state.mint_for_testing(500, scenario.ctx());
         test_scenario::return_shared(mt_state);
 
@@ -686,7 +686,7 @@ fun claim_blocked_token_err_still_blocked() {
     scenario.next_tx(ADMIN);
     {
         let mut _deny_list = scenario.take_shared<DenyList>();
-        let mut mt_state = scenario.take_shared<MtState<XAUM>>();
+        let mut mt_state = scenario.take_shared<MtState<XAGM>>();
         mt_state.add_to_blocked_list(ALICE, &mut _deny_list, scenario.ctx());
         let token = mt_state.mint_for_testing(100, scenario.ctx());
         test_scenario::return_shared(mt_state);

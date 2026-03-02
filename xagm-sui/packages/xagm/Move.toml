@@ -1,5 +1,5 @@
 [package]
-name = "XAUM"
+name = "XAGM"
 edition = "2024.beta" # edition = "legacy" to use legacy (pre-2024) Move
 # license = ""           # e.g., "MIT", "GPL", "Apache 2.0"
 # authors = ["..."]      # e.g., ["Joe Smith (joesmith@noemail.com)", "John Snow (johnsnow@noemail.com)"]
@@ -19,7 +19,7 @@ MToken = { local = "../mtoken" }
 # Override = { local = "../conflicting/version", override = true }
 
 [addresses]
-xaum = "0x0"
+xagm = "0x0"
 # message_codec = "0x0"
 
 # Named addresses will be accessible in Move as `@name`. They're also exported:
