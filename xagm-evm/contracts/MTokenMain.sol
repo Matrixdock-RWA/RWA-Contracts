@@ -10,7 +10,7 @@ contract MTokenMain is MToken {
     using SafeCast for uint256;
     using SafeCast for int256;
 
-    uint256 constant ORACLE_OFFLINE_THRESHOLD = 2 days;
+    uint256 constant ORACLE_OFFLINE_THRESHOLD = 3 days;
 
     event SetReserveFeedRequest(address oldAddr, address newAddr, uint64 et);
     event SetReserveFeedEffected(address newAddr);
@@ -20,6 +20,7 @@ contract MTokenMain is MToken {
     event SetFeeCollectorEffected(address newAddr);
     event ReconcileSupply(uint64 lastReconcileTime, uint64 thisReconcileTime, uint256 amount);
     error TooEarlyToReconcile();
+    error MintBudgetNotZero();
 
     error NotFeeCollector(address addr);
     error ReserveNotEnough(int256 maxOzAmount, uint256 ozAmount);
@@ -171,6 +172,9 @@ contract MTokenMain is MToken {
     // mint fee tokens to the fee collector
     function reconcileSupply(uint112 amount) public onlyFeeCollector {
         _checkZeroValue(amount);
+        if (mintBudget > 0) {
+            revert MintBudgetNotZero();
+        }
 
         // check and update lastReconcileTime
         uint64 _lastReconcileTime = lastReconcileTime;

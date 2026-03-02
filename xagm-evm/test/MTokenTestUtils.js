@@ -56,9 +56,10 @@ export async function deployTestFixture() {
       kind: "uups",
       constructorArgs: [ccipRouter.target, lzEndpoint.target],
       unsafeAllow: [
-        'constructor', 
-        'state-variable-immutable', 
+        'constructor',
+        'state-variable-immutable',
         'missing-initializer',
+        'incorrect-initializer-order',
       ],
       // unsafeSkipStorageCheck: true
     },
@@ -69,9 +70,10 @@ export async function deployTestFixture() {
       kind: "uups",
       constructorArgs: [ccipRouter.target, lzEndpoint.target],
       unsafeAllow: [
-        'constructor', 
-        'state-variable-immutable', 
+        'constructor',
+        'state-variable-immutable',
         'missing-initializer',
+        'incorrect-initializer-order',
       ],
       // unsafeSkipStorageCheck: true
     },

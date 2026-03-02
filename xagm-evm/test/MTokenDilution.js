@@ -35,6 +35,9 @@ describe("MTokenDilution", function () {
       {kind: "uups"}
     );
 
+    await mt.setFallbackFeed(reserveFeed.target);
+    await mt.setFallbackFeed(reserveFeed.target);
+
     mt.ozPerTokenStr = async function () {
       return ethers.formatUnits(await this.ozPerToken(), 9);
     };
@@ -259,6 +262,13 @@ describe("MTokenDilution", function () {
         .to.be.revertedWithCustomError(mt, "ZeroValue");
     });
 
+    it("reconcile: MintBudgetNotZero", async function () {
+      const {mt, operator, feeCollector} = await loadFixture(deployTestFixture);
+      await mt.connect(operator).increaseMintBudget(123);
+      await expect(mt.connect(feeCollector).reconcileSupply(456))
+        .to.be.revertedWithCustomError(mt, "MintBudgetNotZero");
+    });
+
     it("reconcile: TooEarlyToReconcile", async function () {
       const {mt, feeCollector} = await loadFixture(deployTestFixture);
       expect(await mt.lastReconcileTime()).to.equal(currDayStartTS);
@@ -271,11 +281,13 @@ describe("MTokenDilution", function () {
       const {mt, reserveFeed, operator, feeCollector} = await loadFixture(deployTestFixture);
       await reserveFeed.setReserve(10000e9);
       await mt.connect(operator).increaseMintBudget(10000e9);
+      await mt.connect(operator).mintTo(feeCollector.address, 10000e9, 123);
+      await mt.connect(operator).mintTo(feeCollector.address, 10000e9, 123);
 
-      await time.increase(SECONDS_PER_DAY); // 1d
+      await time.increase(SECONDS_PER_DAY * 100); // 100d
       await expect(mt.connect(feeCollector).reconcileSupply(1000e9))
         .to.be.revertedWithCustomError(mt, "ReserveNotEnough")
-        .withArgs(10000e9, 10999924661000n);
+        .withArgs(10000e9, 10992465759000n);
     });
 
     it("reconcile: ok", async function () {
@@ -286,6 +298,8 @@ describe("MTokenDilution", function () {
 
       await reserveFeed.setReserve(ozAmount);
       await mt.connect(operator).increaseMintBudget(ozAmount);
+      await mt.connect(operator).mintTo(feeCollector.address, ozAmount, 123);
+      await mt.connect(operator).mintTo(feeCollector.address, ozAmount, 123);
       expect(await mt.totalTokenObligation()).to.equal(ozAmount);
 
       await time.increase(SECONDS_PER_DAY); // 1d
@@ -297,10 +311,6 @@ describe("MTokenDilution", function () {
           currDayStartTS, // lastReconcileTime
           currDayStartTS + SECONDS_PER_DAY, // thisReconcileTime
           feeAmount);
-    });
-
-    it("increaseMintBudget", async function () {
-      // TODO
     });
 
   });
