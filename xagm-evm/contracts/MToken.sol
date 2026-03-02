@@ -126,7 +126,6 @@ contract MToken is MTokenBase, ICCClient {
     error DelayTooSmall();
     error DelayTooLarge();
     error InvalidReceiver(uint256 length);
-    error PrecisionLost();
     error AnnualFeeRateTooLarge();
     error OzPerTokenBaseTooLarge();
 
