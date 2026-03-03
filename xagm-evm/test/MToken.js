@@ -8,7 +8,10 @@ const {
   deployTestFixture, getTS,
   addrTo32Bytes,
   zeroAddr, fakeSolanaAddr, fakeSolanaAddr2,
+  INITIAL_OZ_PER_TOKEN,
 } = require("./MTokenTestUtils.js");
+
+const ozPerToken = INITIAL_OZ_PER_TOKEN;
 
 function calcMintToReqId(receiverAddr, amt, nonce) {
   const req = ethers.AbiCoder.defaultAbiCoder().encode(
@@ -145,8 +148,8 @@ describe("MTokenFT", function () {
         ["NotOperator", mt.connect(alice).addToBlockedList(alice.address)],
         ["NotOperator", mt.connect(alice).removeFromBlockedList(alice.address)],
         // onlyOperatorAndNft
-        ["NotOperator", mt.connect(alice).mintTo(alice.address, 1, 2)],
-        ["NotOperator", mt.connect(alice).redeem(123, alice.address, "0x")],
+        ["NotOperator", mt.connect(alice).mintTo(alice.address, 1, 2, ozPerToken)],
+        ["NotOperator", mt.connect(alice).redeem(123, alice.address, ozPerToken, "0x")],
         // onlyMessenger
         ["NotMessenger", mt.connect(alice).ccSendToken(alice.address, bob.address, 123)],
         ["NotMessenger", mt.connect(alice).ccSendMintBudget(123)],
@@ -203,48 +206,48 @@ describe("MTokenFT", function () {
           const _op = operator;
 
           // prepare to mint1
-          await expect(mt.connect(_op).mintTo(alice.address, 10001, 1))
+          await expect(mt.connect(_op).mintTo(alice.address, 10001, 1, ozPerToken))
             .to.emit(mt, "MintRequest")
             .withArgs(alice.address, 10001, 1);
 
           // prepare to mint2
-          await expect(mt.connect(_op).mintTo(alice.address, 10002, 2))
+          await expect(mt.connect(_op).mintTo(alice.address, 10002, 2, ozPerToken))
             .to.emit(mt, "MintRequest")
             .withArgs(alice.address, 10002, 2);
 
           // prepare to mint3
-          await mt.connect(_op).mintTo(alice.address, 50001, 3);
+          await mt.connect(_op).mintTo(alice.address, 50001, 3, ozPerToken);
 
           // not enough delay
-          await expect(mt.connect(_op).mintTo(alice.address, 10002, 2))
+          await expect(mt.connect(_op).mintTo(alice.address, 10002, 2, ozPerToken))
             .to.be.revertedWithCustomError(mt, "TooEarlyToExecute")
             .withArgs(alice.address, 10002, 2);
 
           // not enough bugdet
           await time.increase(10000);
-          await expect(mt.connect(_op).mintTo(alice.address, 50001, 3))
+          await expect(mt.connect(_op).mintTo(alice.address, 50001, 3, ozPerToken))
             .to.be.revertedWithCustomError(mt, "MintBudgetNotEnough")
             .withArgs(50000, 50001);
 
           // finish mint1
-          await expect(mt.connect(_op).mintTo(alice.address, 10001, 1))
+          await expect(mt.connect(_op).mintTo(alice.address, 10001, 1, ozPerToken))
             .to.changeTokenBalances(mt, [zeroAddr, alice.address], [0, 10001]);
           expect(await mt.mintBudget()).to.equal(39999);
 
           // finish mint2
-          await expect(mt.connect(_op).mintTo(alice.address, 10002, 2))
+          await expect(mt.connect(_op).mintTo(alice.address, 10002, 2, ozPerToken))
             .to.changeTokenBalances(mt, [zeroAddr, alice.address], [0, 10002]);
           expect(await mt.mintBudget()).to.equal(29997);
 
           // redeem1
           await mt.connect(alice).transfer(operator.address, 4321);
-          await expect(mt.connect(_op).redeem(4321, alice.address, "0xc001"))
+          await expect(mt.connect(_op).redeem(4321, alice.address, ozPerToken, "0xc001"))
             .to.changeTokenBalances(mt, [operator.address, zeroAddr], [-4321, 0])
           expect(await mt.mintBudget()).to.equal(29997 + 4321);
 
           // redeem2
           await mt.connect(alice).transfer(operator.address, 1357);
-          await expect(mt.connect(_op).redeem(1357, alice.address, "0xc002"))
+          await expect(mt.connect(_op).redeem(1357, alice.address, ozPerToken, "0xc002"))
             .to.emit(mt, "Redeem").withArgs(alice.address, 1357, "0xc002");
           expect(await mt.mintBudget()).to.equal(29997 + 4321 + 1357);
         });
@@ -263,9 +266,9 @@ describe("MTokenFT", function () {
       expect(await mt.isBlocked(alice.address)).to.equal(true);
 
       // mintTo
-      await mt.connect(_op).mintTo(alice.address, 10001, 1)
+      await mt.connect(_op).mintTo(alice.address, 10001, 1, ozPerToken)
       await time.increase(10000);
-      await expect(mt.connect(_op).mintTo(alice.address, 10001, 1))
+      await expect(mt.connect(_op).mintTo(alice.address, 10001, 1, ozPerToken))
         .to.changeTokenBalances(mt, [zeroAddr, alice.address], [0, 10001]);
     });
 
@@ -279,7 +282,7 @@ describe("MTokenFT", function () {
             .to.be.revertedWithCustomError(mt, "NotRevoker")
             .withArgs(alice.address);
 
-      const tx1 = await mt.connect(operator).mintTo(alice.address, 10001, 1);
+      const tx1 = await mt.connect(operator).mintTo(alice.address, 10001, 1, ozPerToken);
       const ts1 = await getTS(tx1);
       const reqId1 = calcMintToReqId(alice.address, 10001, 1);
       expect(await mt.requestMap(reqId1)).to.equal(ts1);
@@ -293,8 +296,8 @@ describe("MTokenFT", function () {
     it("transfer", async function () {
       const { mt, operator, alice, bob } = await loadFixture(deployTestFixture);
       await mt.connect(operator).increaseMintBudget(50000);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
 
       await mt.connect(operator).addToBlockedList(alice.address);
       await expect(mt.connect(alice).transfer(bob.address, 123))
@@ -313,8 +316,8 @@ describe("MTokenFT", function () {
     it("transferFrom", async function () {
       const { mt, owner, operator, alice, bob } = await loadFixture(deployTestFixture);
       await mt.connect(operator).increaseMintBudget(50000);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
       await mt.connect(alice).approve(bob.address, 10000);
 
       await mt.connect(operator).addToBlockedList(alice.address);
@@ -334,8 +337,8 @@ describe("MTokenFT", function () {
     it("multiTransfer", async function () {
       const { mt, operator, alice } = await loadFixture(deployTestFixture);
       await mt.connect(operator).increaseMintBudget(50000);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
 
       const a1 = "0x00000000000000000000000000000000000000a1";
       const a2 = "0x00000000000000000000000000000000000000a2";
@@ -405,8 +408,8 @@ describe("MTokenFT", function () {
       const { mt, reserveFeed, owner, operator, alice, bob } = await loadFixture(deployTestFixture);
       await reserveFeed.setReserve(100000);
       await mt.connect(operator).increaseMintBudget(50000);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
       await mt.setMessenger(owner);
       await mt.setMessenger(owner);
 
@@ -599,7 +602,7 @@ describe("MTokenFT", function () {
 
       // reserve feed is broken
       await reserveFeed.setReserve(50000);
-      await time.increase(48 * 3600);
+      await time.increase(72 * 3600);
 
       // no fallback feed
       await expect(mt.connect(operator).increaseMintBudget(60000))

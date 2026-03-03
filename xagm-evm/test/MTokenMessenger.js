@@ -3,12 +3,14 @@ const {
 } = require("@nomicfoundation/hardhat-toolbox/network-helpers");
 const { expect } = require("chai");
 const {
-  deployTestFixture, getTS,
+  deployTestFixture,
   addrTo32Bytes,
   zeroAddr, fakeSolanaAddr, fakeSolanaAddr2,
+  INITIAL_OZ_PER_TOKEN,
 } = require("./MTokenTestUtils.js");
 
 const zeroBytes32 = '0x0000000000000000000000000000000000000000000000000000000000000000';
+const ozPerToken = INITIAL_OZ_PER_TOKEN;
 
 // pad zeros to left
 function addrToBytes32(addr) {
@@ -138,8 +140,8 @@ describe("MTokenMessenger", function () {
       await mt.setMessenger(mtMsg.target);
       await reserveFeed.setReserve(100000);
       await mt.connect(operator).increaseMintBudget(50000);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
 
       // ok
       await expect(
@@ -325,8 +327,8 @@ describe("MTokenMessenger", function () {
       await mt.setMessenger(mtMsg);
       await reserveFeed.setReserve(100000);
       await mt.connect(operator).increaseMintBudget(50000);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
 
       await expect(mtMsg.connect(alice).lzSendTokenToChain(123, bob.address, 10000, "0x12"))
         .to.be.revertedWithCustomError(mtMsg, "NoPeer").withArgs(123);
@@ -356,8 +358,8 @@ describe("MTokenMessenger", function () {
       await mt.setMessenger(mtMsg);
       await reserveFeed.setReserve(1000000);
       await mt.connect(operator).increaseMintBudget(500000);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
       await mtMsg.setPeer(123, addrToBytes32(mtMsgSide.target));
 
       const nativeFee2 = await mtMsg.lzCalculateSendMintBudgetFee(
@@ -383,8 +385,8 @@ describe("MTokenMessenger", function () {
       await mt.setMessenger(mtMsg.target);
       await reserveFeed.setReserve(100000);
       await mt.connect(operator).increaseMintBudget(50000);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
 
       // do not return extra ether
       await expect(
@@ -472,8 +474,8 @@ describe("MTokenMessenger", function () {
       await mt.setMessenger(mtMsg.target);
       await reserveFeed.setReserve(100000);
       await mt.connect(operator).increaseMintBudget(50000);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
 
       // ok
       await expect(

@@ -5,13 +5,14 @@ const {
 const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 const { expect } = require("chai");
 const {
-  zeroAddr
+  zeroAddr,
+  SECONDS_PER_DAY,
+  DEFAULT_FEE_RATE_ANNUAL, // 0.25%
+  DEFAULT_OZ_PER_TOKEN_BASE, // 1.0
+  INITIAL_OZ_PER_TOKEN,
 } = require("./MTokenTestUtils.js");
 
-const SECONDS_PER_DAY = 24 * 60 * 60;
-const DEFAULT_FEE_RATE_ANNUAL = 0.0025e9; // 0.25%
-const DEFAULT_OZ_PER_TOKEN_BASE = 1.0e9; // 1.0
-
+const ozPerToken = INITIAL_OZ_PER_TOKEN;
 const currDayStartTS = Math.floor((Date.now() / 1000 / SECONDS_PER_DAY)) * SECONDS_PER_DAY;
 
 
@@ -191,8 +192,8 @@ describe("MTokenDilution", function () {
   it("forcedTransfer: ok", async function () {
     const {mt, owner, operator, alice, bob} = await loadFixture(deployTestFixture);
     await mt.connect(operator).ccReceiveMintBudgetManually(1000e9);
-    await mt.connect(operator).mintTo(alice.address, 1000e9, 123);
-    await mt.connect(operator).mintTo(alice.address, 1000e9, 123);
+    await mt.connect(operator).mintTo(alice.address, 1000e9, 123, ozPerToken);
+    await mt.connect(operator).mintTo(alice.address, 1000e9, 123, ozPerToken);
 
     await expect(mt.connect(owner).forcedTransfer(alice.address, bob.address, 200e9, "0x12", "0x34"))
       .to.emit(mt, "ForcedTransfer")
@@ -224,6 +225,32 @@ describe("MTokenDilution", function () {
       await expect(mt.connect(operator).ccReceiveMintBudgetManually(1000e9))
         .to.emit(mt, "CCReceiveMintBudgetManually")
         .withArgs(1000e9);
+    });
+
+  });
+
+  describe("expectedOzPerToken", function () {
+
+    it("mint request", async function () {
+      const {mt, operator, alice} = await loadFixture(deployTestFixture);
+      await expect(mt.connect(operator).mintTo(alice.address, 1000e9, 123, ozPerToken+1))
+        .to.be.revertedWithCustomError(mt, "UnexpectedOzPerToken")
+        .withArgs(ozPerToken+1, ozPerToken);
+    });
+
+    it("mint execute", async function () {
+      const {mt, operator, alice} = await loadFixture(deployTestFixture);
+      await mt.connect(operator).mintTo(alice.address, 1000e9, 123, ozPerToken); // ok
+      await expect(mt.connect(operator).mintTo(alice.address, 1000e9, 123, ozPerToken-1))
+        .to.be.revertedWithCustomError(mt, "UnexpectedOzPerToken")
+        .withArgs(ozPerToken-1, ozPerToken);
+    });
+
+    it("redeem", async function () {
+      const {mt, operator, alice} = await loadFixture(deployTestFixture);
+      await expect(mt.connect(operator).redeem(1000e9, alice.address, ozPerToken+2, "0x12"))
+        .to.be.revertedWithCustomError(mt, "UnexpectedOzPerToken")
+        .withArgs(ozPerToken+2, ozPerToken);
     });
 
   });
@@ -281,8 +308,8 @@ describe("MTokenDilution", function () {
       const {mt, reserveFeed, operator, feeCollector} = await loadFixture(deployTestFixture);
       await reserveFeed.setReserve(10000e9);
       await mt.connect(operator).increaseMintBudget(10000e9);
-      await mt.connect(operator).mintTo(feeCollector.address, 10000e9, 123);
-      await mt.connect(operator).mintTo(feeCollector.address, 10000e9, 123);
+      await mt.connect(operator).mintTo(feeCollector.address, 10000e9, 123, ozPerToken);
+      await mt.connect(operator).mintTo(feeCollector.address, 10000e9, 123, ozPerToken);
 
       await time.increase(SECONDS_PER_DAY * 100); // 100d
       await expect(mt.connect(feeCollector).reconcileSupply(1000e9))
@@ -298,8 +325,8 @@ describe("MTokenDilution", function () {
 
       await reserveFeed.setReserve(ozAmount);
       await mt.connect(operator).increaseMintBudget(ozAmount);
-      await mt.connect(operator).mintTo(feeCollector.address, ozAmount, 123);
-      await mt.connect(operator).mintTo(feeCollector.address, ozAmount, 123);
+      await mt.connect(operator).mintTo(feeCollector.address, ozAmount, 123, ozPerToken);
+      await mt.connect(operator).mintTo(feeCollector.address, ozAmount, 123, ozPerToken);
       expect(await mt.totalTokenObligation()).to.equal(ozAmount);
 
       await time.increase(SECONDS_PER_DAY); // 1d

@@ -18,6 +18,7 @@ export async function getTS(tx) {
 export const SECONDS_PER_DAY = 24 * 60 * 60;
 export const DEFAULT_FEE_RATE_ANNUAL = 0.0025e9; // 0.25%
 export const DEFAULT_OZ_PER_TOKEN_BASE = 1.0e9; // 1.0
+export const INITIAL_OZ_PER_TOKEN = 1.0e9; // 1.0
 
 export async function deployTestFixture() {
   const [owner, operator, feeCollector, alice, bob] = await ethers.getSigners();

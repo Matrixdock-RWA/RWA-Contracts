@@ -128,6 +128,7 @@ contract MToken is MTokenBase, ICCClient {
     error InvalidReceiver(uint256 length);
     error AnnualFeeRateTooLarge();
     error OzPerTokenBaseTooLarge();
+    error UnexpectedOzPerToken(uint64 expectedOzPerToken, uint64 actualOzPerToken);
 
     modifier onlyNotBlocked() {
         _checkBlocked(_msgSender());
@@ -174,6 +175,13 @@ contract MToken is MTokenBase, ICCClient {
     function _checkZeroValue(uint256 value) internal pure {
         if (value == 0) {
             revert ZeroValue();
+        }
+    }
+
+    function _checkOzPerToken(uint64 expectedOzPerToken) private view {
+        uint64 actualOzPerToken = ozPerToken();
+        if (expectedOzPerToken != actualOzPerToken) {
+            revert UnexpectedOzPerToken(expectedOzPerToken, actualOzPerToken);
         }
     }
 
@@ -366,8 +374,11 @@ contract MToken is MTokenBase, ICCClient {
     function mintTo(
         address receiver,
         uint256 amount,
-        uint256 nonce
+        uint256 nonce,
+        uint64 expectedOzPerToken
     ) public onlyOperator returns (bool) {
+        _checkOzPerToken(expectedOzPerToken);
+
         bytes32 req = keccak256(abi.encode(receiver, amount, nonce));
         uint256 et = requestMap[req];
         if (et == 0) {
@@ -394,8 +405,10 @@ contract MToken is MTokenBase, ICCClient {
     function redeem(
         uint256 amount,
         address customer,
+        uint64 expectedOzPerToken,
         bytes calldata data
     ) public onlyOperator {
+        _checkOzPerToken(expectedOzPerToken);
         _burn(operator, amount);
         emit Redeem(customer, amount, data);
         mintBudget += amount.toUint112();
