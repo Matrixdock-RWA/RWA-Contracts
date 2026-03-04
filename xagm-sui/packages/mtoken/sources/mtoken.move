@@ -35,6 +35,7 @@ const EAnnualFeeRateTooLarge: u64 = 116;
 const EAnnualFeeRateAlreadyInitialized: u64 = 117;
 const EAnnualFeeRateNotInitialized: u64 = 118;
 const EOzPerTokenBaseTooLarge: u64 = 119;
+const EUnexpectedOzPerToken: u64 = 120;
 
 // === Constants ===
 
@@ -171,6 +172,7 @@ public struct MintReq has key {
     id: UID,
     recipient: address,
     amount: u64,
+    expected_oz_per_token: u64,
     et: u64,
 }
 
@@ -536,13 +538,15 @@ entry fun request_mint_to<T>(
     state: &State<T>,
     recipient: address,
     amount: u64,
+    expected_oz_per_token: u64,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
     check_version(state);
     check_operator(state, ctx);
+    check_oz_per_token(state, expected_oz_per_token, clock);
     let et = get_effective_time(state, clock);
-    let req = MintReq { id: object::new(ctx), recipient, amount, et };
+    let req = MintReq { id: object::new(ctx), recipient, amount, expected_oz_per_token, et };
     let req_id = object::id(&req);
 
     transfer::share_object(req);
@@ -559,8 +563,9 @@ entry fun execute_mint_to<T>(
     check_operator(state, ctx);
 
     let req_id = object::id(&req);
-    let MintReq { id, recipient, amount, et } = req;
+    let MintReq { id, recipient, amount, expected_oz_per_token, et } = req;
     check_effective_time(clock, et);
+    check_oz_per_token(state, expected_oz_per_token, clock);
 
     deduct_mint_budget(state, amount);
 
@@ -578,9 +583,16 @@ entry fun revoke_mint_to<T>(state: &State<T>, req: MintReq, ctx: &TxContext) {
 }
 
 // https://docs.sui.io/references/framework/sui-framework/coin#0x2_coin_burn
-entry fun redeem<T>(state: &mut State<T>, to_be_burnt: Coin<T>, ctx: &TxContext) {
+entry fun redeem<T>(
+    state: &mut State<T>,
+    to_be_burnt: Coin<T>,
+    expected_oz_per_token: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
     check_version(state);
     check_operator(state, ctx);
+    check_oz_per_token(state, expected_oz_per_token, clock);
     let from_address = ctx.sender();
     let amount = to_be_burnt.balance().value();
     coin::burn<T>(state.borrow_treasury_cap_mut(), to_be_burnt);
@@ -828,6 +840,11 @@ fun check_non_zero(amount: u64) {
 // _annualFeeRate can not be greater than MAX_ANNUAL_FEE_RATE
 fun check_annual_fee_rate(_annual_fee_rate: u64) {
     assert!(_annual_fee_rate <= MAX_ANNUAL_FEE_RATE, EAnnualFeeRateTooLarge);
+}
+
+fun check_oz_per_token<T>(state: &State<T>, expected_oz_per_token: u64, clock: &Clock) {
+    let actual_oz_per_token = state.oz_per_token(clock);
+    assert!(actual_oz_per_token == expected_oz_per_token, EUnexpectedOzPerToken);
 }
 
 fun deduct_mint_budget<T>(state: &mut State<T>, amount: u64) {

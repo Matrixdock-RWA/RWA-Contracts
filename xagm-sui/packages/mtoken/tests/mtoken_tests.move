@@ -249,7 +249,15 @@ fun request_mint_to(
     scenario.next_tx(caller);
     {
         let state = scenario.take_shared<mtoken::State<XAGM>>();
-        mtoken::request_mint_to(&state, recipient, amount, _clock, scenario.ctx());
+        let oz_per_token = state.oz_per_token(_clock);
+        mtoken::request_mint_to(
+            &state,
+            recipient,
+            amount,
+            oz_per_token,
+            _clock,
+            scenario.ctx(),
+        );
         assert_eq!(event::num_events(), 1);
         test_scenario::return_shared(state);
     };
@@ -815,11 +823,17 @@ fun mint_revoke_ok() {
     scenario.end();
 }
 
-fun redeem(scenario: &mut test_scenario::Scenario, caller: address, to_be_burnt: Coin<XAGM>) {
+fun redeem(
+    scenario: &mut test_scenario::Scenario,
+    caller: address,
+    to_be_burnt: Coin<XAGM>,
+    _clock: &Clock,
+) {
     scenario.next_tx(caller);
     {
         let mut state = scenario.take_shared<mtoken::State<XAGM>>();
-        mtoken::redeem(&mut state, to_be_burnt, scenario.ctx());
+        let oz_per_token = state.oz_per_token(_clock);
+        mtoken::redeem(&mut state, to_be_burnt, oz_per_token, _clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
 }
@@ -829,7 +843,7 @@ fun redeem_err_not_operator() {
     let mut scenario = init_xagm();
     let _clock = clock::create_for_testing(scenario.ctx());
     let to_be_burnt = coin::from_balance(balance::zero<XAGM>(), scenario.ctx());
-    redeem(&mut scenario, ALICE, to_be_burnt);
+    redeem(&mut scenario, ALICE, to_be_burnt, &_clock);
     abort
 }
 
@@ -850,7 +864,14 @@ fun redeem_ok() {
         let mut state = scenario.take_shared<mtoken::State<XAGM>>();
         let mut _xagm = scenario.take_from_sender<Coin<XAGM>>();
         let to_be_burnt = _xagm.split(30, scenario.ctx());
-        mtoken::redeem(&mut state, to_be_burnt, scenario.ctx());
+        let oz_per_token = state.oz_per_token(&_clock);
+        mtoken::redeem(
+            &mut state,
+            to_be_burnt,
+            oz_per_token,
+            &_clock,
+            scenario.ctx(),
+        );
         assert_eq!(event::num_events(), 1);
         assert_eq!(
             event::events_by_type<mtoken::RedeemEvent>().pop_back(),

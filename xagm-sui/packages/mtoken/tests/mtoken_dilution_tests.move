@@ -4,7 +4,9 @@ module mtoken::mtoken_dilution_tests;
 use mtoken::mt::{Self, MT as XAGM};
 use mtoken::mtoken;
 use std::unit_test::assert_eq;
+use sui::balance;
 use sui::clock::{Self, Clock};
+use sui::coin;
 use sui::event;
 use sui::test_scenario::{Self, Scenario};
 
@@ -35,6 +37,18 @@ fun init_xagm(): (Scenario, Clock) {
     let mut _clock = clock::create_for_testing(scenario.ctx());
     _clock.set_for_testing(CURRENT_TIME_MS);
 
+    (scenario, _clock)
+}
+
+fun init_xagm_with_fee_rate(): (Scenario, Clock) {
+    let (mut scenario, _clock) = init_xagm();
+    init_annual_fee_rate(
+        &mut scenario,
+        &_clock,
+        ADMIN,
+        INIT_ANNUAL_FEE_RATE,
+        INIT_OZ_PER_TOKEN_BASE,
+    );
     (scenario, _clock)
 }
 
@@ -134,16 +148,7 @@ fun init_annual_fee_rate_err_already_initialized() {
 
 #[test]
 fun init_annual_fee_rate_ok() {
-    let (mut scenario, _clock) = init_xagm();
-
-    init_annual_fee_rate(
-        &mut scenario,
-        &_clock,
-        ADMIN,
-        INIT_ANNUAL_FEE_RATE,
-        INIT_OZ_PER_TOKEN_BASE,
-    );
-
+    let (mut scenario, _clock) = init_xagm_with_fee_rate();
     scenario.next_tx(ADMIN);
     {
         let state = scenario.take_shared<mtoken::State<XAGM>>();
@@ -152,35 +157,20 @@ fun init_annual_fee_rate_ok() {
         assert_eq!(state.oz_per_token_base(), INIT_OZ_PER_TOKEN_BASE);
         test_scenario::return_shared(state);
     };
-
     clock::destroy_for_testing(_clock);
     scenario.end();
 }
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun update_annual_fee_rate_err_not_owner() {
-    let (mut scenario, _clock) = init_xagm();
-    init_annual_fee_rate(
-        &mut scenario,
-        &_clock,
-        ADMIN,
-        INIT_ANNUAL_FEE_RATE,
-        INIT_OZ_PER_TOKEN_BASE,
-    );
+    let (mut scenario, _clock) = init_xagm_with_fee_rate();
     update_annual_fee_rate(&mut scenario, &_clock, ALICE, 123);
     abort
 }
 
 #[test, expected_failure(abort_code = mtoken::EAnnualFeeRateTooLarge)]
 fun update_annual_fee_rate_err_too_large() {
-    let (mut scenario, _clock) = init_xagm();
-    init_annual_fee_rate(
-        &mut scenario,
-        &_clock,
-        ADMIN,
-        INIT_ANNUAL_FEE_RATE,
-        INIT_OZ_PER_TOKEN_BASE,
-    );
+    let (mut scenario, _clock) = init_xagm_with_fee_rate();
     update_annual_fee_rate(&mut scenario, &_clock, ADMIN, MAX_ANNUAL_FEE_RATE+1);
     abort
 }
@@ -194,15 +184,7 @@ fun update_annual_fee_rate_err_not_initialized() {
 
 #[test]
 fun update_annual_fee_rate_ok() {
-    let (mut scenario, mut _clock) = init_xagm();
-    init_annual_fee_rate(
-        &mut scenario,
-        &_clock,
-        ADMIN,
-        INIT_ANNUAL_FEE_RATE,
-        INIT_OZ_PER_TOKEN_BASE,
-    );
-
+    let (mut scenario, mut _clock) = init_xagm_with_fee_rate();
     let new_annual_fee_rate = INIT_ANNUAL_FEE_RATE*2;
     _clock.increment_for_testing(SECONDS_PER_DAY * 1000 * 3);
     update_annual_fee_rate(&mut scenario, &_clock, ADMIN, new_annual_fee_rate);
@@ -320,14 +302,7 @@ fun cc_receive_mint_budget_manually_ok() {
 
 #[test]
 fun oz_per_token() {
-    let (mut scenario, mut _clock) = init_xagm();
-    init_annual_fee_rate(
-        &mut scenario,
-        &_clock,
-        ADMIN,
-        INIT_ANNUAL_FEE_RATE,
-        INIT_OZ_PER_TOKEN_BASE,
-    );
+    let (mut scenario, mut _clock) = init_xagm_with_fee_rate();
 
     let mut i = 1u64;
     while (i <= 10) {
@@ -372,14 +347,7 @@ fun oz_per_token() {
 
 #[test]
 fun get_oz_amount() {
-    let (mut scenario, mut _clock) = init_xagm();
-    init_annual_fee_rate(
-        &mut scenario,
-        &_clock,
-        ADMIN,
-        INIT_ANNUAL_FEE_RATE,
-        INIT_OZ_PER_TOKEN_BASE,
-    );
+    let (mut scenario, mut _clock) = init_xagm_with_fee_rate();
 
     let token_amt = 1000_000000000u128;
     let oz_ratio_base = OZ_RATIO_BASE as u128;
@@ -402,4 +370,72 @@ fun get_oz_amount() {
 
     clock::destroy_for_testing(_clock);
     scenario.end();
+}
+
+#[test, expected_failure(abort_code = mtoken::EUnexpectedOzPerToken)]
+fun request_mint_to_err_unexpected_oz_per_token() {
+    let (mut scenario, mut _clock) = init_xagm_with_fee_rate();
+    scenario.next_tx(ADMIN);
+    {
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
+        let oz_per_token = state.oz_per_token(&_clock);
+        state.request_mint_to(
+            ALICE,
+            123,
+            oz_per_token+1,
+            &_clock,
+            scenario.ctx(),
+        );
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::EUnexpectedOzPerToken)]
+fun execute_mint_to_err_unexpected_oz_per_token() {
+    let (mut scenario, mut _clock) = init_xagm_with_fee_rate();
+    _clock.increment_for_testing(21 * 3600 * 1000);
+
+    // request
+    scenario.next_tx(ADMIN);
+    {
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
+        let oz_per_token = state.oz_per_token(&_clock);
+        state.request_mint_to(
+            ALICE,
+            123,
+            oz_per_token,
+            &_clock,
+            scenario.ctx(),
+        );
+        test_scenario::return_shared(state);
+    };
+
+    // execute
+    _clock.increment_for_testing(1800 * 1000);
+    scenario.next_tx(ADMIN);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
+        let req = scenario.take_shared<mtoken::MintReq>();
+        state.execute_mint_to(req, &_clock, scenario.ctx());
+    };
+
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::EUnexpectedOzPerToken)]
+fun redeem_err_unexpected_oz_per_token() {
+    let (mut scenario, mut _clock) = init_xagm_with_fee_rate();
+    scenario.next_tx(ADMIN);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
+        let to_be_burnt = coin::from_balance(balance::zero<XAGM>(), scenario.ctx());
+        let oz_per_token = state.oz_per_token(&_clock);
+        state.redeem(
+            to_be_burnt,
+            oz_per_token-1,
+            &_clock,
+            scenario.ctx(),
+        )
+    };
+    abort
 }
