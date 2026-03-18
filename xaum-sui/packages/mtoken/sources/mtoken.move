@@ -70,6 +70,13 @@ public struct SetDelayEvent has copy, drop {
     req_id: ID,
 }
 
+// Structs are part of a module's public interface and cannot be removed or changed during a 'compatible' upgrade.
+#[allow(unused_field)]
+public struct ChangeMintBudgetEvent has copy, drop {
+    delta: u64,
+    is_incr: bool,
+}
+
 public struct MintEvent has copy, drop {
     to_address: address,
     amount: u64,
