@@ -300,6 +300,17 @@ fun cc_receive_mint_budget_manually_ok() {
     scenario.end();
 }
 
+#[test, expected_failure(abort_code = mtoken::EAnnualFeeRateNotInitialized)]
+fun oz_per_token_err_not_initialized() {
+    let (mut scenario, _clock) = init_xagm();
+    scenario.next_tx(ADMIN);
+    {
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
+        state.oz_per_token(&_clock);
+    };
+    abort
+}
+
 #[test]
 fun oz_per_token() {
     let (mut scenario, mut _clock) = init_xagm_with_fee_rate();

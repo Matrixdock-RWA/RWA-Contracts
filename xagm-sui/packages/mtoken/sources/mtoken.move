@@ -786,6 +786,7 @@ public fun total_supply<T>(state: &State<T>): u64 {
 
 // ozPerTokenBase - annualFeeRate*daysElapsed/365
 public fun oz_per_token<T>(state: &State<T>, clock: &Clock): u64 {
+    assert!(state.oz_per_token_base_time > 0, EAnnualFeeRateNotInitialized);
     let seconds_elapsed = clock.timestamp_ms() / 1000 - state.oz_per_token_base_time;
     let days_elapsed = seconds_elapsed / SECONDS_PER_DAY;
     state.oz_per_token_base - (state.annual_fee_rate * days_elapsed) / DAYS_PER_YEAR

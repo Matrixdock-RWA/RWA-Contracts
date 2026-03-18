@@ -26,14 +26,25 @@ const ADMIN: address = @0xAD;
 const ALICE: address = @0xA11CE;
 const BOB: address = @0xB0B;
 
-fun init_xagm(): test_scenario::Scenario {
+fun init_xagm(): (test_scenario::Scenario, Clock) {
     let mut scenario = test_scenario::begin(SYS);
     deny_list::create_for_testing(scenario.ctx());
     scenario.next_tx(ADMIN);
     {
         mt::init_for_testing(scenario.ctx(), INIT_DELAY);
     };
-    scenario
+
+    let mut _clock = clock::create_for_testing(scenario.ctx());
+    _clock.set_for_testing(1773816560052); // 2026-03-18T06:59:47.036Z
+
+    scenario.next_tx(ADMIN);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
+        state.init_annual_fee_rate(0, 1000000000, &_clock, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+
+    (scenario, _clock)
 }
 
 fun set_description(
@@ -299,7 +310,7 @@ fun set_mint_budget(scenario: &mut test_scenario::Scenario, caller: address, amo
 
 #[test]
 fun init_ok() {
-    let mut scenario = init_xagm();
+    let (mut scenario, _clock) = init_xagm();
 
     // check State fields
     scenario.next_tx(ADMIN);
@@ -327,19 +338,20 @@ fun init_ok() {
         test_scenario::return_shared(metadata);
     };
 
+    clock::destroy_for_testing(_clock);
     scenario.end();
 }
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_description_err_not_owner() {
-    let mut scenario = init_xagm();
+    let (mut scenario, _clock) = init_xagm();
     set_description(&mut scenario, ALICE, b"new description");
     abort
 }
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_icon_url_err_not_owner() {
-    let mut scenario = init_xagm();
+    let (mut scenario, _clock) = init_xagm();
     set_icon_url(&mut scenario, ALICE, b"new/icon/url");
     abort
 }
@@ -348,7 +360,7 @@ fun set_icon_url_err_not_owner() {
 fun update_metadata_ok() {
     let new_description = b"new description";
     let new_icon_url = b"new/icon/url";
-    let mut scenario = init_xagm();
+    let (mut scenario, _clock) = init_xagm();
 
     // update metadata
     set_description(&mut scenario, ADMIN, new_description);
@@ -366,21 +378,20 @@ fun update_metadata_ok() {
         test_scenario::return_shared(metadata);
     };
 
+    clock::destroy_for_testing(_clock);
     scenario.end();
 }
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_owner_req_err_not_owner() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_owner(&mut scenario, &_clock, ALICE, BOB);
     abort
 }
 
 #[test, expected_failure(abort_code = mtoken::ENotNewOwner)]
 fun set_owner_exec_err_not_new_owner() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_owner(&mut scenario, &_clock, ADMIN, ALICE);
     execute_set_owner(&mut scenario, &_clock, BOB);
     abort
@@ -388,8 +399,7 @@ fun set_owner_exec_err_not_new_owner() {
 
 #[test, expected_failure(abort_code = mtoken::ENotEffective)]
 fun set_owner_exec_err_not_effective() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_owner(&mut scenario, &_clock, ADMIN, ALICE);
     execute_set_owner(&mut scenario, &_clock, ALICE);
     abort
@@ -397,8 +407,7 @@ fun set_owner_exec_err_not_effective() {
 
 #[test, expected_failure(abort_code = mtoken::EReqExpired)]
 fun set_owner_exec_err_expired() {
-    let mut scenario = init_xagm();
-    let mut _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, mut _clock) = init_xagm();
     request_set_owner(&mut scenario, &_clock, ADMIN, ALICE);
     _clock.increment_for_testing(INIT_DELAY * 1000);
     _clock.increment_for_testing(REQ_TTL * 1000);
@@ -408,8 +417,7 @@ fun set_owner_exec_err_expired() {
 
 #[test, expected_failure(abort_code = mtoken::EUpgradeCapInvalid)]
 fun set_owner_req_err_upgrade_cap_invalid() {
-    let mut scenario = init_xagm();
-    let mut _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
 
     // request
     scenario.next_tx(ADMIN);
@@ -429,8 +437,7 @@ fun set_owner_req_err_upgrade_cap_invalid() {
 
 #[test]
 fun set_owner_ok() {
-    let mut scenario = init_xagm();
-    let mut _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, mut _clock) = init_xagm();
 
     request_set_owner(&mut scenario, &_clock, ADMIN, ALICE);
     _clock.increment_for_testing(INIT_DELAY * 1000);
@@ -453,8 +460,7 @@ fun set_owner_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_owner_revoke_err_not_owner() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_owner(&mut scenario, &_clock, ADMIN, ALICE);
     revoke_set_owner(&mut scenario, ALICE);
     abort
@@ -462,8 +468,7 @@ fun set_owner_revoke_err_not_owner() {
 
 #[test]
 fun set_owner_revoke_ok() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_owner(&mut scenario, &_clock, ADMIN, ALICE);
     revoke_set_owner(&mut scenario, ADMIN);
 
@@ -481,16 +486,14 @@ fun set_owner_revoke_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_operator_req_err_not_owner() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_operator(&mut scenario, &_clock, ALICE, BOB);
     abort
 }
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_operator_exec_err_not_owner() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_operator(&mut scenario, &_clock, ADMIN, BOB);
     execute_set_operator(&mut scenario, &_clock, ALICE);
     abort
@@ -498,8 +501,7 @@ fun set_operator_exec_err_not_owner() {
 
 #[test, expected_failure(abort_code = mtoken::ENotEffective)]
 fun set_operator_exec_err_not_effective() {
-    let mut scenario = init_xagm();
-    let mut _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_operator(&mut scenario, &_clock, ADMIN, ALICE);
     execute_set_operator(&mut scenario, &_clock, ADMIN);
     abort
@@ -507,8 +509,7 @@ fun set_operator_exec_err_not_effective() {
 
 #[test]
 fun set_operator_ok() {
-    let mut scenario = init_xagm();
-    let mut _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, mut _clock) = init_xagm();
     request_set_operator(&mut scenario, &_clock, ADMIN, ALICE);
     check_operator(&mut scenario, ADMIN);
     _clock.increment_for_testing(INIT_DELAY * 1000);
@@ -520,8 +521,7 @@ fun set_operator_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotRevoker)]
 fun set_operator_revoke_err_not_revoker() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_operator(&mut scenario, &_clock, ADMIN, ALICE);
     revoke_set_operator(&mut scenario, ALICE);
     abort
@@ -529,8 +529,7 @@ fun set_operator_revoke_err_not_revoker() {
 
 #[test]
 fun set_operator_revoke_ok() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_operator(&mut scenario, &_clock, ADMIN, ALICE);
     revoke_set_operator(&mut scenario, ADMIN);
     check_operator(&mut scenario, ADMIN);
@@ -540,16 +539,14 @@ fun set_operator_revoke_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_revoker_req_err_not_owner() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_revoker(&mut scenario, &_clock, ALICE, BOB);
     abort
 }
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_revoker_exec_err_not_owner() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_revoker(&mut scenario, &_clock, ADMIN, BOB);
     execute_set_revoker(&mut scenario, &_clock, ALICE);
     abort
@@ -557,8 +554,7 @@ fun set_revoker_exec_err_not_owner() {
 
 #[test, expected_failure(abort_code = mtoken::ENotEffective)]
 fun set_revoker_exec_err_not_effective() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_revoker(&mut scenario, &_clock, ADMIN, ALICE);
     execute_set_revoker(&mut scenario, &_clock, ADMIN);
     abort
@@ -566,8 +562,7 @@ fun set_revoker_exec_err_not_effective() {
 
 #[test]
 fun set_revoker_ok() {
-    let mut scenario = init_xagm();
-    let mut _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, mut _clock) = init_xagm();
     request_set_revoker(&mut scenario, &_clock, ADMIN, ALICE);
     check_revoker(&mut scenario, ADMIN);
     _clock.increment_for_testing(INIT_DELAY * 1000);
@@ -579,8 +574,7 @@ fun set_revoker_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_revoker_revoke_err_not_owner() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_revoker(&mut scenario, &_clock, ADMIN, ALICE);
     revoke_set_revoker(&mut scenario, ALICE);
     abort
@@ -588,8 +582,7 @@ fun set_revoker_revoke_err_not_owner() {
 
 #[test]
 fun set_revoker_revoke_ok() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_revoker(&mut scenario, &_clock, ADMIN, ALICE);
     revoke_set_revoker(&mut scenario, ADMIN);
     check_revoker(&mut scenario, ADMIN);
@@ -614,32 +607,28 @@ fun request_set_delay(
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_delay_req_err_not_owner() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_delay(&mut scenario, &_clock, ALICE, 1234);
     abort
 }
 
 #[test, expected_failure(abort_code = mtoken::EDelayTooShort)]
 fun set_delay_req_err_too_short() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY-1);
     abort
 }
 
 #[test, expected_failure(abort_code = mtoken::EDelayTooLong)]
 fun set_delay_req_err_too_long() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_delay(&mut scenario, &_clock, ADMIN, MAX_DELAY+1);
     abort
 }
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_delay_exec_err_not_owner() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY+123);
     execute_set_delay(&mut scenario, &_clock, ALICE);
     abort
@@ -647,8 +636,7 @@ fun set_delay_exec_err_not_owner() {
 
 #[test, expected_failure(abort_code = mtoken::ENotEffective)]
 fun set_delay_exec_err_not_effective() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY+123);
     execute_set_delay(&mut scenario, &_clock, ADMIN);
     abort
@@ -656,8 +644,7 @@ fun set_delay_exec_err_not_effective() {
 
 #[test]
 fun set_delay_ok() {
-    let mut scenario = init_xagm();
-    let mut _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, mut _clock) = init_xagm();
     request_set_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY+100);
     check_delay(&mut scenario, ADMIN, INIT_DELAY);
     _clock.increment_for_testing(INIT_DELAY * 1000);
@@ -669,8 +656,7 @@ fun set_delay_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotRevoker)]
 fun set_delay_revoke_err_not_revoker() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY);
     revoke_set_delay(&mut scenario, ALICE);
     abort
@@ -678,8 +664,7 @@ fun set_delay_revoke_err_not_revoker() {
 
 #[test]
 fun set_delay_revoke_ok() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_set_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY+1);
     revoke_set_delay(&mut scenario, ADMIN);
     check_delay(&mut scenario, ADMIN, INIT_DELAY);
@@ -689,16 +674,14 @@ fun set_delay_revoke_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOperator)]
 fun mint_req_err_not_operator() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_mint_to(&mut scenario, &_clock, ALICE, ALICE, 100);
     abort
 }
 
 #[test, expected_failure(abort_code = mtoken::ENotOperator)]
 fun mint_exec_err_not_operator() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_mint_to(&mut scenario, &_clock, ADMIN, ALICE, 100);
     execute_mint_to(&mut scenario, &_clock, ALICE);
     abort
@@ -706,8 +689,7 @@ fun mint_exec_err_not_operator() {
 
 #[test, expected_failure(abort_code = mtoken::ENotEffective)]
 fun mint_exec_err_not_effective() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_mint_to(&mut scenario, &_clock, ADMIN, ALICE, 100);
     execute_mint_to(&mut scenario, &_clock, ADMIN);
     abort
@@ -715,8 +697,7 @@ fun mint_exec_err_not_effective() {
 
 #[test, expected_failure(abort_code = mtoken::EMintBudgetNotEnough)]
 fun mint_exec_err_budget_not_enough() {
-    let mut scenario = init_xagm();
-    let mut _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, mut _clock) = init_xagm();
     request_mint_to(&mut scenario, &_clock, ADMIN, ALICE, 100);
     _clock.increment_for_testing(INIT_DELAY * 1000);
     execute_mint_to(&mut scenario, &_clock, ADMIN);
@@ -725,8 +706,7 @@ fun mint_exec_err_budget_not_enough() {
 
 #[test]
 fun mint_ok() {
-    let mut scenario = init_xagm();
-    let mut _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, mut _clock) = init_xagm();
     request_mint_to(&mut scenario, &_clock, ADMIN, ALICE, 100);
 
     _clock.increment_for_testing(INIT_DELAY * 1000);
@@ -753,8 +733,7 @@ fun mint_ok() {
 
 #[test]
 fun mint_twice_ok() {
-    let mut scenario = init_xagm();
-    let mut _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, mut _clock) = init_xagm();
     set_mint_budget(&mut scenario, ADMIN, 1000);
 
     // mint#1
@@ -806,8 +785,7 @@ fun mint_twice_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotRevoker)]
 fun mint_revoke_err_not_revoker() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_mint_to(&mut scenario, &_clock, ADMIN, ALICE, 80);
     revoke_mint_to(&mut scenario, ALICE);
     abort
@@ -815,8 +793,7 @@ fun mint_revoke_err_not_revoker() {
 
 #[test]
 fun mint_revoke_ok() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     request_mint_to(&mut scenario, &_clock, ADMIN, ALICE, 80);
     revoke_mint_to(&mut scenario, ADMIN);
     clock::destroy_for_testing(_clock);
@@ -840,8 +817,7 @@ fun redeem(
 
 #[test, expected_failure(abort_code = mtoken::ENotOperator)]
 fun redeem_err_not_operator() {
-    let mut scenario = init_xagm();
-    let _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
     let to_be_burnt = coin::from_balance(balance::zero<XAGM>(), scenario.ctx());
     redeem(&mut scenario, ALICE, to_be_burnt, &_clock);
     abort
@@ -849,9 +825,7 @@ fun redeem_err_not_operator() {
 
 #[test]
 fun redeem_ok() {
-    let mut scenario = init_xagm();
-    let mut _clock = clock::create_for_testing(scenario.ctx());
-
+    let (mut scenario, mut _clock) = init_xagm();
     // mint
     set_mint_budget(&mut scenario, ADMIN, 10000);
     request_mint_to(&mut scenario, &_clock, ADMIN, ADMIN, 100);
@@ -900,9 +874,7 @@ fun redeem_ok() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOperator)]
 fun block_err_not_operator() {
-    let mut scenario = init_xagm();
-    let mut _clock = clock::create_for_testing(scenario.ctx());
-
+    let (mut scenario, _clock) = init_xagm();
     // block
     scenario.next_tx(ALICE);
     {
@@ -915,9 +887,7 @@ fun block_err_not_operator() {
 
 #[test, expected_failure(abort_code = mtoken::ENotOperator)]
 fun unblock_err_not_operator() {
-    let mut scenario = init_xagm();
-    let mut _clock = clock::create_for_testing(scenario.ctx());
-
+    let (mut scenario, _clock) = init_xagm();
     // unblock
     scenario.next_tx(ALICE);
     {
@@ -930,8 +900,7 @@ fun unblock_err_not_operator() {
 
 #[test]
 fun block_unblock_ok() {
-    let mut scenario = init_xagm();
-    let mut _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, _clock) = init_xagm();
 
     // block
     scenario.next_tx(ADMIN);
@@ -993,8 +962,7 @@ fun block_unblock_ok() {
 
 #[test]
 fun transfer_ok() {
-    let mut scenario = init_xagm();
-    let mut _clock = clock::create_for_testing(scenario.ctx());
+    let (mut scenario, mut _clock) = init_xagm();
 
     // mint
     set_mint_budget(&mut scenario, ADMIN, 10000);
@@ -1025,8 +993,7 @@ fun transfer_ok() {
 
 // #[test, expected_failure]
 // fun transfer_err_denied_src() {
-//     let mut scenario = init_xagm();
-//     let mut _clock = clock::create_for_testing(scenario.ctx());
+//     let (mut scenario, _clock) = init_xagm();
 
 //     scenario.next_tx(SYS);
 //     {
