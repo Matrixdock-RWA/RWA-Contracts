@@ -47,6 +47,13 @@ fun init_xagm(): (test_scenario::Scenario, Clock) {
     (scenario, _clock)
 }
 
+fun create_new_state(scenario: &mut test_scenario::Scenario, caller: address) {
+    scenario.next_tx(caller);
+    {
+        mt::init_for_testing(scenario.ctx(), INIT_DELAY);
+    };
+}
+
 fun set_description(
     scenario: &mut test_scenario::Scenario,
     caller: address,
@@ -220,6 +227,21 @@ fun check_revoker(scenario: &mut test_scenario::Scenario, revoker: address) {
     };
 }
 
+fun request_set_delay(
+    scenario: &mut test_scenario::Scenario,
+    _clock: &Clock,
+    caller: address,
+    new_delay: u64,
+) {
+    scenario.next_tx(caller);
+    {
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
+        mtoken::request_set_delay(&state, new_delay, _clock, scenario.ctx());
+        assert_eq!(event::num_events(), 1);
+        test_scenario::return_shared(state);
+    };
+}
+
 fun execute_set_delay(scenario: &mut test_scenario::Scenario, _clock: &Clock, caller: address) {
     scenario.next_tx(caller);
     {
@@ -295,6 +317,21 @@ fun revoke_mint_to(scenario: &mut test_scenario::Scenario, caller: address) {
         let state = scenario.take_shared<mtoken::State<XAGM>>();
         let req = scenario.take_shared<mtoken::MintReq>();
         mtoken::revoke_mint_to(&state, req, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+}
+
+fun redeem(
+    scenario: &mut test_scenario::Scenario,
+    caller: address,
+    to_be_burnt: Coin<XAGM>,
+    _clock: &Clock,
+) {
+    scenario.next_tx(caller);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
+        let oz_per_token = state.oz_per_token(_clock);
+        mtoken::redeem(&mut state, to_be_burnt, oz_per_token, _clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
 }
@@ -484,6 +521,24 @@ fun set_owner_revoke_ok() {
     scenario.end();
 }
 
+#[test, expected_failure(abort_code = mtoken::EStateIdMismatch)]
+fun set_owner_exec_err_bad_req() {
+    let (mut scenario, _clock) = init_xagm();
+    request_set_owner(&mut scenario, &_clock, ADMIN, BOB);
+    create_new_state(&mut scenario, ALICE);
+    execute_set_owner(&mut scenario, &_clock, ALICE);
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::EStateIdMismatch)]
+fun set_owner_revoke_err_bad_req() {
+    let (mut scenario, _clock) = init_xagm();
+    request_set_owner(&mut scenario, &_clock, ADMIN, BOB);
+    create_new_state(&mut scenario, ALICE);
+    revoke_set_owner(&mut scenario, ALICE);
+    abort
+}
+
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun set_operator_req_err_not_owner() {
     let (mut scenario, _clock) = init_xagm();
@@ -535,6 +590,24 @@ fun set_operator_revoke_ok() {
     check_operator(&mut scenario, ADMIN);
     clock::destroy_for_testing(_clock);
     scenario.end();
+}
+
+#[test, expected_failure(abort_code = mtoken::EStateIdMismatch)]
+fun set_operator_exec_err_bad_req() {
+    let (mut scenario, _clock) = init_xagm();
+    request_set_operator(&mut scenario, &_clock, ADMIN, BOB);
+    create_new_state(&mut scenario, ALICE);
+    execute_set_operator(&mut scenario, &_clock, ALICE);
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::EStateIdMismatch)]
+fun set_operator_revoke_err_bad_req() {
+    let (mut scenario, _clock) = init_xagm();
+    request_set_operator(&mut scenario, &_clock, ADMIN, BOB);
+    create_new_state(&mut scenario, ALICE);
+    revoke_set_operator(&mut scenario, ALICE);
+    abort
 }
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
@@ -590,19 +663,22 @@ fun set_revoker_revoke_ok() {
     scenario.end();
 }
 
-fun request_set_delay(
-    scenario: &mut test_scenario::Scenario,
-    _clock: &Clock,
-    caller: address,
-    new_delay: u64,
-) {
-    scenario.next_tx(caller);
-    {
-        let state = scenario.take_shared<mtoken::State<XAGM>>();
-        mtoken::request_set_delay(&state, new_delay, _clock, scenario.ctx());
-        assert_eq!(event::num_events(), 1);
-        test_scenario::return_shared(state);
-    };
+#[test, expected_failure(abort_code = mtoken::EStateIdMismatch)]
+fun set_revoker_exec_err_bad_req() {
+    let (mut scenario, _clock) = init_xagm();
+    request_set_revoker(&mut scenario, &_clock, ADMIN, BOB);
+    create_new_state(&mut scenario, ALICE);
+    execute_set_revoker(&mut scenario, &_clock, ALICE);
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::EStateIdMismatch)]
+fun set_revoker_revoke_err_bad_req() {
+    let (mut scenario, _clock) = init_xagm();
+    request_set_revoker(&mut scenario, &_clock, ADMIN, BOB);
+    create_new_state(&mut scenario, ALICE);
+    revoke_set_revoker(&mut scenario, ALICE);
+    abort
 }
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
@@ -670,6 +746,24 @@ fun set_delay_revoke_ok() {
     check_delay(&mut scenario, ADMIN, INIT_DELAY);
     clock::destroy_for_testing(_clock);
     scenario.end();
+}
+
+#[test, expected_failure(abort_code = mtoken::EStateIdMismatch)]
+fun set_delay_exec_err_bad_req() {
+    let (mut scenario, _clock) = init_xagm();
+    request_set_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY+1);
+    create_new_state(&mut scenario, ALICE);
+    execute_set_delay(&mut scenario, &_clock, ALICE);
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::EStateIdMismatch)]
+fun set_delay_revoke_err_bad_req() {
+    let (mut scenario, _clock) = init_xagm();
+    request_set_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY+1);
+    create_new_state(&mut scenario, ALICE);
+    revoke_set_delay(&mut scenario, ALICE);
+    abort
 }
 
 #[test, expected_failure(abort_code = mtoken::ENotOperator)]
@@ -800,19 +894,22 @@ fun mint_revoke_ok() {
     scenario.end();
 }
 
-fun redeem(
-    scenario: &mut test_scenario::Scenario,
-    caller: address,
-    to_be_burnt: Coin<XAGM>,
-    _clock: &Clock,
-) {
-    scenario.next_tx(caller);
-    {
-        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
-        let oz_per_token = state.oz_per_token(_clock);
-        mtoken::redeem(&mut state, to_be_burnt, oz_per_token, _clock, scenario.ctx());
-        test_scenario::return_shared(state);
-    };
+#[test, expected_failure(abort_code = mtoken::EStateIdMismatch)]
+fun mint_exec_err_bad_req() {
+    let (mut scenario, _clock) = init_xagm();
+    request_mint_to(&mut scenario, &_clock, ADMIN, ALICE, 80);
+    create_new_state(&mut scenario, ALICE);
+    execute_mint_to(&mut scenario, &_clock, ALICE);
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::EStateIdMismatch)]
+fun mint_revok_err_bad_req() {
+    let (mut scenario, _clock) = init_xagm();
+    request_mint_to(&mut scenario, &_clock, ADMIN, ALICE, 80);
+    create_new_state(&mut scenario, ALICE);
+    revoke_mint_to(&mut scenario, ALICE);
+    abort
 }
 
 #[test, expected_failure(abort_code = mtoken::ENotOperator)]
