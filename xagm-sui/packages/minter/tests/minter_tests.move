@@ -884,3 +884,53 @@ fun set_accepted_token_by_b_ok() {
     };
     scenario.end();
 }
+
+#[test, expected_failure(abort_code = minter::EZeroValue)]
+fun request_to_mint_err_zero_value() {
+    let mut scenario = ts::begin(@0x0);
+    let mut _clock = clock::create_for_testing(scenario.ctx());
+    scenario.next_tx(OWNER);
+    {
+        minter::create_minter(scenario.ctx());
+    };
+    scenario.next_tx(OWNER);
+    {
+        let state = scenario.take_shared<minter::State>();
+        let mut usdt = coin::mint_for_testing<USDT>(1000, scenario.ctx());
+        state.request_to_mint<USDT, SUI>(
+            &mut usdt,
+            0,
+            10,
+            5,
+            999,
+            &_clock,
+            scenario.ctx(),
+        );
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = minter::EZeroValue)]
+fun request_to_redeem_err_zero_value() {
+    let mut scenario = ts::begin(@0x0);
+    let mut _clock = clock::create_for_testing(scenario.ctx());
+    scenario.next_tx(OWNER);
+    {
+        minter::create_minter(scenario.ctx());
+    };
+    scenario.next_tx(OWNER);
+    {
+        let state = scenario.take_shared<minter::State>();
+        let mut usdt = coin::mint_for_testing<USDT>(1000, scenario.ctx());
+        state.request_to_redeem<USDT, SUI>(
+            &mut usdt,
+            0,
+            10,
+            5,
+            999,
+            &_clock,
+            scenario.ctx(),
+        );
+    };
+    abort
+}

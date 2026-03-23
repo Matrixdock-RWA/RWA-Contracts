@@ -18,6 +18,7 @@ const EInvalidTokenForMint: u64 = 200;
 const EInvalidTokenForRedeem: u64 = 201;
 const EInsufficientBalance: u64 = 202;
 const EInvalidTimestamp: u64 = 203;
+const EZeroValue: u64 = 204;
 
 // === Constants ===
 const VERSION: u64 = 2;
@@ -191,6 +192,7 @@ public fun request_to_mint<T, F>(
     ctx: &mut TxContext,
 ) {
     check_version(state);
+    check_non_zero(amount);
     let tn = type_name::with_defining_ids<T>();
     assert!(state.accepted_by_a.contains(tn), EInvalidTokenForMint);
     let now = clock.timestamp_ms() / 1000;
@@ -221,6 +223,7 @@ public fun request_to_redeem<T, F>(
     ctx: &mut TxContext,
 ) {
     check_version(state);
+    check_non_zero(amount);
     let tn = type_name::with_defining_ids<T>();
     assert!(state.accepted_by_b.contains(tn), EInvalidTokenForRedeem);
     let now = clock.timestamp_ms() / 1000;
@@ -282,6 +285,10 @@ fun check_version(state: &State) {
 
 fun check_owner(state: &State, ctx: &TxContext) {
     assert!(ctx.sender() == state.owner, ENotOwner);
+}
+
+fun check_non_zero(amount: u64) {
+    assert!(amount > 0, EZeroValue);
 }
 
 // === Test Functions ===
