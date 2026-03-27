@@ -526,6 +526,7 @@ fun handle_cc_receive(state: &mut State, receiver: address, blocked_token: Optio
 
 // Claim the blocked token after the receiver has been unblocked
 entry fun claim_blocked_token(state: &mut State, ctx: &TxContext) {
+    state.check_version();
     let receiver = ctx.sender();
     let token = state.blocked_tokens.remove(receiver); // Fail if no blocked token is found.
     let amount = token.balance().value();
