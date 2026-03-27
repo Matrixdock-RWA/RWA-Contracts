@@ -708,8 +708,8 @@ public fun cc_send_token<T>(
     check_version(state);
     check_messenger_cap(state, msg_cap);
     check_non_zero(token.balance().value());
-    // TODO: check if sender is in the blocked list
-    // TODO: check if receiver is a valid address
+
+    // Note: Burn fails if the owner is in the deny list.
     let amount = token.balance().value();
     coin::burn<T>(state.borrow_treasury_cap_mut(), token);
     event::emit(CCSendTokenEvent { sender, receiver, amount });
