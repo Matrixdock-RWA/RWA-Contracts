@@ -60,6 +60,7 @@ public struct MintRequest has copy, drop {
     amount: u64,
     preprice: u64,
     slippage: u64,
+    extra_data: vector<u8>,
 }
 
 public struct RedeemRequest has copy, drop {
@@ -70,6 +71,7 @@ public struct RedeemRequest has copy, drop {
     amount: u64,
     preprice: u64,
     slippage: u64,
+    extra_data: vector<u8>,
 }
 
 // === Structs ===
@@ -188,6 +190,7 @@ public fun request_to_mint<T, F>(
     preprice: u64,
     slippage: u64,
     timestamp: u64,
+    extra_data: vector<u8>,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
@@ -209,6 +212,7 @@ public fun request_to_mint<T, F>(
         amount,
         preprice,
         slippage,
+        extra_data,
     });
 }
 
@@ -219,6 +223,7 @@ public fun request_to_redeem<T, F>(
     preprice: u64,
     slippage: u64,
     timestamp: u64,
+    extra_data: vector<u8>,
     clock: &Clock,
     ctx: &mut TxContext,
 ) {
@@ -240,6 +245,7 @@ public fun request_to_redeem<T, F>(
         amount,
         preprice,
         slippage,
+        extra_data,
     });
 }
 
@@ -307,6 +313,7 @@ public(package) fun new_mint_request_event(
     amount: u64,
     preprice: u64,
     slippage: u64,
+    extra_data: vector<u8>,
 ): MintRequest {
     MintRequest {
         transferred_token,
@@ -316,6 +323,7 @@ public(package) fun new_mint_request_event(
         amount,
         preprice,
         slippage,
+        extra_data,
     }
 }
 
@@ -328,6 +336,7 @@ public(package) fun new_redeem_request_event(
     amount: u64,
     preprice: u64,
     slippage: u64,
+    extra_data: vector<u8>,
 ): RedeemRequest {
     RedeemRequest {
         transferred_token,
@@ -337,6 +346,7 @@ public(package) fun new_redeem_request_event(
         amount,
         preprice,
         slippage,
+        extra_data,
     }
 }
 
