@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.0;
 
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "./DelayedUpgradeable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {DelayedUpgradeable} from "./DelayedUpgradeable.sol";
 
 contract BullionMinter is DelayedUpgradeable {
     using SafeERC20 for IERC20;
@@ -12,28 +12,30 @@ contract BullionMinter is DelayedUpgradeable {
     address public poolAccountB;
     mapping(address token => bool accepted) public acceptedByA;
     mapping(address token => bool accepted) public acceptedByB;
-    uint8 constant public prepriceDecimal = 6;
-    uint8 constant public slippageDecimal = 6;
-    uint constant public delayMax = 59;
+
     // nile:0xECa9bC828A3005B9a3b909f2cc5c2a54794DE05F  mainnet:0xa614f803B6FD780986A42c78Ec9c7f77e6DeD13C
     address public usdtAddr;
+
+    uint public constant DELAY_MAX = 59;
+    uint8 public constant PREPRICE_DECIMAL = 6;
+    uint8 public constant SLIPPAGE_DECIMAL = 6;
 
     function __Minter_init(
         address _owner,
         address _usdt,
         address _poolAccountA,
         address _poolAccountB,
-        address[] memory _tokensAcceptedByA,
-        address[] memory _tokensAcceptedByB
+        address[] calldata _tokensAcceptedByA,
+        address[] calldata _tokensAcceptedByB
     ) internal onlyInitializing {
         __Ownable_init_unchained(_owner);
         usdtAddr = _usdt;
         poolAccountA = _poolAccountA;
         poolAccountB = _poolAccountB;
-        for(uint i=0; i<_tokensAcceptedByA.length; i++) {
+        for(uint i; i<_tokensAcceptedByA.length; i++) {
             acceptedByA[_tokensAcceptedByA[i]] = true;
         }
-        for(uint i=0; i<_tokensAcceptedByB.length; i++) {
+        for(uint i; i<_tokensAcceptedByB.length; i++) {
             acceptedByB[_tokensAcceptedByB[i]] = true;
         }
     }
@@ -43,8 +45,8 @@ contract BullionMinter is DelayedUpgradeable {
         address _usdt,
         address _poolAccountA,
         address _poolAccountB,
-        address[] memory _tokensAcceptedByA,
-        address[] memory _tokensAcceptedByB
+        address[] calldata _tokensAcceptedByA,
+        address[] calldata _tokensAcceptedByB
     ) public initializer {
         __Minter_init(_owner, _usdt, _poolAccountA, _poolAccountB, _tokensAcceptedByA, _tokensAcceptedByB);
     }
@@ -54,46 +56,54 @@ contract BullionMinter is DelayedUpgradeable {
     event SetAcceptedByA(address token, bool accepted);
     event SetAcceptedByB(address token, bool accepted);
     event MintRequest(address indexed transferredToken, address indexed forToken,
-               address indexed requestor, address pool, uint amount, uint preprice, uint slippage);
+               address indexed requestor, address pool, uint amount, uint preprice, uint slippage, bytes extraData);
     event RedeemRequest(address indexed transferredToken, address indexed forToken,
-               address indexed requestor, address pool, uint amount, uint preprice, uint slippage);
+               address indexed requestor, address pool, uint amount, uint preprice, uint slippage, bytes extraData);
 
     function getDelay() internal pure override returns (uint64) {
         return 3600 * 12; //upgrade must be delayed by 12 hours
     }
 
     function setPoolAccountA(address _poolAccountA) onlyOwner() external {
+        _checkZeroAddress(_poolAccountA);
         poolAccountA = _poolAccountA;
         emit SetPoolAccountA(_poolAccountA);
     }
 
     function setPoolAccountB(address _poolAccountB) onlyOwner() external {
+        _checkZeroAddress(_poolAccountB);
         poolAccountB = _poolAccountB;
         emit SetPoolAccountB(_poolAccountB);
     }
 
     function setAcceptedByA(address token, bool accepted) onlyOwner() external {
+        _checkZeroAddress(token);
         acceptedByA[token] = accepted;
         emit SetAcceptedByA(token, accepted);
     }
 
     function setAcceptedByB(address token, bool accepted) onlyOwner() external {
+        _checkZeroAddress(token);
         acceptedByB[token] = accepted;
         emit SetAcceptedByB(token, accepted);
     }
 
-    function requestToMint(address transferredToken, address forToken, uint amount, uint preprice, uint slippage, uint timestamp) external {
+    // Most parameters are not checked here and are handled by the off-chain service.
+    function requestToMint(address transferredToken, address forToken, uint amount, uint preprice, uint slippage, uint timestamp, bytes calldata extraData) external {
         require(acceptedByA[transferredToken], "INVALID_TOKEN_FOR_MINTING");
-        require(block.timestamp <= timestamp + delayMax, "INVALID_TIMESTAMP");
-        IERC20(transferredToken).safeTransferFrom(msg.sender, poolAccountA, amount);
-        emit MintRequest(transferredToken, forToken, msg.sender, poolAccountA, amount, preprice, slippage);
+        require(block.timestamp <= timestamp + DELAY_MAX, "INVALID_TIMESTAMP");
+        address _poolAccountA = poolAccountA;
+        IERC20(transferredToken).safeTransferFrom(msg.sender, _poolAccountA, amount);
+        emit MintRequest(transferredToken, forToken, msg.sender, _poolAccountA, amount, preprice, slippage, extraData);
     }
 
-    function requestToRedeem(address transferredToken, address forToken, uint amount, uint preprice, uint slippage, uint timestamp) external {
+    // Most parameters are not checked here and are handled by the off-chain service.
+    function requestToRedeem(address transferredToken, address forToken, uint amount, uint preprice, uint slippage, uint timestamp, bytes calldata extraData) external {
         require(acceptedByB[transferredToken], "INVALID_TOKEN_FOR_REDEEMING");
-        require(block.timestamp <= timestamp + delayMax, "INVALID_TIMESTAMP");
-        IERC20(transferredToken).safeTransferFrom(msg.sender, poolAccountB, amount);
-        emit RedeemRequest(transferredToken, forToken, msg.sender, poolAccountB, amount, preprice, slippage);
+        require(block.timestamp <= timestamp + DELAY_MAX, "INVALID_TIMESTAMP");
+        address _poolAccountB = poolAccountB;
+        IERC20(transferredToken).safeTransferFrom(msg.sender, _poolAccountB, amount);
+        emit RedeemRequest(transferredToken, forToken, msg.sender, _poolAccountB, amount, preprice, slippage, extraData);
     }
 
     // rescue ERC20 tokens which were accidentally sent to this contract
@@ -110,4 +120,3 @@ contract BullionMinter is DelayedUpgradeable {
         return (success && (data.length == 0 || abi.decode(data, (bool))));
     }
 }
-
