@@ -31,6 +31,7 @@ const EInvalidMessageType: u64 = 111;
 const EInvalidMessengerCap: u64 = 112;
 const EDelayTooLong: u64 = 114;
 const EZeroValue: u64 = 115;
+const EStateIdMismatch: u64 = 116;
 
 // === Constants ===
 
@@ -160,6 +161,7 @@ public struct MintReq has key {
 public struct TreasuryCapKey() has copy, drop, store;
 public struct DenyCapKey() has copy, drop, store;
 public struct MessengerCapKey() has copy, drop, store;
+public struct StateIdKey() has copy, drop, store;
 
 public struct State<phantom T> has key, store {
     id: UID,
@@ -296,7 +298,8 @@ entry fun request_transfer_ownership<T>(
     let old_owner = state.owner;
     let et = get_effective_time(state, clock);
     let id = object::new(ctx);
-    let req = TransferOwnershipReq { id, new_owner, upgrade_cap, et };
+    let mut req = TransferOwnershipReq { id, new_owner, upgrade_cap, et };
+    df::add(&mut req.id, StateIdKey(), object::id(state));
 
     event::emit(TransferOwnershipEvent { old_owner, new_owner, et, req_id: object::id(&req) });
     transfer::share_object(req);
@@ -309,6 +312,7 @@ entry fun execute_transfer_ownership<T>(
     ctx: &TxContext,
 ) {
     check_version(state);
+    check_req(state, &req.id);
     assert!(ctx.sender() == req.new_owner, ENotNewOwner);
     let old_owner = state.owner;
     let req_id = object::id(&req);
@@ -328,6 +332,7 @@ entry fun revoke_transfer_ownership<T>(
 ) {
     check_version(state);
     check_owner(state, ctx);
+    check_req(state, &req.id);
     let TransferOwnershipReq { id, upgrade_cap, .. } = req;
     transfer::public_transfer(upgrade_cap, state.owner);
     id.delete();
@@ -343,7 +348,8 @@ entry fun request_set_operator<T>(
     check_owner(state, ctx);
     let old_operator = state.operator;
     let et = get_effective_time(state, clock);
-    let req = SetOperatorReq { id: object::new(ctx), new_operator, et };
+    let mut req = SetOperatorReq { id: object::new(ctx), new_operator, et };
+    df::add(&mut req.id, StateIdKey(), object::id(state));
     let req_id = object::id(&req);
 
     transfer::share_object(req);
@@ -358,6 +364,7 @@ entry fun execute_set_operator<T>(
 ) {
     check_version(state);
     check_owner(state, ctx);
+    check_req(state, &req.id);
     let old_operator = state.operator;
     let req_id = object::id(&req);
     let SetOperatorReq { id, new_operator, et } = req;
@@ -371,6 +378,7 @@ entry fun execute_set_operator<T>(
 entry fun revoke_set_operator<T>(state: &State<T>, req: SetOperatorReq, ctx: &TxContext) {
     check_version(state);
     check_revoker(state, ctx);
+    check_req(state, &req.id);
     let SetOperatorReq { id, .. } = req;
     id.delete();
 }
@@ -385,7 +393,8 @@ entry fun request_set_revoker<T>(
     check_owner(state, ctx);
     let old_revoker = state.revoker;
     let et = get_effective_time(state, clock);
-    let req = SetRevokerReq { id: object::new(ctx), new_revoker, et };
+    let mut req = SetRevokerReq { id: object::new(ctx), new_revoker, et };
+    df::add(&mut req.id, StateIdKey(), object::id(state));
     let req_id = object::id(&req);
 
     transfer::share_object(req);
@@ -400,6 +409,7 @@ entry fun execute_set_revoker<T>(
 ) {
     check_version(state);
     check_owner(state, ctx);
+    check_req(state, &req.id);
     let old_revoker = state.revoker;
     let req_id = object::id(&req);
     let SetRevokerReq { id, new_revoker, et } = req;
@@ -413,6 +423,7 @@ entry fun execute_set_revoker<T>(
 entry fun revoke_set_revoker<T>(state: &State<T>, req: SetRevokerReq, ctx: &TxContext) {
     check_version(state);
     check_owner(state, ctx);
+    check_req(state, &req.id);
     let SetRevokerReq { id, .. } = req;
     id.delete();
 }
@@ -429,7 +440,8 @@ entry fun request_set_delay<T>(
     assert!(new_delay <= MAX_DELAY, EDelayTooLong);
     let old_delay = state.delay;
     let et = get_effective_time(state, clock);
-    let req = SetDelayReq { id: object::new(ctx), new_delay, et };
+    let mut req = SetDelayReq { id: object::new(ctx), new_delay, et };
+    df::add(&mut req.id, StateIdKey(), object::id(state));
     let req_id = object::id(&req);
 
     transfer::share_object(req);
@@ -444,6 +456,7 @@ entry fun execute_set_delay<T>(
 ) {
     check_version(state);
     check_owner(state, ctx);
+    check_req(state, &req.id);
     let old_delay = state.delay;
     let req_id = object::id(&req);
     let SetDelayReq { id, new_delay, et } = req;
@@ -457,6 +470,7 @@ entry fun execute_set_delay<T>(
 entry fun revoke_set_delay<T>(state: &State<T>, req: SetDelayReq, ctx: &TxContext) {
     check_version(state);
     check_revoker(state, ctx);
+    check_req(state, &req.id);
     let SetDelayReq { id, .. } = req;
     id.delete();
 }
@@ -474,7 +488,8 @@ entry fun request_mint_to<T>(
     check_version(state);
     check_operator(state, ctx);
     let et = get_effective_time(state, clock);
-    let req = MintReq { id: object::new(ctx), recipient, amount, et };
+    let mut req = MintReq { id: object::new(ctx), recipient, amount, et };
+    df::add(&mut req.id, StateIdKey(), object::id(state));
     let req_id = object::id(&req);
 
     transfer::share_object(req);
@@ -489,6 +504,7 @@ entry fun execute_mint_to<T>(
 ) {
     check_version(state);
     check_operator(state, ctx);
+    check_req(state, &req.id);
 
     let req_id = object::id(&req);
     let MintReq { id, recipient, amount, et } = req;
@@ -505,6 +521,7 @@ entry fun execute_mint_to<T>(
 entry fun revoke_mint_to<T>(state: &State<T>, req: MintReq, ctx: &TxContext) {
     check_version(state);
     check_revoker(state, ctx);
+    check_req(state, &req.id);
     let MintReq { id, .. } = req;
     id.delete();
 }
@@ -591,8 +608,8 @@ public fun cc_send_token<T>(
     check_version(state);
     check_messenger_cap(state, msg_cap);
     check_non_zero(token.balance().value());
-    // TODO: check if sender is in the blocked list
-    // TODO: check if receiver is a valid address
+
+    // Note: Burn fails if the owner is in the deny list.
     let amount = token.balance().value();
     coin::burn<T>(state.borrow_treasury_cap_mut(), token);
     event::emit(CCSendTokenEvent { sender, receiver, amount });
@@ -706,6 +723,11 @@ fun check_messenger_cap<T>(state: &State<T>, cap: &MessengerCap) {
     let valid_capId = df::borrow(&state.id, MessengerCapKey());
     let cap_id = object::id(cap);
     assert!(cap_id == valid_capId, EInvalidMessengerCap);
+}
+
+fun check_req<T>(state: &State<T>, req_id: &UID) {
+    let state_id = df::borrow(req_id, StateIdKey());
+    assert!(state_id == object::id(state), EStateIdMismatch);
 }
 
 fun check_non_zero(amount: u64) {
