@@ -10,7 +10,7 @@ use ptb_move_call::move_calls_builder;
 use sui::bcs;
 use utils::buffer_writer;
 use utils::package;
-use xaum::xaum::XAUM;
+use xaum::mt::{MT as XAUM};
 
 // https://github.com/LayerZero-Labs/LayerZero-v2/blob/main/packages/layerzero-v2/sui/contracts/oapps/oft/oft/sources/oft_ptb_builder.move#L19
 const LZ_RECEIVE_INFO_VERSION_1: u16 = 1;

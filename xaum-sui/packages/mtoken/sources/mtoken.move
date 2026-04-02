@@ -35,7 +35,7 @@ const EStateIdMismatch: u64 = 116;
 
 // === Constants ===
 
-const VERSION: u64 = 2;
+const VERSION: u64 = 3;
 
 const MIN_DELAY: u64 = 3600; // 1 hour
 const MAX_DELAY: u64 = 3600 * 48; // 48 hours
