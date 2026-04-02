@@ -1,6 +1,6 @@
 [package]
-name = "MessengerLz"
-edition = "2024.beta" # edition = "legacy" to use legacy (pre-2024) Move
+name = "messenger_lz"
+edition = "2024" # edition = "legacy" to use legacy (pre-2024) Move
 # license = ""           # e.g., "MIT", "GPL", "Apache 2.0"
 # authors = ["..."]      # e.g., ["Joe Smith (joesmith@noemail.com)", "John Snow (johnsnow@noemail.com)"]
 
@@ -10,11 +10,11 @@ edition = "2024.beta" # edition = "legacy" to use legacy (pre-2024) Move
 # Revision can be a branch, a tag, and a commit hash.
 # MyRemotePackage = { git = "https://some.remote/host.git", subdir = "remote/path", rev = "main" }
 # https://docs.layerzero.network/v2/developers/sui/oapp/overview#configure-movetoml
-OApp = { git = "https://github.com/LayerZero-Labs/LayerZero-v2.git", subdir = "packages/layerzero-v2/sui/contracts/oapps/oapp", rev = "ab9b083410b9359285a5756807e1b6145d4711a7" }
-EndpointV2 = { git = "https://github.com/LayerZero-Labs/LayerZero-v2.git", subdir = "packages/layerzero-v2/sui/contracts/endpoint-v2", rev = "ab9b083410b9359285a5756807e1b6145d4711a7" }
-Call = { git = "https://github.com/LayerZero-Labs/LayerZero-v2.git", subdir = "packages/layerzero-v2/sui/contracts/dynamic-call/call", rev = "ab9b083410b9359285a5756807e1b6145d4711a7" }
-Utils = { git = "https://github.com/LayerZero-Labs/LayerZero-v2.git", subdir = "packages/layerzero-v2/sui/contracts/utils", rev = "ab9b083410b9359285a5756807e1b6145d4711a7" }
-PtbMoveCall = { git = "https://github.com/LayerZero-Labs/LayerZero-v2.git", subdir = "packages/layerzero-v2/sui/contracts/ptb-builders/ptb-move-call", rev = "ab9b083410b9359285a5756807e1b6145d4711a7" }
+oapp = { git = "https://github.com/LayerZero-Labs/LayerZero-v2.git", subdir = "packages/layerzero-v2/sui/contracts/oapps/oapp", rev = "ab9b083410b9359285a5756807e1b6145d4711a7" }
+endpoint_v2 = { git = "https://github.com/LayerZero-Labs/LayerZero-v2.git", subdir = "packages/layerzero-v2/sui/contracts/endpoint-v2", rev = "ab9b083410b9359285a5756807e1b6145d4711a7" }
+call = { git = "https://github.com/LayerZero-Labs/LayerZero-v2.git", subdir = "packages/layerzero-v2/sui/contracts/dynamic-call/call", rev = "ab9b083410b9359285a5756807e1b6145d4711a7" }
+utils = { git = "https://github.com/LayerZero-Labs/LayerZero-v2.git", subdir = "packages/layerzero-v2/sui/contracts/utils", rev = "ab9b083410b9359285a5756807e1b6145d4711a7" }
+ptb_move_call = { git = "https://github.com/LayerZero-Labs/LayerZero-v2.git", subdir = "packages/layerzero-v2/sui/contracts/ptb-builders/ptb-move-call", rev = "ab9b083410b9359285a5756807e1b6145d4711a7" }
 
 # For local dependencies use `local = path`. Path is relative to the package root
 # Local = { local = "../path/to" }
@@ -23,28 +23,9 @@ PtbMoveCall = { git = "https://github.com/LayerZero-Labs/LayerZero-v2.git", subd
 # EndpointV2 = { local = "../../../../../LayerZero-v2/packages/layerzero-v2/sui/contracts/endpoint-v2" }
 # Call = { local = "../../../../../LayerZero-v2/packages/layerzero-v2/sui/contracts/dynamic-call/call" }
 # Utils = { local = "../../../../../LayerZero-v2/packages/layerzero-v2/sui/contracts/utils" }
-MToken = { local = "../mtoken" }
-XAUM = { local = "../xaum" }
-
+mtoken = { local = "../mtoken" }
+xaum = { local = "../xaum" }
 
 # To resolve a version conflict and force a specific version for dependency
 # override use `override = true`
 # Override = { local = "../conflicting/version", override = true }
-
-[addresses]
-messenger_lz = "0x0"
-
-# Named addresses will be accessible in Move as `@name`. They're also exported:
-# for example, `std = "0x1"` is exported by the Standard Library.
-# alice = "0xA11CE"
-
-[dev-dependencies]
-# The dev-dependencies section allows overriding dependencies for `--test` and
-# `--dev` modes. You can introduce test-only dependencies here.
-# Local = { local = "../path/to/dev-build" }
-
-[dev-addresses]
-# The dev-addresses section allows overwriting named addresses for the `--test`
-# and `--dev` modes.
-# alice = "0xB0B"
-
