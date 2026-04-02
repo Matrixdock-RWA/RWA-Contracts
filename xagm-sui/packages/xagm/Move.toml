@@ -1,8 +1,9 @@
 [package]
-name = "XAGM"
-edition = "2024.beta" # edition = "legacy" to use legacy (pre-2024) Move
-# license = ""           # e.g., "MIT", "GPL", "Apache 2.0"
-# authors = ["..."]      # e.g., ["Joe Smith (joesmith@noemail.com)", "John Snow (johnsnow@noemail.com)"]
+name = "xagm"
+edition = "2024" # edition = "legacy" to use legacy (pre-2024) Move
+license = "GPL-3.0" # e.g., "MIT", "GPL", "Apache 2.0"
+authors = ["mprwa-dev@matrixport.com"] # e.g., ["Joe Smith (joesmith@noemail.com)", "John Snow (johnsnow@noemail.com)"]
+version = "0.1.0"
 
 [dependencies]
 
@@ -12,27 +13,8 @@ edition = "2024.beta" # edition = "legacy" to use legacy (pre-2024) Move
 
 # For local dependencies use `local = path`. Path is relative to the package root
 # Local = { local = "../path/to" }
-MToken = { local = "../mtoken" }
+mtoken = { local = "../mtoken" }
 
 # To resolve a version conflict and force a specific version for dependency
 # override use `override = true`
 # Override = { local = "../conflicting/version", override = true }
-
-[addresses]
-xagm = "0x0"
-# message_codec = "0x0"
-
-# Named addresses will be accessible in Move as `@name`. They're also exported:
-# for example, `std = "0x1"` is exported by the Standard Library.
-# alice = "0xA11CE"
-
-[dev-dependencies]
-# The dev-dependencies section allows overriding dependencies for `--test` and
-# `--dev` modes. You can introduce test-only dependencies here.
-# Local = { local = "../path/to/dev-build" }
-
-[dev-addresses]
-# The dev-addresses section allows overwriting named addresses for the `--test`
-# and `--dev` modes.
-# alice = "0xB0B"
-
