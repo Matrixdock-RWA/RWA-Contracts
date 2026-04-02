@@ -2,7 +2,7 @@
 module xagm::xagm_tests;
 
 use sui::test_scenario;
-use xagm::xagm;
+use xagm::{mtgm as xagm};
 
 #[test]
 fun test_xagm() {

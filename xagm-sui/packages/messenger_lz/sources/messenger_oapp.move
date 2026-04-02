@@ -24,7 +24,7 @@ use sui::sui::SUI;
 use sui::table::{Self, Table};
 use utils::bytes32::{Self, Bytes32};
 use utils::table_ext;
-use xagm::xagm::XAGM;
+use xagm::mtgm::{MTGM as XAGM};
 
 // === Errors ===
 const EWrongVersion: u64 = 1;
