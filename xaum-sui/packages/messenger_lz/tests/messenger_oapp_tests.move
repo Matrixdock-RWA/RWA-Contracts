@@ -19,7 +19,8 @@ use sui::sui::SUI;
 use sui::test_scenario;
 use utils::bytes32;
 use utils::package;
-use xaum::xaum::{Self, XAUM};
+use xaum::maum as xaum;
+use xaum::maum::MAUM as XAUM;
 
 // test addresses
 const SYS: address = @0x0;

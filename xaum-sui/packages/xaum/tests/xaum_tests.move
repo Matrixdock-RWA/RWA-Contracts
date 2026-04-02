@@ -2,7 +2,7 @@
 module xaum::xaum_tests;
 
 use sui::test_scenario;
-use xaum::xaum;
+use xaum::maum as xaum;
 
 #[test]
 fun test_xaum() {

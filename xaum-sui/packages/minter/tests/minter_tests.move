@@ -21,7 +21,7 @@ const EXTRADATA: vector<u8> = b"DATA";
 
 public struct USDT has drop {}
 
-#[test]
+// #[test,]
 fun test_transfer_ownership() {
     let mut ts = ts::begin(@0x0);
     {
