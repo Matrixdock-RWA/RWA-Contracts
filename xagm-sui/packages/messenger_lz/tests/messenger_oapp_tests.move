@@ -19,7 +19,7 @@ use sui::sui::SUI;
 use sui::test_scenario;
 use utils::bytes32;
 use utils::package;
-use xagm::xagm::{Self, XAGM};
+use xagm::magm::{Self as xagm, MAGM as XAGM};
 
 // test addresses
 const SYS: address = @0x0;
