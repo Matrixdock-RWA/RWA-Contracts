@@ -1,0 +1,46 @@
+use soroban_sdk::{contracttype, Address, BytesN};
+
+pub(crate) const DAY_IN_LEDGERS: u32 = 17280;
+pub(crate) const INSTANCE_BUMP_AMOUNT: u32 = 7 * DAY_IN_LEDGERS;
+pub(crate) const INSTANCE_LIFETIME_THRESHOLD: u32 = INSTANCE_BUMP_AMOUNT - DAY_IN_LEDGERS;
+
+pub(crate) const BALANCE_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
+pub(crate) const BALANCE_LIFETIME_THRESHOLD: u32 = BALANCE_BUMP_AMOUNT - DAY_IN_LEDGERS;
+
+pub(crate) const ALLOW_BLOCK_EXTEND_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
+pub(crate) const ALLOW_BLOCK_TTL_THRESHOLD: u32 = ALLOW_BLOCK_EXTEND_AMOUNT - DAY_IN_LEDGERS;
+
+#[derive(Clone)]
+#[contracttype]
+pub struct AllowanceDataKey {
+    pub from: Address,
+    pub spender: Address,
+}
+
+#[contracttype]
+pub struct AllowanceValue {
+    pub amount: i128,
+    pub expiration_ledger: u32,
+}
+
+#[derive(Clone)]
+#[contracttype]
+pub enum DataKey {
+    Allowance(AllowanceDataKey),
+    Balance(Address),
+    MintRequest(BytesN<32>), // hash(receiver, amount, nonce) -> u64(et)
+    Blocked(Address),
+    TotalSupply,
+    MintBudget,
+    Owner,
+    PendingOwner,
+    Delay,
+    NextDelay,
+    EtNextDelay,
+    Operator,
+    NextOperator,
+    EtNextOperator,
+    Revoker,
+    NextRevoker,
+    EtNextRevoker,
+}

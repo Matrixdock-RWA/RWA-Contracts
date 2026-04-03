@@ -1,0 +1,254 @@
+use soroban_sdk::token::TokenClient;
+use soroban_sdk::{
+    contract, contractimpl, panic_with_error, Address, Bytes, BytesN, Env, Vec,
+};
+
+use crate::error::BullionMinterError;
+use crate::events::*;
+use crate::state::*;
+use crate::storage_types::{INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD};
+
+#[contract]
+pub struct BullionMinter;
+
+const DELAY_MAX: u64 = 59;
+
+#[contractimpl]
+impl BullionMinter {
+    // ---------- constructor ----------
+
+    pub fn __constructor(
+        env: Env,
+        owner: Address,
+        pool_a: Address,
+        pool_b: Address,
+        tokens_accepted_by_a: Vec<Address>,
+        tokens_accepted_by_b: Vec<Address>,
+    ) {
+        write_owner(&env, &owner);
+        write_pool_account_a(&env, &pool_a);
+        write_pool_account_b(&env, &pool_b);
+
+        // acceptedByA
+        for token in tokens_accepted_by_a.iter() {
+            write_token_accepted_by_a(&env, &token);
+        }
+
+        // acceptedByB
+        for token in tokens_accepted_by_b.iter() {
+            write_token_accepted_by_b(&env, &token);
+        }
+    }
+
+    fn require_owner(env: &Env) -> Address {
+        let owner: Address = read_owner(env);
+        owner.require_auth();
+        owner
+    }
+
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        let owner = Self::require_owner(&env);
+
+        env.deployer()
+            .update_current_contract_wasm(new_wasm_hash.clone());
+        ContractUpgraded {
+            owner,
+            new_wasm_hash,
+        }
+        .publish(&env);
+    }
+
+    pub fn request_owner_transfer(env: Env, new_owner: Address) {
+        let owner = Self::require_owner(&env);
+
+        bump_instance(&env);
+
+        write_pending_owner(&env, &new_owner);
+
+        OwnerTransferRequested {
+            owner,
+            pending_owner: new_owner,
+        }
+        .publish(&env);
+    }
+
+    pub fn accept_owner(env: Env) {
+        let pending_owner = read_pending_owner(&env)
+            .unwrap_or_else(|| panic_with_error!(&env, BullionMinterError::NoPendingOwner));
+
+        pending_owner.require_auth();
+
+        bump_instance(&env);
+
+        let old_owner = read_owner(&env);
+
+        write_owner(&env, &pending_owner);
+        remove_pending_owner(&env);
+
+        OwnerTransferred {
+            old_owner,
+            new_owner: pending_owner,
+        }
+        .publish(&env);
+    }
+
+    pub fn set_pool_account_a(env: Env, pool: Address) {
+        Self::require_owner(&env);
+        bump_instance(&env);
+        write_pool_account_a(&env, &pool);
+        SetPoolAccountA { pool }.publish(&env);
+    }
+
+    pub fn set_pool_account_b(env: Env, pool: Address) {
+        Self::require_owner(&env);
+        bump_instance(&env);
+        write_pool_account_b(&env, &pool);
+        SetPoolAccountB { pool }.publish(&env);
+    }
+
+    pub fn set_accepted_by_a(env: Env, token: Address, accepted: bool) {
+        Self::require_owner(&env);
+        bump_instance(&env);
+        if accepted {
+            write_token_accepted_by_a(&env, &token);
+        } else {
+            remove_token_accepted_by_a(&env, &token);
+        }
+        SetAcceptedByA { token, accepted }.publish(&env);
+    }
+
+    pub fn set_accepted_by_b(env: Env, token: Address, accepted: bool) {
+        Self::require_owner(&env);
+        bump_instance(&env);
+        if accepted {
+            write_token_accepted_by_b(&env, &token);
+        } else {
+            remove_token_accepted_by_b(&env, &token);
+        }
+        SetAcceptedByB { token, accepted }.publish(&env);
+    }
+
+    pub fn request_to_mint(
+        env: Env,
+        user: Address,
+        transferred_token: Address,
+        for_token: Address,
+        amount: i128,
+        preprice: u128,
+        slippage: u128,
+        timestamp: u64,
+        extra_data: Bytes,
+    ) {
+        user.require_auth();
+        check_nonnegative_amount(&env, amount);
+        bump_instance(&env);
+        let mut accepted: bool = is_token_accepted_by_a(&env, &transferred_token);
+        if !accepted {
+            panic_with_error!(env, BullionMinterError::InvalidTokenForMinting);
+        }
+
+        accepted = is_token_accepted_by_b(&env, &for_token);
+        if !accepted {
+            panic_with_error!(env, BullionMinterError::InvalidForToken);
+        }
+
+        let now = env.ledger().timestamp();
+        if now > timestamp + DELAY_MAX {
+            panic_with_error!(env, BullionMinterError::InvalidTimestamp);
+        }
+
+        let pool: Address = read_pool_account_a(&env);
+        let token = TokenClient::new(&env, &transferred_token);
+        token.transfer(&user, &pool, &amount);
+
+        MintRequest {
+            transferred_token,
+            for_token,
+            requestor: user,
+            pool,
+            amount,
+            preprice,
+            slippage,
+            extra_data,
+        }
+        .publish(&env);
+    }
+
+    pub fn request_to_redeem(
+        env: Env,
+        user: Address,
+        transferred_token: Address,
+        for_token: Address,
+        amount: i128,
+        preprice: u128,
+        slippage: u128,
+        timestamp: u64,
+        extra_data: Bytes,
+    ) {
+        bump_instance(&env);
+        check_nonnegative_amount(&env, amount);
+        user.require_auth();
+        let mut accepted: bool = is_token_accepted_by_b(&env, &transferred_token);
+        if !accepted {
+            panic_with_error!(env, BullionMinterError::InvalidTokenForRedeeming);
+        }
+
+        accepted = is_token_accepted_by_a(&env, &for_token);
+        if !accepted {
+            panic_with_error!(env, BullionMinterError::InvalidForToken);
+        }
+
+        let now = env.ledger().timestamp();
+        if now > timestamp + DELAY_MAX {
+            panic_with_error!(env, BullionMinterError::InvalidTimestamp);
+        }
+
+        let pool: Address = read_pool_account_b(&env);
+        let token = TokenClient::new(&env, &transferred_token);
+        token.transfer(&user, &pool, &amount);
+
+        RedeemRequest {
+            transferred_token,
+            for_token,
+            requestor: user,
+            pool,
+            amount,
+            preprice,
+            slippage,
+            extra_data,
+        }
+        .publish(&env);
+    }
+
+    pub fn owner(env: Env) -> Address {
+        read_owner(&env)
+    }
+
+    pub fn pool_account_a(env: Env) -> Address {
+        read_pool_account_a(&env)
+    }
+
+    pub fn pool_account_b(env: Env) -> Address {
+        read_pool_account_b(&env)
+    }
+
+    pub fn is_accepted_by_a(env: Env, token: Address) -> bool {
+        is_token_accepted_by_a(&env, &token)
+    }
+
+    pub fn is_accepted_by_b(env: Env, token: Address) -> bool {
+        is_token_accepted_by_b(&env, &token)
+    }
+}
+
+fn bump_instance(env: &Env) {
+    env.storage()
+        .instance()
+        .extend_ttl(INSTANCE_LIFETIME_THRESHOLD, INSTANCE_BUMP_AMOUNT);
+}
+
+fn check_nonnegative_amount(env: &Env, amount: i128) {
+    if amount < 0 {
+        panic_with_error!(env, BullionMinterError::NegativeAmountNotAllowed);
+    }
+}
