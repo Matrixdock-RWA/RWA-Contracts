@@ -279,6 +279,62 @@ fun init_messenger_cap_ok() {
 }
 
 #[test, expected_failure(abort_code = messenger_oapp::ENotOwner)]
+fun set_send_library_err_not_owner() {
+    let mut scenario = init_messenger_oapp();
+    scenario.next_tx(ALICE);
+    {
+        let state = scenario.take_shared<State>();
+        let my_oapp = scenario.take_shared<OApp>();
+        let mut endpoint = scenario.take_shared<EndpointV2>();
+        state.set_send_library(&my_oapp, &mut endpoint, 123, @0x456, scenario.ctx());
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = messenger_oapp::ENotOwner)]
+fun set_receive_library_err_not_owner() {
+    let mut scenario = init_messenger_oapp();
+    scenario.next_tx(ALICE);
+    {
+        let state = scenario.take_shared<State>();
+        let my_oapp = scenario.take_shared<OApp>();
+        let mut endpoint = scenario.take_shared<EndpointV2>();
+        let _clock = clock::create_for_testing(scenario.ctx());
+        state.set_receive_library(
+            &my_oapp,
+            &mut endpoint,
+            123, // src_eid
+            @0x456, // new_lib
+            0, // grace_period
+            &_clock,
+            scenario.ctx(),
+        );
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = messenger_oapp::ENotOwner)]
+fun set_config_err_not_owner() {
+    let mut scenario = init_messenger_oapp();
+    scenario.next_tx(ALICE);
+    {
+        let state = scenario.take_shared<State>();
+        let my_oapp = scenario.take_shared<OApp>();
+        let endpoint = scenario.take_shared<EndpointV2>();
+        let _call = state.set_config(
+            &my_oapp,
+            &endpoint,
+            @0x123, // lib
+            0x456, // eid
+            3, // config_type
+            vector[], // config
+            scenario.ctx(),
+        );
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = messenger_oapp::ENotOwner)]
 fun register_oapp_err_not_owner() {
     let mut scenario = init_messenger_oapp();
     register_oapp(&mut scenario, ALICE);

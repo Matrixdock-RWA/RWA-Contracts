@@ -6,6 +6,7 @@ use endpoint_v2::endpoint_quote::QuoteParam;
 use endpoint_v2::endpoint_send::SendParam;
 use endpoint_v2::endpoint_v2::EndpointV2;
 use endpoint_v2::lz_receive::LzReceiveParam;
+use endpoint_v2::message_lib_set_config::SetConfigParam;
 use endpoint_v2::messaging_channel::MessagingChannel;
 use endpoint_v2::messaging_fee::MessagingFee;
 use endpoint_v2::messaging_receipt::MessagingReceipt;
@@ -16,6 +17,7 @@ use oapp::oapp::{Self, AdminCap, OApp};
 use oapp::oapp_info_v1;
 use std::type_name;
 use sui::address;
+use sui::clock::Clock;
 use sui::coin::Coin;
 use sui::deny_list::DenyList;
 use sui::event;
@@ -189,6 +191,75 @@ entry fun revoke_transfer_ownership(state: &State, req: TransferOwnershipReq, ct
     let TransferOwnershipReq { id, upgrade_cap, .. } = req;
     transfer::public_transfer(upgrade_cap, state.owner);
     id.delete();
+}
+
+// forward set_send_library to oapp
+entry fun set_send_library(
+    state: &State,
+    my_oapp: &OApp,
+    endpoint: &mut EndpointV2,
+    dst_eid: u32,
+    new_lib: address,
+    ctx: &TxContext,
+) {
+    state.check_version();
+    state.check_owner(ctx);
+    endpoint_calls::set_send_library(
+        my_oapp,
+        &state.oapp_admin_cap,
+        endpoint,
+        dst_eid,
+        new_lib,
+    );
+}
+
+// forward set_receive_library to oapp
+entry fun set_receive_library(
+    state: &State,
+    my_oapp: &OApp,
+    endpoint: &mut EndpointV2,
+    src_eid: u32,
+    new_lib: address,
+    grace_period: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    state.check_version();
+    state.check_owner(ctx);
+    endpoint_calls::set_receive_library(
+        my_oapp,
+        &state.oapp_admin_cap,
+        endpoint,
+        src_eid,
+        new_lib,
+        grace_period,
+        clock,
+    );
+}
+
+// forward set_config to oapp
+entry fun set_config(
+    state: &State,
+    my_oapp: &OApp,
+    endpoint: &EndpointV2,
+    lib: address,
+    eid: u32,
+    config_type: u32,
+    config: vector<u8>,
+    ctx: &mut TxContext,
+): Call<SetConfigParam, Void> {
+    state.check_version();
+    state.check_owner(ctx);
+    endpoint_calls::set_config(
+        my_oapp,
+        &state.oapp_admin_cap,
+        endpoint,
+        lib,
+        eid,
+        config_type,
+        config,
+        ctx,
+    )
 }
 
 // https://docs.layerzero.network/v2/developers/sui/oapp/overview#registration-connecting-to-the-endpoint
