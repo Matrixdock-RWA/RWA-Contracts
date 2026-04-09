@@ -4,10 +4,10 @@ use mtoken::mtoken;
 use sui::url;
 
 const DECIMALS: u8 = 9;
-const SYMBOL: vector<u8> = b"XAGm";
+const SYMBOL: vector<u8> = b"XAGM";
 const NAME: vector<u8> = b"Matrixdock Silver";
-const DESCRIPTION: vector<u8> = b"Matrixdock Silver (XAGm) is ..."; // TODO
-const ICON_URL: vector<u8> = b"https://app.matrixdock.com/images/xagm/xagm-64x64-icon.png";
+const DESCRIPTION: vector<u8> = b"Matrixdock Silver (XAGm) is a standardized token on blockchains, where 1 token initially represents one fine troy ounce of 99.9% purity LBMA-accredited Good Delivery silver. This representation will decrease slightly over time as custody fees accrue.";
+const ICON_URL: vector<u8> = b"https://app.matrixdock.com/images/xagm/xagm-100x100-icon.png";
 const ALLOW_GLOBAL_PAUSE: bool = true;
 const INIT_DELAY: u64 = 0;
 
