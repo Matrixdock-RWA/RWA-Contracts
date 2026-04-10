@@ -39,7 +39,7 @@ const VERSION: u64 = 2;
 
 const MIN_DELAY: u64 = 3600; // 1 hour
 const MAX_DELAY: u64 = 3600 * 48; // 48 hours
-const REQ_TTL: u64 = 3600; // 1 hour, time to live after effective
+const REQ_TTL: u64 = 3600 * 12; // 12 hours, time to live after effective
 
 // === Events ===
 
