@@ -18,7 +18,7 @@ const VERSION: u64 = 2;
 const INIT_DELAY: u64 = 5;
 const MIN_DELAY: u64 = 3600;
 const MAX_DELAY: u64 = 3600 * 48;
-const REQ_TTL: u64 = 3600;
+const REQ_TTL: u64 = 3600 * 12;
 
 // test addresses
 const SYS: address = @0x0;
