@@ -613,7 +613,7 @@ fn test_set_delay_too_early_panics() {
     apply_delay(&token, DELAY); // current delay = DELAY
     let new_delay = 7200_u64;
     token.set_delay(&new_delay); // registers, et = START_TIME + DELAY
-    // still at START_TIME, too early
+                                 // still at START_TIME, too early
     token.set_delay(&new_delay); // TooEarlyToExecute
 }
 

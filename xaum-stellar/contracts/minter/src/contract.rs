@@ -1,9 +1,7 @@
 use soroban_sdk::token::TokenClient;
-use soroban_sdk::{
-    contract, contractimpl, panic_with_error, Address, Bytes, BytesN, Env, Vec,
-};
+use soroban_sdk::{contract, contractimpl, panic_with_error, Address, Bytes, BytesN, Env, Vec};
 
-use crate::error::BullionMinterError;
+use crate::error::MinterError;
 use crate::events::*;
 use crate::state::*;
 use crate::storage_types::{INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD};
@@ -12,6 +10,7 @@ use crate::storage_types::{INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD};
 pub struct BullionMinter;
 
 const DELAY_MAX: u64 = 59;
+const DELAY_SETTING: u64 = 12 * 3600; // 12 hours in seconds
 
 #[contractimpl]
 impl BullionMinter {
@@ -46,12 +45,61 @@ impl BullionMinter {
         owner
     }
 
-    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        let owner = Self::require_owner(&env);
+    pub fn request_upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        let owner = read_owner(&env);
+        owner.require_auth();
 
+        bump_instance(&env);
+
+        write_next_upgrade_wasm_hash(&env, &new_wasm_hash);
+        let now = env.ledger().timestamp();
+        let effective_time = now + DELAY_SETTING;
+        write_et_next_upgrade(&env, effective_time);
+        UpgradeRequested {
+            owner,
+            new_wasm_hash,
+            effective_time,
+        }
+        .publish(&env);
+    }
+
+    // WARNING!!! Upgrade Support Function must always here in any version of contract, otherwise the contract will be locked forever.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        let owner = read_owner(&env);
+        owner.require_auth();
+
+        if read_next_upgrade_wasm_hash(&env) != Some(new_wasm_hash.clone()) {
+            panic_with_error!(&env, MinterError::InvalidWasmHash);
+        }
+        let now = env.ledger().timestamp();
+        if read_et_next_upgrade(&env) > now {
+            panic_with_error!(&env, MinterError::TooEarlyToExecute);
+        }
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
+        remove_next_upgrade_wasm_hash(&env);
+        write_et_next_upgrade(&env, 0);
+
         ContractUpgraded {
+            owner,
+            new_wasm_hash,
+        }
+        .publish(&env);
+    }
+
+    // WARNING!!! Upgrade Support Function must always here in any version of contract, otherwise the contract will be locked forever.
+    pub fn revoke_next_upgrade(env: Env) {
+        let owner = read_owner(&env);
+        owner.require_auth();
+
+        bump_instance(&env);
+
+        let new_wasm_hash = read_next_upgrade_wasm_hash(&env)
+            .unwrap_or_else(|| panic_with_error!(&env, MinterError::NoPendingUpgrade));
+        remove_next_upgrade_wasm_hash(&env);
+        write_et_next_upgrade(&env, 0);
+
+        UpgradeRevoked {
             owner,
             new_wasm_hash,
         }
@@ -60,31 +108,35 @@ impl BullionMinter {
 
     pub fn request_owner_transfer(env: Env, new_owner: Address) {
         let owner = Self::require_owner(&env);
-
         bump_instance(&env);
-
         write_pending_owner(&env, &new_owner);
-
+        let now = env.ledger().timestamp();
+        let effective_time = now + DELAY_SETTING;
+        write_et_next_owner(&env, effective_time);
         OwnerTransferRequested {
             owner,
             pending_owner: new_owner,
+            effective_time,
         }
         .publish(&env);
     }
 
     pub fn accept_owner(env: Env) {
         let pending_owner = read_pending_owner(&env)
-            .unwrap_or_else(|| panic_with_error!(&env, BullionMinterError::NoPendingOwner));
+            .unwrap_or_else(|| panic_with_error!(&env, MinterError::NoPendingOwner));
 
         pending_owner.require_auth();
 
         bump_instance(&env);
-
+        let now = env.ledger().timestamp();
+        if read_et_next_owner(&env) > now {
+            panic_with_error!(&env, MinterError::TooEarlyToExecute);
+        }
         let old_owner = read_owner(&env);
 
         write_owner(&env, &pending_owner);
         remove_pending_owner(&env);
-
+        write_et_next_owner(&env, 0);
         OwnerTransferred {
             old_owner,
             new_owner: pending_owner,
@@ -144,17 +196,17 @@ impl BullionMinter {
         bump_instance(&env);
         let mut accepted: bool = is_token_accepted_by_a(&env, &transferred_token);
         if !accepted {
-            panic_with_error!(env, BullionMinterError::InvalidTokenForMinting);
+            panic_with_error!(env, MinterError::InvalidTokenForMinting);
         }
 
         accepted = is_token_accepted_by_b(&env, &for_token);
         if !accepted {
-            panic_with_error!(env, BullionMinterError::InvalidForToken);
+            panic_with_error!(env, MinterError::InvalidForToken);
         }
 
         let now = env.ledger().timestamp();
         if now > timestamp + DELAY_MAX {
-            panic_with_error!(env, BullionMinterError::InvalidTimestamp);
+            panic_with_error!(env, MinterError::InvalidTimestamp);
         }
 
         let pool: Address = read_pool_account_a(&env);
@@ -185,22 +237,22 @@ impl BullionMinter {
         timestamp: u64,
         extra_data: Bytes,
     ) {
-        bump_instance(&env);
-        check_nonnegative_amount(&env, amount);
         user.require_auth();
+        check_nonnegative_amount(&env, amount);
+        bump_instance(&env);
         let mut accepted: bool = is_token_accepted_by_b(&env, &transferred_token);
         if !accepted {
-            panic_with_error!(env, BullionMinterError::InvalidTokenForRedeeming);
+            panic_with_error!(env, MinterError::InvalidTokenForRedeeming);
         }
 
         accepted = is_token_accepted_by_a(&env, &for_token);
         if !accepted {
-            panic_with_error!(env, BullionMinterError::InvalidForToken);
+            panic_with_error!(env, MinterError::InvalidForToken);
         }
 
         let now = env.ledger().timestamp();
         if now > timestamp + DELAY_MAX {
-            panic_with_error!(env, BullionMinterError::InvalidTimestamp);
+            panic_with_error!(env, MinterError::InvalidTimestamp);
         }
 
         let pool: Address = read_pool_account_b(&env);
@@ -224,6 +276,14 @@ impl BullionMinter {
         read_owner(&env)
     }
 
+    pub fn pending_owner(env: Env) -> Option<Address> {
+        read_pending_owner(&env)
+    }
+
+    pub fn et_next_owner(env: Env) -> u64 {
+        read_et_next_owner(&env)
+    }
+
     pub fn pool_account_a(env: Env) -> Address {
         read_pool_account_a(&env)
     }
@@ -239,6 +299,14 @@ impl BullionMinter {
     pub fn is_accepted_by_b(env: Env, token: Address) -> bool {
         is_token_accepted_by_b(&env, &token)
     }
+
+    pub fn next_upgrade_wasm_hash(env: Env) -> Option<BytesN<32>> {
+        read_next_upgrade_wasm_hash(&env)
+    }
+
+    pub fn et_next_upgrade(env: Env) -> u64 {
+        read_et_next_upgrade(&env)
+    }
 }
 
 fn bump_instance(env: &Env) {
@@ -249,6 +317,6 @@ fn bump_instance(env: &Env) {
 
 fn check_nonnegative_amount(env: &Env, amount: i128) {
     if amount < 0 {
-        panic_with_error!(env, BullionMinterError::NegativeAmountNotAllowed);
+        panic_with_error!(env, MinterError::NegativeAmountNotAllowed);
     }
 }

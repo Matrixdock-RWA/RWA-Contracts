@@ -8,8 +8,11 @@ pub(crate) const INSTANCE_LIFETIME_THRESHOLD: u32 = INSTANCE_BUMP_AMOUNT - DAY_I
 pub enum DataKey {
     Owner,        // Address
     PendingOwner, // Address
+    EtNextOwner,
     PoolAccountA, // MuxedAddress
     PoolAccountB, // MuxedAddress
+    NewWasmHash,  //BytesN<32>, hash of the new wasm to be set by upgrade
+    EtNextUpgrade,
 
     AcceptedByA(Address), // address => bool
     AcceptedByB(Address), // address => bool

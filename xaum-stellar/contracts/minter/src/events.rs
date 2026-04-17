@@ -4,6 +4,7 @@ use soroban_sdk::{contractevent, Address, Bytes, BytesN};
 pub struct OwnerTransferRequested {
     pub owner: Address,
     pub pending_owner: Address,
+    pub effective_time: u64,
 }
 
 #[contractevent]
@@ -67,7 +68,20 @@ pub struct RedeemRequest {
 }
 
 #[contractevent]
+pub struct UpgradeRequested {
+    pub owner: Address,
+    pub new_wasm_hash: BytesN<32>,
+    pub effective_time: u64,
+}
+
+#[contractevent]
 pub struct ContractUpgraded {
+    pub owner: Address,
+    pub new_wasm_hash: BytesN<32>,
+}
+
+#[contractevent]
+pub struct UpgradeRevoked {
     pub owner: Address,
     pub new_wasm_hash: BytesN<32>,
 }

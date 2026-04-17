@@ -30,10 +30,13 @@ pub enum DataKey {
     Balance(Address),
     MintRequest(BytesN<32>), // hash(receiver, amount, nonce) -> u64(et)
     Blocked(Address),
+    NewWasmHash, //BytesN<32>, hash of the new wasm to be set by upgrade
+    EtNextUpgrade,
     TotalSupply,
     MintBudget,
     Owner,
     PendingOwner,
+    EtNextOwner,
     Delay,
     NextDelay,
     EtNextDelay,
@@ -43,4 +46,7 @@ pub enum DataKey {
     Revoker,
     NextRevoker,
     EtNextRevoker,
+    GovDelay,
+    NextGovDelay,
+    EtNextGovDelay,
 }

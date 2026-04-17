@@ -36,10 +36,10 @@ fn receive_balance(env: &Env, to: Option<Address>, amount: i128) {
     } else {
         // `to` is None, so we're burning tokens.
         let total_supply = state::read_total_supply(env);
-        let Some(new_total_supply) = total_supply.checked_sub(amount) else {
+        if amount > total_supply {
             panic_with_error!(env, TokenError::TotalSupplyUnderflow);
-        };
-        state::write_total_supply(env, new_total_supply);
+        }
+        state::write_total_supply(env, total_supply - amount);
     }
 }
 
@@ -47,16 +47,13 @@ fn receive_balance(env: &Env, to: Option<Address>, amount: i128) {
 fn spend_balance(env: &Env, from: Option<Address>, amount: i128) {
     if let Some(account) = from {
         let balance = read_balance(env, account.clone());
-        if balance < amount {
-            panic_with_error!(env, TokenError::InsufficientBalance);
+        if amount > balance {
+            panic_with_error!(&env, TokenError::InsufficientBalance);
         }
         write_balance(env, account, balance - amount);
     } else {
         // `from` is None, so we're minting tokens.
         let total_supply = state::read_total_supply(env);
-        let Some(new_total_supply) = total_supply.checked_add(amount) else {
-            panic_with_error!(env, TokenError::TotalSupplyOverflow)
-        };
-        state::write_total_supply(env, new_total_supply);
+        state::write_total_supply(env, total_supply + amount);
     }
 }

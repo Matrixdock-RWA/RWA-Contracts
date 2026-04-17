@@ -48,19 +48,10 @@ impl TokenInterface for MockToken {
         let to = to_muxed.address();
         let from_bal: i128 = env.storage().persistent().get(&from).unwrap_or(0);
         let to_bal: i128 = env.storage().persistent().get(&to).unwrap_or(0);
-        env.storage()
-            .persistent()
-            .set(&from, &(from_bal - amount));
+        env.storage().persistent().set(&from, &(from_bal - amount));
         env.storage().persistent().set(&to, &(to_bal + amount));
     }
-    fn transfer_from(
-        _env: Env,
-        _spender: Address,
-        _from: Address,
-        _to: Address,
-        _amount: i128,
-    ) {
-    }
+    fn transfer_from(_env: Env, _spender: Address, _from: Address, _to: Address, _amount: i128) {}
     fn burn(_env: Env, _from: Address, _amount: i128) {}
     fn burn_from(_env: Env, _spender: Address, _from: Address, _amount: i128) {}
     fn decimals(_env: Env) -> u32 {

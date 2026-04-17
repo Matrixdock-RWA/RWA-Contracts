@@ -43,6 +43,18 @@ pub fn remove_pending_owner(env: &Env) {
     env.storage().instance().remove(&DataKey::PendingOwner);
 }
 
+pub fn read_et_next_owner(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::EtNextOwner)
+        .unwrap_or(0)
+}
+
+pub fn write_et_next_owner(env: &Env, et: u64) {
+    let key = DataKey::EtNextOwner;
+    env.storage().instance().set(&key, &et);
+}
+
 //-------- operator ----------
 
 pub fn read_operator(env: &Env) -> Address {
@@ -196,4 +208,68 @@ pub fn write_total_supply(env: &Env, new_total: i128) {
     env.storage()
         .instance()
         .set(&DataKey::TotalSupply, &new_total);
+}
+
+//-------- gov delay ----------
+
+pub fn read_gov_delay(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::GovDelay)
+        .unwrap_or(0)
+}
+
+pub fn write_gov_delay(env: &Env, new_gov_delay: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::GovDelay, &new_gov_delay);
+}
+
+pub fn read_next_gov_delay(env: &Env) -> Option<u64> {
+    env.storage().instance().get(&DataKey::NextGovDelay)
+}
+
+pub fn write_next_gov_delay(env: &Env, next: u64) {
+    let key = DataKey::NextGovDelay;
+    env.storage().instance().set(&key, &next);
+}
+
+pub fn read_et_next_gov_delay(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::EtNextGovDelay)
+        .unwrap_or(0)
+}
+
+pub fn write_et_next_gov_delay(env: &Env, et: u64) {
+    let key = DataKey::EtNextGovDelay;
+    env.storage().instance().set(&key, &et);
+}
+
+//--------- upgrade ----------
+
+pub fn read_next_upgrade_wasm_hash(env: &Env) -> Option<BytesN<32>> {
+    env.storage().instance().get(&DataKey::NewWasmHash)
+}
+
+pub fn write_next_upgrade_wasm_hash(env: &Env, new_wasm_hash: &BytesN<32>) {
+    env.storage()
+        .instance()
+        .set(&DataKey::NewWasmHash, new_wasm_hash);
+}
+
+pub fn remove_next_upgrade_wasm_hash(env: &Env) {
+    env.storage().instance().remove(&DataKey::NewWasmHash);
+}
+
+pub fn read_et_next_upgrade(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::EtNextUpgrade)
+        .unwrap_or(0)
+}
+
+pub fn write_et_next_upgrade(env: &Env, et: u64) {
+    let key = DataKey::EtNextUpgrade;
+    env.storage().instance().set(&key, &et);
 }

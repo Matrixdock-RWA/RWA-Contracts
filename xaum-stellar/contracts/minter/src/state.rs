@@ -1,4 +1,4 @@
-use soroban_sdk::{Address, Env};
+use soroban_sdk::{Address, BytesN, Env};
 
 use crate::storage_types::DataKey;
 
@@ -22,6 +22,18 @@ pub fn read_pending_owner(env: &Env) -> Option<Address> {
 
 pub fn remove_pending_owner(env: &Env) {
     env.storage().instance().remove(&DataKey::PendingOwner);
+}
+
+pub fn read_et_next_owner(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::EtNextOwner)
+        .unwrap_or(0)
+}
+
+pub fn write_et_next_owner(env: &Env, et: u64) {
+    let key = DataKey::EtNextOwner;
+    env.storage().instance().set(&key, &et);
 }
 
 //-------- pool account ----------
@@ -75,4 +87,32 @@ pub fn write_token_accepted_by_b(env: &Env, token: &Address) {
 pub fn remove_token_accepted_by_b(env: &Env, token: &Address) {
     let key = DataKey::AcceptedByB(token.clone());
     env.storage().instance().remove(&key);
+}
+
+//--------- upgrade ----------
+
+pub fn read_next_upgrade_wasm_hash(env: &Env) -> Option<BytesN<32>> {
+    env.storage().instance().get(&DataKey::NewWasmHash)
+}
+
+pub fn write_next_upgrade_wasm_hash(env: &Env, new_wasm_hash: &BytesN<32>) {
+    env.storage()
+        .instance()
+        .set(&DataKey::NewWasmHash, new_wasm_hash);
+}
+
+pub fn remove_next_upgrade_wasm_hash(env: &Env) {
+    env.storage().instance().remove(&DataKey::NewWasmHash);
+}
+
+pub fn read_et_next_upgrade(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::EtNextUpgrade)
+        .unwrap_or(0)
+}
+
+pub fn write_et_next_upgrade(env: &Env, et: u64) {
+    let key = DataKey::EtNextUpgrade;
+    env.storage().instance().set(&key, &et);
 }

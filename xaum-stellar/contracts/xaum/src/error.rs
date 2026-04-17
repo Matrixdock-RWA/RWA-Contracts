@@ -5,7 +5,6 @@ use soroban_sdk::contracterror;
 pub enum TokenError {
     // -------- generic --------
     NegativeAmountNotAllowed = 1,
-    MathOverflow = 2,
 
     // -------- auth / role --------
     NotOwner = 10,
@@ -17,10 +16,10 @@ pub enum TokenError {
     DelayTooSmall = 20,
     TooEarlyToExecute = 21,
     PendingRequestExists = 22,
+    DelayTooLarge = 23,
 
     // -------- mint / budget --------
     MintBudgetNotEnough = 30,
-    MintBudgetOverflow = 31,
 
     // -------- block list --------
     UserBlocked = 40,
@@ -34,9 +33,10 @@ pub enum TokenError {
 
     // -------- config --------
     InvalidDecimal = 70,
+    InvalidWasmHash = 71,
+    NoPendingUpgrade = 72,
 
     // -------- supply --------
-    TotalSupplyOverflow = 80,
     TotalSupplyUnderflow = 81,
 
     // -------- unsupported --------

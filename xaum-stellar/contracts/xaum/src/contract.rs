@@ -15,7 +15,8 @@ use soroban_token_sdk::metadata::TokenMetadata;
 #[cfg(test)]
 use crate::storage_types::{AllowanceDataKey, AllowanceValue, DataKey};
 
-const MIN_DELAY: u64 = 3600; // seconds
+const MIN_DELAY: u64 = 3600; // 1hour
+const MAX_DELAY: u64 = 3600 * 24 * 7; // 7days
 
 #[contract]
 pub struct Token;
@@ -47,13 +48,63 @@ impl Token {
         )
     }
 
+    // WARNING!!! Upgrade Support Function must always here in any version of contract, otherwise the contract will be locked forever.
+    pub fn request_upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        let owner = state::read_owner(&env);
+        owner.require_auth();
+
+        bump_instance(&env);
+
+        state::write_next_upgrade_wasm_hash(&env, &new_wasm_hash);
+        let now = env.ledger().timestamp();
+        let delay = state::read_delay(&env);
+        let effective_time = now + delay;
+        state::write_et_next_upgrade(&env, effective_time);
+        UpgradeRequested {
+            owner,
+            new_wasm_hash,
+            effective_time,
+        }
+        .publish(&env);
+    }
+
+    // WARNING!!! Upgrade Support Function must always here in any version of contract, otherwise the contract will be locked forever.
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
         let owner = state::read_owner(&env);
         owner.require_auth();
 
+        if state::read_next_upgrade_wasm_hash(&env) != Some(new_wasm_hash.clone()) {
+            panic_with_error!(&env, TokenError::InvalidWasmHash);
+        }
+        let now = env.ledger().timestamp();
+        if state::read_et_next_upgrade(&env) > now {
+            panic_with_error!(&env, TokenError::TooEarlyToExecute);
+        }
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
+        state::remove_next_upgrade_wasm_hash(&env);
+        state::write_et_next_upgrade(&env, 0);
+
         ContractUpgraded {
+            owner,
+            new_wasm_hash,
+        }
+        .publish(&env);
+    }
+
+    // WARNING!!! Upgrade Support Function must always here in any version of contract, otherwise the contract will be locked forever.
+    pub fn revoke_next_upgrade(env: Env) {
+        let owner = state::read_owner(&env);
+        owner.require_auth();
+
+        bump_instance(&env);
+
+        let new_wasm_hash = state::read_next_upgrade_wasm_hash(&env)
+            .unwrap_or_else(|| panic_with_error!(&env, TokenError::NoPendingUpgrade));
+        state::remove_next_upgrade_wasm_hash(&env);
+        state::write_et_next_upgrade(&env, 0);
+
+        UpgradeRevoked {
             owner,
             new_wasm_hash,
         }
@@ -67,10 +118,14 @@ impl Token {
         bump_instance(&env);
 
         state::write_pending_owner(&env, &new_owner);
-
+        let now = env.ledger().timestamp();
+        let gov_delay = state::read_gov_delay(&env);
+        let effective_time = now + gov_delay;
+        state::write_et_next_owner(&env, effective_time);
         OwnerTransferRequested {
             owner,
             pending_owner: new_owner,
+            effective_time,
         }
         .publish(&env);
     }
@@ -82,12 +137,15 @@ impl Token {
         pending_owner.require_auth();
 
         bump_instance(&env);
-
+        let now = env.ledger().timestamp();
+        if state::read_et_next_owner(&env) > now {
+            panic_with_error!(&env, TokenError::TooEarlyToExecute);
+        }
         let old_owner = state::read_owner(&env);
 
         state::write_owner(&env, &pending_owner);
         state::remove_pending_owner(&env);
-
+        state::write_et_next_owner(&env, 0);
         OwnerTransferred {
             old_owner,
             new_owner: pending_owner,
@@ -192,6 +250,9 @@ impl Token {
         if new_delay < MIN_DELAY {
             panic_with_error!(&env, TokenError::DelayTooSmall);
         }
+        if new_delay > MAX_DELAY {
+            panic_with_error!(&env, TokenError::DelayTooLarge);
+        }
         let now = env.ledger().timestamp();
 
         let current_delay = state::read_delay(&env);
@@ -225,22 +286,79 @@ impl Token {
         .publish(&env);
     }
 
+    pub fn set_gov_delay(env: Env, new_delay: u64) {
+        // onlyOwner
+        let owner = state::read_owner(&env);
+        owner.require_auth();
+
+        bump_instance(&env);
+
+        if new_delay < MIN_DELAY {
+            panic_with_error!(&env, TokenError::DelayTooSmall);
+        }
+        if new_delay > MAX_DELAY {
+            panic_with_error!(&env, TokenError::DelayTooLarge);
+        }
+        let now = env.ledger().timestamp();
+
+        let current_delay = state::read_gov_delay(&env);
+        let next_delay = state::read_next_gov_delay(&env); // Option<u64>
+        let et = state::read_et_next_gov_delay(&env); // u64, 0 = none
+
+        if et != 0 {
+            if next_delay.unwrap() != new_delay {
+                panic_with_error!(&env, TokenError::PendingRequestExists);
+            }
+            if et > now {
+                panic_with_error!(&env, TokenError::TooEarlyToExecute);
+            }
+            state::write_gov_delay(&env, new_delay);
+            state::write_et_next_gov_delay(&env, 0);
+            SetGovDelayEffected { delay: new_delay }.publish(&env);
+            return;
+        }
+
+        let delay = state::read_gov_delay(&env);
+        let effective_time = now + delay;
+
+        state::write_next_gov_delay(&env, new_delay);
+        state::write_et_next_gov_delay(&env, effective_time);
+
+        SetGovDelayRequest {
+            current_delay,
+            next_delay: new_delay,
+            effective_time,
+        }
+        .publish(&env);
+    }
+
+    // owner auth required to revoke pending gov delay change here
+    pub fn revoke_next_gov_delay(env: Env) {
+        let owner = state::read_owner(&env);
+        owner.require_auth();
+        state::write_et_next_gov_delay(&env, 0);
+        GovDelayRevoked {}.publish(&env);
+    }
+
     pub fn revoke_next_delay(env: Env) {
         let revoker = state::read_revoker(&env);
         revoker.require_auth();
         state::write_et_next_delay(&env, 0);
+        DelayRevoked {}.publish(&env);
     }
 
     pub fn revoke_next_operator(env: Env) {
         let revoker = state::read_revoker(&env);
         revoker.require_auth();
         state::write_et_next_operator(&env, 0);
+        OperatorRevoked {}.publish(&env);
     }
 
     pub fn revoke_next_revoker(env: Env) {
         let owner = state::read_owner(&env);
         owner.require_auth();
         state::write_et_next_revoker(&env, 0);
+        RevokerRevoked {}.publish(&env);
     }
 
     pub fn change_mint_budget(env: Env, delta: i128) {
@@ -252,9 +370,7 @@ impl Token {
 
         let mint_budget = state::read_mint_budget(&env);
 
-        let new_budget = mint_budget
-            .checked_add(delta)
-            .unwrap_or_else(|| panic_with_error!(&env, TokenError::MathOverflow));
+        let new_budget = mint_budget + delta;
         if new_budget < 0 {
             panic_with_error!(&env, TokenError::MintBudgetNotEnough);
         }
@@ -307,7 +423,7 @@ impl Token {
                 state::remove_mint_request(&env, &req);
                 // budget check
                 let budget = state::read_mint_budget(&env);
-                if budget < amount {
+                if amount > budget {
                     panic_with_error!(&env, TokenError::MintBudgetNotEnough);
                 }
                 state::write_mint_budget(&env, budget - amount);
@@ -327,6 +443,14 @@ impl Token {
                 true
             }
         }
+    }
+
+    pub fn revoke_mint_request(env: Env, req: BytesN<32>) {
+        let revoker = state::read_revoker(&env);
+        revoker.require_auth();
+
+        state::remove_mint_request(&env, &req);
+        MintRequestRevoked { req }.publish(&env);
     }
 
     pub fn add_to_blocked_list(env: Env, user: Address) {
@@ -353,6 +477,14 @@ impl Token {
 
     pub fn owner(env: Env) -> Address {
         state::read_owner(&env)
+    }
+
+    pub fn pending_owner(env: Env) -> Option<Address> {
+        state::read_pending_owner(&env)
+    }
+
+    pub fn et_next_owner(env: Env) -> u64 {
+        state::read_et_next_owner(&env)
     }
 
     pub fn operator(env: Env) -> Address {
@@ -389,6 +521,26 @@ impl Token {
 
     pub fn et_next_delay(env: Env) -> u64 {
         state::read_et_next_delay(&env)
+    }
+
+    pub fn gov_delay(env: Env) -> u64 {
+        state::read_gov_delay(&env)
+    }
+
+    pub fn next_gov_delay(env: Env) -> u64 {
+        state::read_next_gov_delay(&env).unwrap_or(0)
+    }
+
+    pub fn et_next_gov_delay(env: Env) -> u64 {
+        state::read_et_next_gov_delay(&env)
+    }
+
+    pub fn next_upgrade_wasm_hash(env: Env) -> Option<BytesN<32>> {
+        state::read_next_upgrade_wasm_hash(&env)
+    }
+
+    pub fn et_next_upgrade(env: Env) -> u64 {
+        state::read_et_next_upgrade(&env)
     }
 
     pub fn mint_budget(env: Env) -> i128 {
@@ -493,10 +645,19 @@ impl TokenInterface for Token {
         check_nonnegative_amount(&env, amount);
         bump_instance(&env);
 
-        update_balance(&env, Some(operator), None, amount);
+        update_balance(&env, Some(operator.clone()), None, amount);
         let budget = state::read_mint_budget(&env);
         state::write_mint_budget(&env, budget + amount);
-        events::Burn { from, amount }.publish(&env);
+        events::Burn {
+            from: operator,
+            amount,
+        }
+        .publish(&env);
+        Redeem {
+            customer: from,
+            amount,
+        }
+        .publish(&env);
     }
 
     fn burn_from(env: Env, _spender: Address, _from: Address, _amount: i128) {
@@ -522,6 +683,7 @@ impl TokenInterface for Token {
 pub struct OwnerTransferRequested {
     pub owner: Address,
     pub pending_owner: Address,
+    pub effective_time: u64,
 }
 
 #[contractevent]
@@ -601,9 +763,58 @@ pub struct BlockReleased {
 }
 
 #[contractevent]
+pub struct Redeem {
+    #[topic]
+    pub customer: Address,
+    pub amount: i128,
+}
+
+#[contractevent]
+pub struct SetGovDelayEffected {
+    pub delay: u64,
+}
+
+#[contractevent]
+pub struct SetGovDelayRequest {
+    pub current_delay: u64,
+    pub next_delay: u64,
+    pub effective_time: u64,
+}
+
+#[contractevent]
+pub struct UpgradeRequested {
+    pub owner: Address,
+    pub new_wasm_hash: BytesN<32>,
+    pub effective_time: u64,
+}
+
+#[contractevent]
 pub struct ContractUpgraded {
     pub owner: Address,
     pub new_wasm_hash: BytesN<32>,
+}
+
+#[contractevent]
+pub struct UpgradeRevoked {
+    pub owner: Address,
+    pub new_wasm_hash: BytesN<32>,
+}
+
+#[contractevent]
+pub struct GovDelayRevoked {}
+
+#[contractevent]
+pub struct DelayRevoked {}
+
+#[contractevent]
+pub struct OperatorRevoked {}
+
+#[contractevent]
+pub struct RevokerRevoked {}
+
+#[contractevent]
+pub struct MintRequestRevoked {
+    pub req: BytesN<32>,
 }
 
 //---------- utility functions ----------

@@ -2,7 +2,7 @@ use soroban_sdk::contracterror;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum BullionMinterError {
+pub enum MinterError {
     // -------- amount --------
     NegativeAmountNotAllowed = 1,
 
@@ -16,4 +16,9 @@ pub enum BullionMinterError {
 
     // -------- timing --------
     InvalidTimestamp = 30,
+    TooEarlyToExecute = 31,
+
+    // -------- config --------
+    InvalidWasmHash = 40,
+    NoPendingUpgrade = 41,
 }
