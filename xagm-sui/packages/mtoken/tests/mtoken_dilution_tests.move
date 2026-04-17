@@ -81,6 +81,20 @@ fun update_annual_fee_rate(
     };
 }
 
+fun update_oz_per_token_base(
+    scenario: &mut Scenario,
+    caller: address,
+    oz_per_token_base: u64,
+    oz_per_token_base_time: u64,
+) {
+    scenario.next_tx(caller);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
+        state.update_oz_per_token_base(oz_per_token_base, oz_per_token_base_time, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+}
+
 fun cc_send_mint_budget_manually(scenario: &mut Scenario, caller: address, amount: u64) {
     scenario.next_tx(caller);
     {
@@ -449,4 +463,37 @@ fun redeem_err_unexpected_oz_per_token() {
         )
     };
     abort
+}
+
+#[test, expected_failure(abort_code = mtoken::ENotOwner)]
+fun update_oz_per_token_base_err_not_owner() {
+    let (mut scenario, _clock) = init_xagm();
+    update_oz_per_token_base(&mut scenario, ALICE, 123, 456);
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::ENotOwner)]
+fun update_oz_per_token_base_err_base_too_large() {
+    let (mut scenario, _clock) = init_xagm();
+    update_oz_per_token_base(&mut scenario, ALICE, OZ_RATIO_BASE+1, 456);
+    abort
+}
+
+#[test]
+fun update_oz_per_token_base_ok() {
+    let (mut scenario, mut _clock) = init_xagm_with_fee_rate();
+    let new_base = OZ_RATIO_BASE;
+    let new_base_time = 77777;
+    update_oz_per_token_base(&mut scenario, ADMIN, new_base, new_base_time);
+    clock::destroy_for_testing(_clock);
+
+    scenario.next_tx(ALICE);
+    {
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
+        assert_eq!(state.oz_per_token_base(), new_base);
+        assert_eq!(state.oz_per_token_base_time(), new_base_time);
+        test_scenario::return_shared(state);
+    };
+
+    scenario.end();
 }

@@ -40,7 +40,7 @@ const EUnexpectedOzPerToken: u64 = 205;
 
 // === Constants ===
 
-const VERSION: u64 = 2;
+const VERSION: u64 = 3;
 
 const MIN_DELAY: u64 = 3600; // 1 hour
 const MAX_DELAY: u64 = 3600 * 48; // 48 hours
@@ -104,6 +104,11 @@ public struct UnblockEvent has copy, drop {
 
 public struct UpdateAnnualFeeRateEvent has copy, drop {
     annual_fee_rate: u64,
+    oz_per_token_base: u64,
+    oz_per_token_base_time: u64,
+}
+
+public struct UpdateOzPerTokenBaseEvent has copy, drop {
     oz_per_token_base: u64,
     oz_per_token_base_time: u64,
 }
@@ -519,6 +524,23 @@ entry fun revoke_set_delay<T>(state: &State<T>, req: SetDelayReq, ctx: &TxContex
     check_req(state, &req.id);
     let SetDelayReq { id, .. } = req;
     id.delete();
+}
+
+entry fun update_oz_per_token_base<T>(
+    state: &mut State<T>,
+    oz_per_token_base: u64,
+    oz_per_token_base_time: u64,
+    ctx: &TxContext,
+) {
+    check_version(state);
+    check_owner(state, ctx);
+    assert!(oz_per_token_base <= OZ_RATIO_BASE, EOzPerTokenBaseTooLarge);
+    state.oz_per_token_base = oz_per_token_base;
+    state.oz_per_token_base_time = oz_per_token_base_time;
+    event::emit(UpdateOzPerTokenBaseEvent {
+        oz_per_token_base,
+        oz_per_token_base_time,
+    });
 }
 
 entry fun update_annual_fee_rate<T>(
