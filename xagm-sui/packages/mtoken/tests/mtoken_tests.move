@@ -14,7 +14,7 @@ use sui::test_scenario;
 use sui::url;
 
 // constants are not exported, so we need to redefine them here
-const VERSION: u64 = 2;
+const VERSION: u64 = 3;
 const INIT_DELAY: u64 = 5;
 const MIN_DELAY: u64 = 3600;
 const MAX_DELAY: u64 = 3600 * 48;

@@ -8,7 +8,7 @@ use sui::package::test_publish;
 use sui::test_scenario;
 
 // constants are not exported, so we need to redefine them here
-const VERSION: u64 = 2;
+const VERSION: u64 = 3;
 
 // test addresses
 const SYS: address = @0x0;
@@ -108,7 +108,7 @@ fun migrate_err_wrong_version() {
     scenario.next_tx(ADMIN);
     {
         let mut state = scenario.take_shared<mtoken::State<XAGM>>();
-        state.set_version(2);
+        state.set_version(VERSION + 1);
         mtoken::migrate(&mut state, scenario.ctx());
     };
     abort
