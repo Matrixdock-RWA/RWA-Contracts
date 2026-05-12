@@ -77,7 +77,7 @@ impl Token {
             panic_with_error!(&env, TokenError::InvalidWasmHash);
         }
         let now = env.ledger().timestamp();
-        if state::read_et_next_upgrade(&env) > now {
+        if state::read_et_next_upgrade(&env) >= now {
             panic_with_error!(&env, TokenError::TooEarlyToExecute);
         }
         env.deployer()
@@ -138,7 +138,7 @@ impl Token {
 
         bump_instance(&env);
         let now = env.ledger().timestamp();
-        if state::read_et_next_owner(&env) > now {
+        if state::read_et_next_owner(&env) >= now {
             panic_with_error!(&env, TokenError::TooEarlyToExecute);
         }
         let old_owner = state::read_owner(&env);
@@ -179,7 +179,7 @@ impl Token {
             if next_operator.unwrap() != new_operator {
                 panic_with_error!(&env, TokenError::PendingRequestExists);
             }
-            if et > now {
+            if et >= now {
                 panic_with_error!(&env, TokenError::TooEarlyToExecute);
             }
             state::write_operator(&env, &new_operator);
@@ -223,7 +223,7 @@ impl Token {
             if next_revoker.unwrap() != new_revoker {
                 panic_with_error!(&env, TokenError::PendingRequestExists);
             }
-            if et > now {
+            if et >= now {
                 panic_with_error!(&env, TokenError::TooEarlyToExecute);
             }
             state::write_revoker(&env, &new_revoker);
@@ -273,7 +273,7 @@ impl Token {
             if next_delay.unwrap() != new_delay {
                 panic_with_error!(&env, TokenError::PendingRequestExists);
             }
-            if et > now {
+            if et >= now {
                 panic_with_error!(&env, TokenError::TooEarlyToExecute);
             }
             state::write_delay(&env, new_delay);
@@ -320,7 +320,7 @@ impl Token {
             if next_delay.unwrap() != new_delay {
                 panic_with_error!(&env, TokenError::PendingRequestExists);
             }
-            if et > now {
+            if et >= now {
                 panic_with_error!(&env, TokenError::TooEarlyToExecute);
             }
             state::write_gov_delay(&env, new_delay);
@@ -433,7 +433,7 @@ impl Token {
                 false
             }
             Some(et) => {
-                if et > now {
+                if et >= now {
                     panic_with_error!(&env, TokenError::TooEarlyToExecute);
                 }
                 state::remove_mint_request(&env, &req);

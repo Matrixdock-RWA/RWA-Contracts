@@ -70,7 +70,7 @@ impl BullionMinter {
             panic_with_error!(&env, MinterError::InvalidWasmHash);
         }
         let now = env.ledger().timestamp();
-        if read_et_next_upgrade(&env) > now {
+        if read_et_next_upgrade(&env) >= now {
             panic_with_error!(&env, MinterError::TooEarlyToExecute);
         }
         env.deployer()
@@ -126,7 +126,7 @@ impl BullionMinter {
 
         bump_instance(&env);
         let now = env.ledger().timestamp();
-        if read_et_next_owner(&env) > now {
+        if read_et_next_owner(&env) >= now {
             panic_with_error!(&env, MinterError::TooEarlyToExecute);
         }
         let old_owner = read_owner(&env);
