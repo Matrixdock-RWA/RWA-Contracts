@@ -50,6 +50,10 @@ impl BullionMinter {
 
         bump_instance(&env);
 
+        if read_et_next_upgrade(&env) != 0 {
+            panic_with_error!(&env, MinterError::PendingRequestExists);
+        }
+
         write_next_upgrade_wasm_hash(&env, &new_wasm_hash);
         let now = env.ledger().timestamp();
         let effective_time = now + DELAY_SETTING;
@@ -106,6 +110,11 @@ impl BullionMinter {
     pub fn request_owner_transfer(env: Env, new_owner: Address) {
         let owner = Self::require_owner(&env);
         bump_instance(&env);
+
+        if read_et_next_owner(&env) != 0 {
+            panic_with_error!(&env, MinterError::PendingRequestExists);
+        }
+
         write_pending_owner(&env, &new_owner);
         let now = env.ledger().timestamp();
         let effective_time = now + DELAY_SETTING;

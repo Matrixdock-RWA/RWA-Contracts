@@ -873,6 +873,40 @@ fn test_two_step_ownership() {
 
 #[test]
 #[should_panic]
+fn test_request_owner_transfer_with_pending_panics() {
+    let e = Env::default();
+    e.mock_all_auths();
+    e.ledger().set_timestamp(START_TIME);
+    let owner = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let revoker = Address::generate(&e);
+    let new_owner1 = Address::generate(&e);
+    let new_owner2 = Address::generate(&e);
+    let token = create_token(&e, &owner, &operator, &revoker);
+
+    token.request_owner_transfer(&new_owner1); // registers
+    token.request_owner_transfer(&new_owner2); // PendingRequestExists
+}
+
+#[test]
+#[should_panic]
+fn test_request_upgrade_with_pending_panics() {
+    let e = Env::default();
+    e.mock_all_auths();
+    e.ledger().set_timestamp(START_TIME);
+    let owner = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let revoker = Address::generate(&e);
+    let token = create_token(&e, &owner, &operator, &revoker);
+
+    let hash1 = soroban_sdk::BytesN::from_array(&e, &[1u8; 32]);
+    let hash2 = soroban_sdk::BytesN::from_array(&e, &[2u8; 32]);
+    token.request_upgrade(&hash1); // registers
+    token.request_upgrade(&hash2); // PendingRequestExists
+}
+
+#[test]
+#[should_panic]
 fn test_accept_owner_with_no_pending_panics() {
     let e = Env::default();
     e.mock_all_auths();

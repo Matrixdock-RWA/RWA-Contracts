@@ -55,6 +55,10 @@ impl Token {
 
         bump_instance(&env);
 
+        if state::read_et_next_upgrade(&env) != 0 {
+            panic_with_error!(&env, TokenError::PendingRequestExists);
+        }
+
         state::write_next_upgrade_wasm_hash(&env, &new_wasm_hash);
         let now = env.ledger().timestamp();
         let delay = state::read_delay(&env);
@@ -116,6 +120,10 @@ impl Token {
         owner.require_auth();
 
         bump_instance(&env);
+
+        if state::read_et_next_owner(&env) != 0 {
+            panic_with_error!(&env, TokenError::PendingRequestExists);
+        }
 
         state::write_pending_owner(&env, &new_owner);
         let now = env.ledger().timestamp();
