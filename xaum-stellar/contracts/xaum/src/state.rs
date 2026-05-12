@@ -2,24 +2,27 @@ use soroban_sdk::{Address, BytesN, Env};
 
 use crate::storage_types::DataKey;
 use crate::storage_types::{
-    ALLOW_BLOCK_EXTEND_AMOUNT, ALLOW_BLOCK_TTL_THRESHOLD, PENDING_TTL_LEDGERS,
+    ALLOW_BLOCK_EXTEND_AMOUNT, ALLOW_BLOCK_TTL_THRESHOLD, MINT_REQUEST_TTL_LEDGERS,
+    PENDING_TTL_LEDGERS,
 };
 
 pub fn read_mint_request(env: &Env, key: &BytesN<32>) -> Option<u64> {
     env.storage()
-        .persistent()
+        .temporary()
         .get(&DataKey::MintRequest(key.clone()))
 }
 
 pub fn write_mint_request(env: &Env, key: &BytesN<32>, et: u64) {
+    let k = DataKey::MintRequest(key.clone());
+    env.storage().temporary().set(&k, &et);
     env.storage()
-        .persistent()
-        .set(&DataKey::MintRequest(key.clone()), &et);
+        .temporary()
+        .extend_ttl(&k, MINT_REQUEST_TTL_LEDGERS, MINT_REQUEST_TTL_LEDGERS);
 }
 
 pub fn remove_mint_request(env: &Env, key: &BytesN<32>) {
     env.storage()
-        .persistent()
+        .temporary()
         .remove(&DataKey::MintRequest(key.clone()));
 }
 
