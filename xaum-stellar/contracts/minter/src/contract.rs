@@ -46,8 +46,7 @@ impl BullionMinter {
     }
 
     pub fn request_upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        let owner = read_owner(&env);
-        owner.require_auth();
+        let owner = Self::require_owner(&env);
 
         bump_instance(&env);
 
@@ -65,8 +64,7 @@ impl BullionMinter {
 
     // WARNING!!! Upgrade Support Function must always here in any version of contract, otherwise the contract will be locked forever.
     pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
-        let owner = read_owner(&env);
-        owner.require_auth();
+        let owner = Self::require_owner(&env);
 
         if read_next_upgrade_wasm_hash(&env) != Some(new_wasm_hash.clone()) {
             panic_with_error!(&env, MinterError::InvalidWasmHash);
@@ -89,8 +87,7 @@ impl BullionMinter {
 
     // WARNING!!! Upgrade Support Function must always here in any version of contract, otherwise the contract will be locked forever.
     pub fn revoke_next_upgrade(env: Env) {
-        let owner = read_owner(&env);
-        owner.require_auth();
+        let owner = Self::require_owner(&env);
 
         bump_instance(&env);
 
@@ -142,6 +139,13 @@ impl BullionMinter {
             new_owner: pending_owner,
         }
         .publish(&env);
+    }
+
+    pub fn revoke_next_owner(env: Env) {
+        Self::require_owner(&env);
+
+        write_et_next_owner(&env, 0);
+        OwnerRevoked {}.publish(&env);
     }
 
     pub fn set_pool_account_a(env: Env, pool: Address) {

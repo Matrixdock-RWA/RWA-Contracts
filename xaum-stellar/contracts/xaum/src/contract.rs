@@ -153,6 +153,14 @@ impl Token {
         .publish(&env);
     }
 
+    pub fn revoke_next_owner(env: Env) {
+        let owner = state::read_owner(&env);
+        owner.require_auth();
+
+        state::write_et_next_owner(&env, 0);
+        OwnerRevoked {}.publish(&env);
+    }
+
     pub fn set_operator(env: Env, new_operator: Address) {
         // onlyOwner
         let owner = state::read_owner(&env);
@@ -811,6 +819,9 @@ pub struct OperatorRevoked {}
 
 #[contractevent]
 pub struct RevokerRevoked {}
+
+#[contractevent]
+pub struct OwnerRevoked {}
 
 #[contractevent]
 pub struct MintRequestRevoked {

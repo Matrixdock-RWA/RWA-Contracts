@@ -85,3 +85,6 @@ pub struct UpgradeRevoked {
     pub owner: Address,
     pub new_wasm_hash: BytesN<32>,
 }
+
+#[contractevent]
+pub struct OwnerRevoked {}
