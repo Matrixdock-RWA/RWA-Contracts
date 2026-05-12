@@ -10,8 +10,8 @@ pub enum DataKey {
     Owner,        // Address
     PendingOwner, // Address
     EtNextOwner,
-    PoolAccountA, // MuxedAddress
-    PoolAccountB, // MuxedAddress
+    PoolAccountA, // Address
+    PoolAccountB, // Address
     NewWasmHash,  //BytesN<32>, hash of the new wasm to be set by upgrade
     EtNextUpgrade,
 

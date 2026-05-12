@@ -69,10 +69,8 @@ impl TokenInterface for MockToken {
 
 struct Setup<'a> {
     owner: Address,
-    pool_a_addr: Address,
-    pool_a: MuxedAddress,
-    pool_b_addr: Address,
-    pool_b: MuxedAddress,
+    pool_a: Address,
+    pool_b: Address,
     token_a: Address,
     token_b: Address,
     minter: BullionMinterClient<'a>,
@@ -83,10 +81,8 @@ fn setup<'a>(env: &'a Env) -> Setup<'a> {
     env.ledger().set_timestamp(START_TIME);
 
     let owner = Address::generate(env);
-    let pool_a_addr = Address::generate(env);
-    let pool_b_addr = Address::generate(env);
-    let pool_a = MuxedAddress::from(pool_a_addr.clone());
-    let pool_b = MuxedAddress::from(pool_b_addr.clone());
+    let pool_a = Address::generate(env);
+    let pool_b = Address::generate(env);
 
     let token_a = env.register(MockToken, ());
     let token_b = env.register(MockToken, ());
@@ -102,9 +98,7 @@ fn setup<'a>(env: &'a Env) -> Setup<'a> {
 
     Setup {
         owner,
-        pool_a_addr,
         pool_a,
-        pool_b_addr,
         pool_b,
         token_a,
         token_b,
@@ -130,6 +124,7 @@ fn test_constructor_sets_state() {
     assert_eq!(s.minter.owner(), s.owner);
     assert_eq!(s.minter.pool_account_a(), s.pool_a);
     assert_eq!(s.minter.pool_account_b(), s.pool_b);
+
     assert!(s.minter.is_accepted_by_a(&s.token_a));
     assert!(s.minter.is_accepted_by_b(&s.token_b));
     assert!(!s.minter.is_accepted_by_a(&s.token_b));
@@ -159,7 +154,7 @@ fn test_request_to_mint_transfers_to_pool_a() {
     );
 
     assert_eq!(token_balance(&e, &s.token_a, &user), 500);
-    assert_eq!(token_balance(&e, &s.token_a, &s.pool_a_addr), 500);
+    assert_eq!(token_balance(&e, &s.token_a, &s.pool_a), 500);
 }
 
 #[test]
@@ -265,7 +260,7 @@ fn test_request_to_redeem_transfers_to_pool_b() {
     );
 
     assert_eq!(token_balance(&e, &s.token_b, &user), 700);
-    assert_eq!(token_balance(&e, &s.token_b, &s.pool_b_addr), 300);
+    assert_eq!(token_balance(&e, &s.token_b, &s.pool_b), 300);
 }
 
 #[test]
@@ -361,8 +356,7 @@ fn test_set_accepted_by_b_add_and_remove() {
 fn test_set_pool_account_a() {
     let e = Env::default();
     let s = setup(&e);
-    let new_pool_addr = Address::generate(&e);
-    let new_pool = MuxedAddress::from(new_pool_addr);
+    let new_pool = Address::generate(&e);
 
     s.minter.set_pool_account_a(&new_pool);
     assert_eq!(s.minter.pool_account_a(), new_pool);
@@ -372,8 +366,7 @@ fn test_set_pool_account_a() {
 fn test_set_pool_account_b() {
     let e = Env::default();
     let s = setup(&e);
-    let new_pool_addr = Address::generate(&e);
-    let new_pool = MuxedAddress::from(new_pool_addr);
+    let new_pool = Address::generate(&e);
 
     s.minter.set_pool_account_b(&new_pool);
     assert_eq!(s.minter.pool_account_b(), new_pool);
@@ -388,6 +381,8 @@ fn test_two_step_ownership() {
     let new_owner = Address::generate(&e);
 
     s.minter.request_owner_transfer(&new_owner);
+    // DELAY_SETTING = 12h; advance past et before accepting
+    e.ledger().set_timestamp(START_TIME + 12 * 3600 + 1);
     s.minter.accept_owner();
     assert_eq!(s.minter.owner(), new_owner);
 }
