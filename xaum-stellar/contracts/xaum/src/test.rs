@@ -224,14 +224,14 @@ fn test_mint_request_et_getter() {
     bytes.append(&Bytes::from_slice(&e, &500_i128.to_be_bytes()));
     bytes.append(&Bytes::from_slice(&e, &1_u64.to_be_bytes()));
     let req: BytesN<32> = e.crypto().sha256(&bytes).into();
-    assert_eq!(token.mint_request_et(&req), 0);
+    assert!(token.mint_request_et(&req).is_none());
 
     token.mint_to(&user, &500, &1); // registers, et = (START_TIME+1) + DELAY
-    assert_eq!(token.mint_request_et(&req), START_TIME + 1 + DELAY);
+    assert_eq!(token.mint_request_et(&req), Some(START_TIME + 1 + DELAY));
 
     e.ledger().set_timestamp(START_TIME + 1 + DELAY + 1); // strictly after et
     token.mint_to(&user, &500, &1); // executes, removes entry
-    assert_eq!(token.mint_request_et(&req), 0);
+    assert!(token.mint_request_et(&req).is_none());
 }
 
 // ---- mint_budget ----
@@ -684,7 +684,7 @@ fn test_revoke_next_delay_and_reregister() {
     apply_delay(&e, &token, DELAY);
     token.set_delay(&7200_u64); // registers at START_TIME+1
     token.revoke_next_delay(); // revoker cancels
-    assert_eq!(token.et_next_delay(), 0);
+    assert!(token.et_next_delay().is_none());
 
     // re-register with a fresh timestamp; et = (START_TIME+DELAY+1) + DELAY
     e.ledger().set_timestamp(START_TIME + DELAY + 1);
@@ -711,12 +711,12 @@ fn test_set_operator_two_phase() {
     apply_delay(&e, &token, DELAY);
     token.set_operator(&new_op); // registers at START_TIME+1, et = START_TIME+1+DELAY
     assert_eq!(token.next_operator(), Some(new_op.clone()));
-    assert_eq!(token.et_next_operator(), START_TIME + 1 + DELAY);
+    assert_eq!(token.et_next_operator(), Some(START_TIME + 1 + DELAY));
 
     e.ledger().set_timestamp(START_TIME + 1 + DELAY + 1); // strictly after et
     token.set_operator(&new_op); // executes
     assert_eq!(token.operator(), new_op);
-    assert_eq!(token.et_next_operator(), 0); // et=0 is the "no pending" sentinel
+    assert!(token.et_next_operator().is_none());
 }
 
 #[test]
@@ -771,7 +771,7 @@ fn test_revoke_next_operator() {
     token.set_operator(&new_op);
     token.revoke_next_operator();
 
-    assert_eq!(token.et_next_operator(), 0);
+    assert!(token.et_next_operator().is_none());
     assert_eq!(token.operator(), operator); // original unchanged
 }
 
@@ -847,7 +847,7 @@ fn test_owner_can_revoke_pending_revoker_change() {
     apply_delay(&e, &token, DELAY);
     token.set_revoker(&new_revoker);
     token.revoke_next_revoker(); // owner cancels
-    assert_eq!(token.et_next_revoker(), 0);
+    assert!(token.et_next_revoker().is_none());
     assert_eq!(token.revoker(), revoker); // original unchanged
 }
 

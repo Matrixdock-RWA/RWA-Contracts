@@ -507,8 +507,11 @@ impl Token {
         state::read_pending_owner(&env)
     }
 
-    pub fn et_next_owner(env: Env) -> u64 {
-        state::read_et_next_owner(&env)
+    pub fn et_next_owner(env: Env) -> Option<u64> {
+        match state::read_et_next_owner(&env) {
+            0 => None,
+            val => Some(val),
+        }
     }
 
     pub fn operator(env: Env) -> Address {
@@ -519,8 +522,11 @@ impl Token {
         state::read_next_operator(&env)
     }
 
-    pub fn et_next_operator(env: Env) -> u64 {
-        state::read_et_next_operator(&env)
+    pub fn et_next_operator(env: Env) -> Option<u64> {
+        match state::read_et_next_operator(&env) {
+            0 => None,
+            val => Some(val),
+        }
     }
 
     pub fn revoker(env: Env) -> Address {
@@ -531,48 +537,60 @@ impl Token {
         state::read_next_revoker(&env)
     }
 
-    pub fn et_next_revoker(env: Env) -> u64 {
-        state::read_et_next_revoker(&env)
+    pub fn et_next_revoker(env: Env) -> Option<u64> {
+        match state::read_et_next_revoker(&env) {
+            0 => None,
+            val => Some(val),
+        }
     }
 
     pub fn delay(env: Env) -> u64 {
         state::read_delay(&env)
     }
 
-    pub fn next_delay(env: Env) -> u64 {
-        state::read_next_delay(&env).unwrap_or(0)
+    pub fn next_delay(env: Env) -> Option<u64> {
+        state::read_next_delay(&env)
     }
 
-    pub fn et_next_delay(env: Env) -> u64 {
-        state::read_et_next_delay(&env)
+    pub fn et_next_delay(env: Env) -> Option<u64> {
+        match state::read_et_next_delay(&env) {
+            0 => None,
+            val => Some(val),
+        }
     }
 
     pub fn gov_delay(env: Env) -> u64 {
         state::read_gov_delay(&env)
     }
 
-    pub fn next_gov_delay(env: Env) -> u64 {
-        state::read_next_gov_delay(&env).unwrap_or(0)
+    pub fn next_gov_delay(env: Env) -> Option<u64> {
+        state::read_next_gov_delay(&env)
     }
 
-    pub fn et_next_gov_delay(env: Env) -> u64 {
-        state::read_et_next_gov_delay(&env)
+    pub fn et_next_gov_delay(env: Env) -> Option<u64> {
+        match state::read_et_next_gov_delay(&env) {
+            0 => None,
+            val => Some(val),
+        }
     }
 
     pub fn next_upgrade_wasm_hash(env: Env) -> Option<BytesN<32>> {
         state::read_next_upgrade_wasm_hash(&env)
     }
 
-    pub fn et_next_upgrade(env: Env) -> u64 {
-        state::read_et_next_upgrade(&env)
+    pub fn et_next_upgrade(env: Env) -> Option<u64> {
+        match state::read_et_next_upgrade(&env) {
+            0 => None,
+            val => Some(val),
+        }
     }
 
     pub fn mint_budget(env: Env) -> i128 {
         state::read_mint_budget(&env)
     }
 
-    pub fn mint_request_et(env: Env, req: BytesN<32>) -> u64 {
-        state::read_mint_request(&env, &req).unwrap_or(0)
+    pub fn mint_request_et(env: Env, req: BytesN<32>) -> Option<u64> {
+        state::read_mint_request(&env, &req)
     }
 
     pub fn is_blocked(env: Env, user: Address) -> bool {

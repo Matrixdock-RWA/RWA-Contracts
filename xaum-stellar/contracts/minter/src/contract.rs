@@ -293,8 +293,11 @@ impl BullionMinter {
         read_pending_owner(&env)
     }
 
-    pub fn et_next_owner(env: Env) -> u64 {
-        read_et_next_owner(&env)
+    pub fn et_next_owner(env: Env) -> Option<u64> {
+        match read_et_next_owner(&env) {
+            0 => None,
+            val => Some(val),
+        }
     }
 
     pub fn pool_account_a(env: Env) -> Address {
@@ -317,8 +320,11 @@ impl BullionMinter {
         read_next_upgrade_wasm_hash(&env)
     }
 
-    pub fn et_next_upgrade(env: Env) -> u64 {
-        read_et_next_upgrade(&env)
+    pub fn et_next_upgrade(env: Env) -> Option<u64> {
+        match read_et_next_upgrade(&env) {
+            0 => None,
+            val => Some(val),
+        }
     }
 }
 
