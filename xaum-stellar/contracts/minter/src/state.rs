@@ -1,6 +1,7 @@
 use soroban_sdk::{Address, BytesN, Env};
 
 use crate::storage_types::DataKey;
+use crate::storage_types::PENDING_TTL_LEDGERS;
 
 pub fn read_owner(env: &Env) -> Address {
     let key = DataKey::Owner;
@@ -13,27 +14,38 @@ pub fn write_owner(env: &Env, new_owner: &Address) {
 }
 
 pub fn write_pending_owner(env: &Env, addr: &Address) {
-    env.storage().instance().set(&DataKey::PendingOwner, addr);
+    let key = DataKey::PendingOwner;
+    env.storage().temporary().set(&key, addr);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
 }
 
 pub fn read_pending_owner(env: &Env) -> Option<Address> {
-    env.storage().instance().get(&DataKey::PendingOwner)
+    env.storage().temporary().get(&DataKey::PendingOwner)
 }
 
 pub fn remove_pending_owner(env: &Env) {
-    env.storage().instance().remove(&DataKey::PendingOwner);
+    env.storage().temporary().remove(&DataKey::PendingOwner);
 }
 
 pub fn read_et_next_owner(env: &Env) -> u64 {
     env.storage()
-        .instance()
+        .temporary()
         .get(&DataKey::EtNextOwner)
         .unwrap_or(0)
 }
 
 pub fn write_et_next_owner(env: &Env, et: u64) {
     let key = DataKey::EtNextOwner;
-    env.storage().instance().set(&key, &et);
+    env.storage().temporary().set(&key, &et);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_et_next_owner(env: &Env) {
+    env.storage().temporary().remove(&DataKey::EtNextOwner);
 }
 
 //-------- pool account ----------
@@ -92,27 +104,36 @@ pub fn remove_token_accepted_by_b(env: &Env, token: &Address) {
 //--------- upgrade ----------
 
 pub fn read_next_upgrade_wasm_hash(env: &Env) -> Option<BytesN<32>> {
-    env.storage().instance().get(&DataKey::NewWasmHash)
+    env.storage().temporary().get(&DataKey::NewWasmHash)
 }
 
 pub fn write_next_upgrade_wasm_hash(env: &Env, new_wasm_hash: &BytesN<32>) {
+    let key = DataKey::NewWasmHash;
+    env.storage().temporary().set(&key, new_wasm_hash);
     env.storage()
-        .instance()
-        .set(&DataKey::NewWasmHash, new_wasm_hash);
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
 }
 
 pub fn remove_next_upgrade_wasm_hash(env: &Env) {
-    env.storage().instance().remove(&DataKey::NewWasmHash);
+    env.storage().temporary().remove(&DataKey::NewWasmHash);
 }
 
 pub fn read_et_next_upgrade(env: &Env) -> u64 {
     env.storage()
-        .instance()
+        .temporary()
         .get(&DataKey::EtNextUpgrade)
         .unwrap_or(0)
 }
 
 pub fn write_et_next_upgrade(env: &Env, et: u64) {
     let key = DataKey::EtNextUpgrade;
-    env.storage().instance().set(&key, &et);
+    env.storage().temporary().set(&key, &et);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_et_next_upgrade(env: &Env) {
+    env.storage().temporary().remove(&DataKey::EtNextUpgrade);
 }

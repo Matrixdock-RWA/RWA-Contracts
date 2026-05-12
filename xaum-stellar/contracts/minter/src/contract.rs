@@ -76,7 +76,7 @@ impl BullionMinter {
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
         remove_next_upgrade_wasm_hash(&env);
-        write_et_next_upgrade(&env, 0);
+        remove_et_next_upgrade(&env);
 
         ContractUpgraded {
             owner,
@@ -94,7 +94,7 @@ impl BullionMinter {
         let new_wasm_hash = read_next_upgrade_wasm_hash(&env)
             .unwrap_or_else(|| panic_with_error!(&env, MinterError::NoPendingUpgrade));
         remove_next_upgrade_wasm_hash(&env);
-        write_et_next_upgrade(&env, 0);
+        remove_et_next_upgrade(&env);
 
         UpgradeRevoked {
             owner,
@@ -133,7 +133,7 @@ impl BullionMinter {
 
         write_owner(&env, &pending_owner);
         remove_pending_owner(&env);
-        write_et_next_owner(&env, 0);
+        remove_et_next_owner(&env);
         OwnerTransferred {
             old_owner,
             new_owner: pending_owner,
@@ -144,7 +144,7 @@ impl BullionMinter {
     pub fn revoke_next_owner(env: Env) {
         Self::require_owner(&env);
 
-        write_et_next_owner(&env, 0);
+        remove_et_next_owner(&env);
         OwnerRevoked {}.publish(&env);
     }
 

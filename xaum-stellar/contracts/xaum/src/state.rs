@@ -1,7 +1,9 @@
 use soroban_sdk::{Address, BytesN, Env};
 
 use crate::storage_types::DataKey;
-use crate::storage_types::{ALLOW_BLOCK_EXTEND_AMOUNT, ALLOW_BLOCK_TTL_THRESHOLD};
+use crate::storage_types::{
+    ALLOW_BLOCK_EXTEND_AMOUNT, ALLOW_BLOCK_TTL_THRESHOLD, PENDING_TTL_LEDGERS,
+};
 
 pub fn read_mint_request(env: &Env, key: &BytesN<32>) -> Option<u64> {
     env.storage()
@@ -32,27 +34,38 @@ pub fn write_owner(env: &Env, new_owner: &Address) {
 }
 
 pub fn write_pending_owner(env: &Env, addr: &Address) {
-    env.storage().instance().set(&DataKey::PendingOwner, addr);
+    let key = DataKey::PendingOwner;
+    env.storage().temporary().set(&key, addr);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
 }
 
 pub fn read_pending_owner(env: &Env) -> Option<Address> {
-    env.storage().instance().get(&DataKey::PendingOwner)
+    env.storage().temporary().get(&DataKey::PendingOwner)
 }
 
 pub fn remove_pending_owner(env: &Env) {
-    env.storage().instance().remove(&DataKey::PendingOwner);
+    env.storage().temporary().remove(&DataKey::PendingOwner);
 }
 
 pub fn read_et_next_owner(env: &Env) -> u64 {
     env.storage()
-        .instance()
+        .temporary()
         .get(&DataKey::EtNextOwner)
         .unwrap_or(0)
 }
 
 pub fn write_et_next_owner(env: &Env, et: u64) {
     let key = DataKey::EtNextOwner;
-    env.storage().instance().set(&key, &et);
+    env.storage().temporary().set(&key, &et);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_et_next_owner(env: &Env) {
+    env.storage().temporary().remove(&DataKey::EtNextOwner);
 }
 
 //-------- operator ----------
@@ -68,24 +81,38 @@ pub fn write_operator(env: &Env, new_operator: &Address) {
 }
 
 pub fn read_next_operator(env: &Env) -> Option<Address> {
-    env.storage().instance().get(&DataKey::NextOperator)
+    env.storage().temporary().get(&DataKey::NextOperator)
 }
 
 pub fn write_next_operator(env: &Env, next: &Address) {
     let key = DataKey::NextOperator;
-    env.storage().instance().set(&key, next);
+    env.storage().temporary().set(&key, next);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_next_operator(env: &Env) {
+    env.storage().temporary().remove(&DataKey::NextOperator);
 }
 
 pub fn read_et_next_operator(env: &Env) -> u64 {
     env.storage()
-        .instance()
+        .temporary()
         .get(&DataKey::EtNextOperator)
         .unwrap_or(0)
 }
 
 pub fn write_et_next_operator(env: &Env, et: u64) {
     let key = DataKey::EtNextOperator;
-    env.storage().instance().set(&key, &et);
+    env.storage().temporary().set(&key, &et);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_et_next_operator(env: &Env) {
+    env.storage().temporary().remove(&DataKey::EtNextOperator);
 }
 
 //-------- revoker ----------
@@ -101,24 +128,38 @@ pub fn write_revoker(env: &Env, new_revoker: &Address) {
 }
 
 pub fn read_next_revoker(env: &Env) -> Option<Address> {
-    env.storage().instance().get(&DataKey::NextRevoker)
+    env.storage().temporary().get(&DataKey::NextRevoker)
 }
 
 pub fn write_next_revoker(env: &Env, next: &Address) {
     let key = DataKey::NextRevoker;
-    env.storage().instance().set(&key, next);
+    env.storage().temporary().set(&key, next);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_next_revoker(env: &Env) {
+    env.storage().temporary().remove(&DataKey::NextRevoker);
 }
 
 pub fn read_et_next_revoker(env: &Env) -> u64 {
     env.storage()
-        .instance()
+        .temporary()
         .get(&DataKey::EtNextRevoker)
         .unwrap_or(0)
 }
 
 pub fn write_et_next_revoker(env: &Env, et: u64) {
     let key = DataKey::EtNextRevoker;
-    env.storage().instance().set(&key, &et);
+    env.storage().temporary().set(&key, &et);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_et_next_revoker(env: &Env) {
+    env.storage().temporary().remove(&DataKey::EtNextRevoker);
 }
 
 //-------- delay ----------
@@ -132,24 +173,38 @@ pub fn write_delay(env: &Env, new_delay: u64) {
 }
 
 pub fn read_next_delay(env: &Env) -> Option<u64> {
-    env.storage().instance().get(&DataKey::NextDelay)
+    env.storage().temporary().get(&DataKey::NextDelay)
 }
 
 pub fn write_next_delay(env: &Env, next: u64) {
     let key = DataKey::NextDelay;
-    env.storage().instance().set(&key, &next);
+    env.storage().temporary().set(&key, &next);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_next_delay(env: &Env) {
+    env.storage().temporary().remove(&DataKey::NextDelay);
 }
 
 pub fn read_et_next_delay(env: &Env) -> u64 {
     env.storage()
-        .instance()
+        .temporary()
         .get(&DataKey::EtNextDelay)
         .unwrap_or(0)
 }
 
 pub fn write_et_next_delay(env: &Env, et: u64) {
     let key = DataKey::EtNextDelay;
-    env.storage().instance().set(&key, &et);
+    env.storage().temporary().set(&key, &et);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_et_next_delay(env: &Env) {
+    env.storage().temporary().remove(&DataKey::EtNextDelay);
 }
 
 //-------- mintBudget ----------
@@ -226,50 +281,73 @@ pub fn write_gov_delay(env: &Env, new_gov_delay: u64) {
 }
 
 pub fn read_next_gov_delay(env: &Env) -> Option<u64> {
-    env.storage().instance().get(&DataKey::NextGovDelay)
+    env.storage().temporary().get(&DataKey::NextGovDelay)
 }
 
 pub fn write_next_gov_delay(env: &Env, next: u64) {
     let key = DataKey::NextGovDelay;
-    env.storage().instance().set(&key, &next);
+    env.storage().temporary().set(&key, &next);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_next_gov_delay(env: &Env) {
+    env.storage().temporary().remove(&DataKey::NextGovDelay);
 }
 
 pub fn read_et_next_gov_delay(env: &Env) -> u64 {
     env.storage()
-        .instance()
+        .temporary()
         .get(&DataKey::EtNextGovDelay)
         .unwrap_or(0)
 }
 
 pub fn write_et_next_gov_delay(env: &Env, et: u64) {
     let key = DataKey::EtNextGovDelay;
-    env.storage().instance().set(&key, &et);
+    env.storage().temporary().set(&key, &et);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_et_next_gov_delay(env: &Env) {
+    env.storage().temporary().remove(&DataKey::EtNextGovDelay);
 }
 
 //--------- upgrade ----------
 
 pub fn read_next_upgrade_wasm_hash(env: &Env) -> Option<BytesN<32>> {
-    env.storage().instance().get(&DataKey::NewWasmHash)
+    env.storage().temporary().get(&DataKey::NewWasmHash)
 }
 
 pub fn write_next_upgrade_wasm_hash(env: &Env, new_wasm_hash: &BytesN<32>) {
+    let key = DataKey::NewWasmHash;
+    env.storage().temporary().set(&key, new_wasm_hash);
     env.storage()
-        .instance()
-        .set(&DataKey::NewWasmHash, new_wasm_hash);
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
 }
 
 pub fn remove_next_upgrade_wasm_hash(env: &Env) {
-    env.storage().instance().remove(&DataKey::NewWasmHash);
+    env.storage().temporary().remove(&DataKey::NewWasmHash);
 }
 
 pub fn read_et_next_upgrade(env: &Env) -> u64 {
     env.storage()
-        .instance()
+        .temporary()
         .get(&DataKey::EtNextUpgrade)
         .unwrap_or(0)
 }
 
 pub fn write_et_next_upgrade(env: &Env, et: u64) {
     let key = DataKey::EtNextUpgrade;
-    env.storage().instance().set(&key, &et);
+    env.storage().temporary().set(&key, &et);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_et_next_upgrade(env: &Env) {
+    env.storage().temporary().remove(&DataKey::EtNextUpgrade);
 }

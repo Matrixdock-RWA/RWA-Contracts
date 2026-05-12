@@ -83,7 +83,7 @@ impl Token {
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
         state::remove_next_upgrade_wasm_hash(&env);
-        state::write_et_next_upgrade(&env, 0);
+        state::remove_et_next_upgrade(&env);
 
         ContractUpgraded {
             owner,
@@ -102,7 +102,7 @@ impl Token {
         let new_wasm_hash = state::read_next_upgrade_wasm_hash(&env)
             .unwrap_or_else(|| panic_with_error!(&env, TokenError::NoPendingUpgrade));
         state::remove_next_upgrade_wasm_hash(&env);
-        state::write_et_next_upgrade(&env, 0);
+        state::remove_et_next_upgrade(&env);
 
         UpgradeRevoked {
             owner,
@@ -145,7 +145,7 @@ impl Token {
 
         state::write_owner(&env, &pending_owner);
         state::remove_pending_owner(&env);
-        state::write_et_next_owner(&env, 0);
+        state::remove_et_next_owner(&env);
         OwnerTransferred {
             old_owner,
             new_owner: pending_owner,
@@ -157,7 +157,7 @@ impl Token {
         let owner = state::read_owner(&env);
         owner.require_auth();
 
-        state::write_et_next_owner(&env, 0);
+        state::remove_et_next_owner(&env);
         OwnerRevoked {}.publish(&env);
     }
 
@@ -183,7 +183,8 @@ impl Token {
                 panic_with_error!(&env, TokenError::TooEarlyToExecute);
             }
             state::write_operator(&env, &new_operator);
-            state::write_et_next_operator(&env, 0);
+            state::remove_et_next_operator(&env);
+            state::remove_next_operator(&env);
             SetOperatorEffected {
                 operator: new_operator,
             }
@@ -226,7 +227,8 @@ impl Token {
                 panic_with_error!(&env, TokenError::TooEarlyToExecute);
             }
             state::write_revoker(&env, &new_revoker);
-            state::write_et_next_revoker(&env, 0);
+            state::remove_et_next_revoker(&env);
+            state::remove_next_revoker(&env);
             SetRevokerEffected {
                 revoker: new_revoker,
             }
@@ -275,7 +277,8 @@ impl Token {
                 panic_with_error!(&env, TokenError::TooEarlyToExecute);
             }
             state::write_delay(&env, new_delay);
-            state::write_et_next_delay(&env, 0);
+            state::remove_et_next_delay(&env);
+            state::remove_next_delay(&env);
             SetDelayEffected { delay: new_delay }.publish(&env);
             return;
         }
@@ -321,7 +324,8 @@ impl Token {
                 panic_with_error!(&env, TokenError::TooEarlyToExecute);
             }
             state::write_gov_delay(&env, new_delay);
-            state::write_et_next_gov_delay(&env, 0);
+            state::remove_et_next_gov_delay(&env);
+            state::remove_next_gov_delay(&env);
             SetGovDelayEffected { delay: new_delay }.publish(&env);
             return;
         }
@@ -344,28 +348,32 @@ impl Token {
     pub fn revoke_next_gov_delay(env: Env) {
         let owner = state::read_owner(&env);
         owner.require_auth();
-        state::write_et_next_gov_delay(&env, 0);
+        state::remove_et_next_gov_delay(&env);
+        state::remove_next_gov_delay(&env);
         GovDelayRevoked {}.publish(&env);
     }
 
     pub fn revoke_next_delay(env: Env) {
         let revoker = state::read_revoker(&env);
         revoker.require_auth();
-        state::write_et_next_delay(&env, 0);
+        state::remove_et_next_delay(&env);
+        state::remove_next_delay(&env);
         DelayRevoked {}.publish(&env);
     }
 
     pub fn revoke_next_operator(env: Env) {
         let revoker = state::read_revoker(&env);
         revoker.require_auth();
-        state::write_et_next_operator(&env, 0);
+        state::remove_et_next_operator(&env);
+        state::remove_next_operator(&env);
         OperatorRevoked {}.publish(&env);
     }
 
     pub fn revoke_next_revoker(env: Env) {
         let owner = state::read_owner(&env);
         owner.require_auth();
-        state::write_et_next_revoker(&env, 0);
+        state::remove_et_next_revoker(&env);
+        state::remove_next_revoker(&env);
         RevokerRevoked {}.publish(&env);
     }
 
