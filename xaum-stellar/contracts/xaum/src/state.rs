@@ -243,9 +243,13 @@ pub fn is_blocked(env: &Env, user: &Address) -> bool {
 
 pub fn write_blocked(env: &Env, user: &Address, blocked: bool) {
     if blocked {
-        env.storage()
-            .persistent()
-            .set(&DataKey::Blocked(user.clone()), &true);
+        let key = DataKey::Blocked(user.clone());
+        env.storage().persistent().set(&key, &true);
+        env.storage().persistent().extend_ttl(
+            &key,
+            ALLOW_BLOCK_TTL_THRESHOLD,
+            ALLOW_BLOCK_EXTEND_AMOUNT,
+        );
     } else {
         env.storage()
             .persistent()
