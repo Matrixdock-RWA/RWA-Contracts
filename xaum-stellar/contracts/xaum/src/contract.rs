@@ -165,6 +165,7 @@ impl Token {
         let owner = state::read_owner(&env);
         owner.require_auth();
 
+        state::remove_pending_owner(&env);
         state::remove_et_next_owner(&env);
         OwnerRevoked {}.publish(&env);
     }

@@ -153,6 +153,7 @@ impl BullionMinter {
     pub fn revoke_next_owner(env: Env) {
         Self::require_owner(&env);
 
+        remove_pending_owner(&env);
         remove_et_next_owner(&env);
         OwnerRevoked {}.publish(&env);
     }

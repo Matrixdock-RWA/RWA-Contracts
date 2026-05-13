@@ -873,6 +873,24 @@ fn test_two_step_ownership() {
 
 #[test]
 #[should_panic]
+fn test_accept_owner_after_revoke_panics() {
+    let e = Env::default();
+    e.mock_all_auths();
+    e.ledger().set_timestamp(START_TIME);
+    let owner = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let revoker = Address::generate(&e);
+    let new_owner = Address::generate(&e);
+    let token = create_token(&e, &owner, &operator, &revoker);
+
+    token.request_owner_transfer(&new_owner);
+    token.revoke_next_owner(); // cancels: removes both pending_owner and et
+    e.ledger().set_timestamp(START_TIME + 1);
+    token.accept_owner(); // must panic: NoPendingOwner
+}
+
+#[test]
+#[should_panic]
 fn test_request_owner_transfer_with_pending_panics() {
     let e = Env::default();
     e.mock_all_auths();
