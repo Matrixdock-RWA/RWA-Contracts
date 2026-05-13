@@ -3,7 +3,8 @@ use soroban_sdk::{contracttype, Address, BytesN};
 pub(crate) const DAY_IN_LEDGERS: u32 = 17280;
 pub(crate) const PENDING_TTL_LEDGERS: u32 = 10 * DAY_IN_LEDGERS; // 10 days, well above MAX_DELAY (7 days)
 pub(crate) const MINT_REQUEST_TTL_LEDGERS: u32 = 20 * DAY_IN_LEDGERS; // 20 days for pending mint requests
-pub(crate) const INSTANCE_BUMP_AMOUNT: u32 = 7 * DAY_IN_LEDGERS;
+
+pub(crate) const INSTANCE_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
 pub(crate) const INSTANCE_LIFETIME_THRESHOLD: u32 = INSTANCE_BUMP_AMOUNT - DAY_IN_LEDGERS;
 
 pub(crate) const BALANCE_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS;
