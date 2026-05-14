@@ -362,6 +362,25 @@ impl Token {
         GovDelayRevoked {}.publish(&env);
     }
 
+    // owner auth required to forced transfer here
+    pub fn forced_transfer(env: Env, from: Address, to: Address, amount: i128, data: String, extra_data: String) {
+        let owner = state::read_owner(&env);
+        owner.require_auth();
+        check_nonnegative_amount(&env, amount);
+
+        bump_instance(&env);
+
+        update_balance(&env, Some(from.clone()), Some(to.clone()), amount);
+        events::Transfer {
+            from: from.clone(),
+            to: to.clone(),
+            to_muxed_id: None,
+            amount,
+        }
+        .publish(&env);
+        ForcedTransfer { from, to, amount, data, extra_data }.publish(&env);
+    }
+
     pub fn revoke_next_delay(env: Env) {
         let revoker = state::read_revoker(&env);
         revoker.require_auth();
@@ -810,6 +829,17 @@ pub struct Redeem {
     #[topic]
     pub customer: Address,
     pub amount: i128,
+}
+
+#[contractevent]
+pub struct ForcedTransfer {
+    #[topic]
+    pub from: Address,
+    #[topic]
+    pub to: Address,
+    pub amount: i128,
+    pub data: String,
+    pub extra_data: String,
 }
 
 #[contractevent]
