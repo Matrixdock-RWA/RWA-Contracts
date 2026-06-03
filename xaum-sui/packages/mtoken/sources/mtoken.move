@@ -124,6 +124,14 @@ public struct CCSendTokenEvent has copy, drop {
     amount: u64,
 }
 
+public struct PausedEvent has copy, drop {
+    caller: address,
+}
+
+public struct UnpausedEvent has copy, drop {
+    caller: address,
+}
+
 public struct SetGovDelayEvent has copy, drop {
     old_gov_delay: u64,
     new_gov_delay: u64,
@@ -201,6 +209,8 @@ init_upgrade_cap_id      |   ✓   |          |         |          |          |
 migrate                  |   ✓   |          |         |          |          |
 update_description       |   ✓   |          |         |          |          |
 update_icon_url          |   ✓   |          |         |          |          |
+pause                    |       |   ✓      |         |          |          |
+unpause                  |   ✓   |          |         |          |          |
 transfer_ownership       |   ✓   |          |         |          | ✓        | gov_delay
 set_gov_delay            |   ✓   |          |         |          | ✓        | gov_delay
 set_operator             |   ✓   |          |         |          | ✓        | delay
@@ -303,6 +313,20 @@ entry fun update_icon_url<T>(
     check_version(state);
     check_owner(state, ctx);
     coin::update_icon_url(state.borrow_treasury_cap(), metadata, new_url);
+}
+
+entry fun pause<T>(state: &mut State<T>, deny_list: &mut DenyList, ctx: &mut TxContext) {
+    check_version(state);
+    check_operator(state, ctx);
+    coin::deny_list_v2_enable_global_pause<T>(deny_list, state.borrow_deny_cap_mut(), ctx);
+    event::emit(PausedEvent { caller: ctx.sender() });
+}
+
+entry fun unpause<T>(state: &mut State<T>, deny_list: &mut DenyList, ctx: &mut TxContext) {
+    check_version(state);
+    check_owner(state, ctx);
+    coin::deny_list_v2_disable_global_pause<T>(deny_list, state.borrow_deny_cap_mut(), ctx);
+    event::emit(UnpausedEvent { caller: ctx.sender() });
 }
 
 entry fun request_transfer_ownership<T>(
