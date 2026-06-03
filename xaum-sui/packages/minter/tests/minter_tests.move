@@ -18,8 +18,11 @@ const POOLB: address = @0xC;
 const BOB: address = @0xD;
 const VERSION: u64 = 2;
 const EXTRADATA: vector<u8> = b"DATA";
+const OWNER_TRANSFER_DELAY: u64 = 12 * 60 * 60; // 12 hours, mirrors module constant
 
 public struct USDT has drop {}
+
+// === Ownership Transfer Tests ===
 
 #[test]
 fun test_transfer_ownership() {
@@ -28,29 +31,220 @@ fun test_transfer_ownership() {
         ts.next_tx(OWNER);
         minter::create_minter(ts.ctx());
     };
+    let upgrade_cap_id;
     {
         ts.next_tx(OWNER);
         let mut state: minter::State = ts.take_shared();
-        let upgrade_cap = test_publish(
-            state.package_address().to_id(),
-            ts.ctx(),
-        );
-        let upgrade_cap_id = object::id(&upgrade_cap);
-        assert!(state.package_address() == @0x0);
+        let upgrade_cap = test_publish(state.package_address().to_id(), ts.ctx());
+        upgrade_cap_id = object::id(&upgrade_cap);
         minter::init_upgrade_cap_id(&mut state, &upgrade_cap, ts.ctx());
-        minter::transfer_ownership(&mut state, BOB, upgrade_cap, ts.ctx());
-        ts::return_shared(state);
 
+        let mut clock = clock::create_for_testing(ts.ctx());
+        clock.set_for_testing(0);
+
+        // step 1: request
+        minter::request_transfer_ownership(&mut state, BOB, &clock, ts.ctx());
+        assert_eq!(state.next_owner(), option::some(BOB));
+        assert_eq!(state.next_owner_et(), OWNER_TRANSFER_DELAY);
+        assert_eq!(state.owner(), OWNER); // not changed yet
+
+        // step 2: execute after delay
+        clock.set_for_testing((OWNER_TRANSFER_DELAY + 1) * 1000);
+        minter::execute_transfer_ownership(&mut state, upgrade_cap, &clock);
+
+        assert_eq!(state.owner(), BOB);
+        assert_eq!(state.next_owner(), option::none());
+        assert_eq!(state.next_owner_et(), 0);
+
+        clock::destroy_for_testing(clock);
+        ts::return_shared(state);
+    };
+    {
         ts.next_tx(BOB);
-        let state: minter::State = ts.take_shared();
-        assert!(state.owner() == BOB);
         let upgrade_cap = ts.take_from_sender<UpgradeCap>();
         assert_eq!(object::id(&upgrade_cap), upgrade_cap_id);
         ts.return_to_sender(upgrade_cap);
+    };
+    ts.end();
+}
+
+#[test]
+fun test_revoke_transfer_ownership() {
+    let mut ts = ts::begin(@0x0);
+    {
+        ts.next_tx(OWNER);
+        minter::create_minter(ts.ctx());
+    };
+    {
+        ts.next_tx(OWNER);
+        let mut state: minter::State = ts.take_shared();
+        let mut clock = clock::create_for_testing(ts.ctx());
+        clock.set_for_testing(0);
+
+        minter::request_transfer_ownership(&mut state, BOB, &clock, ts.ctx());
+        assert_eq!(state.next_owner(), option::some(BOB));
+
+        minter::revoke_transfer_ownership(&mut state, ts.ctx());
+        assert_eq!(state.next_owner(), option::none());
+        assert_eq!(state.next_owner_et(), 0);
+        assert_eq!(state.owner(), OWNER); // unchanged
+
+        clock::destroy_for_testing(clock);
         ts::return_shared(state);
     };
     ts.end();
 }
+
+#[test]
+fun test_request_overwrites_pending() {
+    let mut ts = ts::begin(@0x0);
+    {
+        ts.next_tx(OWNER);
+        minter::create_minter(ts.ctx());
+    };
+    {
+        ts.next_tx(OWNER);
+        let mut state: minter::State = ts.take_shared();
+        let mut clock = clock::create_for_testing(ts.ctx());
+        clock.set_for_testing(0);
+
+        minter::request_transfer_ownership(&mut state, BOB, &clock, ts.ctx());
+        assert_eq!(state.next_owner(), option::some(BOB));
+
+        // owner changes mind, re-request with different address
+        minter::request_transfer_ownership(&mut state, ALICE, &clock, ts.ctx());
+        assert_eq!(state.next_owner(), option::some(ALICE));
+
+        clock::destroy_for_testing(clock);
+        ts::return_shared(state);
+    };
+    ts.end();
+}
+
+#[test, expected_failure(abort_code = minter::ENotOwner)]
+fun request_transfer_ownership_err_not_owner() {
+    let mut ts = ts::begin(@0x0);
+    {
+        ts.next_tx(OWNER);
+        minter::create_minter(ts.ctx());
+    };
+    {
+        ts.next_tx(ALICE);
+        let mut state: minter::State = ts.take_shared();
+        let mut clock = clock::create_for_testing(ts.ctx());
+        clock.set_for_testing(0);
+        minter::request_transfer_ownership(&mut state, BOB, &clock, ts.ctx());
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = minter::ENoOwnerTransferRequest)]
+fun execute_transfer_ownership_err_no_request() {
+    let mut ts = ts::begin(@0x0);
+    {
+        ts.next_tx(OWNER);
+        minter::create_minter(ts.ctx());
+    };
+    {
+        ts.next_tx(OWNER);
+        let mut state: minter::State = ts.take_shared();
+        let upgrade_cap = test_publish(state.package_address().to_id(), ts.ctx());
+        minter::init_upgrade_cap_id(&mut state, &upgrade_cap, ts.ctx());
+        let mut clock = clock::create_for_testing(ts.ctx());
+        clock.set_for_testing((OWNER_TRANSFER_DELAY + 1) * 1000);
+        minter::execute_transfer_ownership(&mut state, upgrade_cap, &clock);
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = minter::EOwnerTransferNotReady)]
+fun execute_transfer_ownership_err_not_ready() {
+    let mut ts = ts::begin(@0x0);
+    {
+        ts.next_tx(OWNER);
+        minter::create_minter(ts.ctx());
+    };
+    {
+        ts.next_tx(OWNER);
+        let mut state: minter::State = ts.take_shared();
+        let upgrade_cap = test_publish(state.package_address().to_id(), ts.ctx());
+        minter::init_upgrade_cap_id(&mut state, &upgrade_cap, ts.ctx());
+        let mut clock = clock::create_for_testing(ts.ctx());
+        clock.set_for_testing(0);
+        minter::request_transfer_ownership(&mut state, BOB, &clock, ts.ctx());
+
+        // try to execute before delay has passed
+        clock.set_for_testing((OWNER_TRANSFER_DELAY - 1) * 1000);
+        minter::execute_transfer_ownership(&mut state, upgrade_cap, &clock);
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = minter::EUpgradeCapInvalid)]
+fun execute_transfer_ownership_err_invalid_cap() {
+    let mut ts = ts::begin(@0x0);
+    {
+        ts.next_tx(OWNER);
+        minter::create_minter(ts.ctx());
+    };
+    {
+        ts.next_tx(OWNER);
+        let mut state: minter::State = ts.take_shared();
+        let upgrade_cap = test_publish(state.package_address().to_id(), ts.ctx());
+        minter::init_upgrade_cap_id(&mut state, &upgrade_cap, ts.ctx());
+
+        let mut clock = clock::create_for_testing(ts.ctx());
+        clock.set_for_testing(0);
+        minter::request_transfer_ownership(&mut state, BOB, &clock, ts.ctx());
+
+        clock.set_for_testing((OWNER_TRANSFER_DELAY + 1) * 1000);
+        let wrong_cap = test_publish(object::id_from_address(@0x1234), ts.ctx());
+        minter::execute_transfer_ownership(&mut state, wrong_cap, &clock);
+        transfer::public_share_object(upgrade_cap);
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = minter::ENotOwner)]
+fun revoke_transfer_ownership_err_not_owner() {
+    let mut ts = ts::begin(@0x0);
+    {
+        ts.next_tx(OWNER);
+        minter::create_minter(ts.ctx());
+    };
+    {
+        ts.next_tx(OWNER);
+        let mut state: minter::State = ts.take_shared();
+        let mut clock = clock::create_for_testing(ts.ctx());
+        clock.set_for_testing(0);
+        minter::request_transfer_ownership(&mut state, BOB, &clock, ts.ctx());
+        clock::destroy_for_testing(clock);
+        ts::return_shared(state);
+    };
+    {
+        ts.next_tx(ALICE);
+        let mut state: minter::State = ts.take_shared();
+        minter::revoke_transfer_ownership(&mut state, ts.ctx());
+    };
+    abort
+}
+
+#[test, expected_failure(abort_code = minter::ENoOwnerTransferRequest)]
+fun revoke_transfer_ownership_err_no_request() {
+    let mut ts = ts::begin(@0x0);
+    {
+        ts.next_tx(OWNER);
+        minter::create_minter(ts.ctx());
+    };
+    {
+        ts.next_tx(OWNER);
+        let mut state: minter::State = ts.take_shared();
+        minter::revoke_transfer_ownership(&mut state, ts.ctx());
+    };
+    abort
+}
+
+// === Minter Tests ===
 
 #[test]
 fun test_minter() {
@@ -604,46 +798,6 @@ fun init_upgrade_cap_id_ok() {
 }
 
 #[test, expected_failure(abort_code = minter::ENotOwner)]
-fun set_owner_err_not_owner() {
-    let mut scenario = ts::begin(@0x0);
-    scenario.next_tx(OWNER);
-    {
-        minter::create_minter(scenario.ctx());
-    };
-
-    scenario.next_tx(ALICE);
-    {
-        let mut state = scenario.take_shared<minter::State>();
-        let upgrade_cap = test_publish(
-            state.package_address().to_id(),
-            scenario.ctx(),
-        );
-        minter::transfer_ownership(&mut state, ALICE, upgrade_cap, scenario.ctx());
-    };
-    abort
-}
-
-#[test, expected_failure(abort_code = minter::EUpgradeCapInvalid)]
-fun set_owner_err_upgrade_cap_invalid() {
-    let mut scenario = ts::begin(@0x0);
-    scenario.next_tx(OWNER);
-    {
-        minter::create_minter(scenario.ctx());
-    };
-
-    scenario.next_tx(OWNER);
-    {
-        let mut state = scenario.take_shared<minter::State>();
-        let upgrade_cap = test_publish(object::id_from_address(@0x1234), scenario.ctx());
-        minter::init_upgrade_cap_id(&mut state, &upgrade_cap, scenario.ctx());
-
-        let upgrade_cap2 = test_publish(object::id_from_address(@0x1234), scenario.ctx());
-        minter::transfer_ownership(&mut state, ALICE, upgrade_cap2, scenario.ctx());
-    };
-    abort
-}
-
-#[test, expected_failure(abort_code = minter::ENotOwner)]
 fun set_accepted_token_by_a_err_not_owner() {
     let mut scenario = ts::begin(@0x0);
     scenario.next_tx(OWNER);
@@ -661,38 +815,6 @@ fun set_accepted_token_by_a_err_not_owner() {
         );
     };
     abort
-}
-
-#[test]
-fun set_owner_ok() {
-    let mut scenario = ts::begin(@0x0);
-    scenario.next_tx(OWNER);
-    {
-        minter::create_minter(scenario.ctx());
-    };
-
-    scenario.next_tx(OWNER);
-    {
-        let mut state = scenario.take_shared<minter::State>();
-        let upgrade_cap = test_publish(
-            state.package_address().to_id(),
-            scenario.ctx(),
-        );
-        minter::init_upgrade_cap_id(&mut state, &upgrade_cap, scenario.ctx());
-        minter::transfer_ownership(&mut state, ALICE, upgrade_cap, scenario.ctx());
-        ts::return_shared(state);
-    };
-
-    // check upgrade cap
-    scenario.next_tx(ALICE);
-    {
-        let state = scenario.take_shared<minter::State>();
-        let upgrade_cap = scenario.take_from_sender<UpgradeCap>();
-        assert_eq!(upgrade_cap.package(), state.package_address().to_id());
-        scenario.return_to_sender(upgrade_cap);
-        ts::return_shared(state);
-    };
-    scenario.end();
 }
 
 #[test]

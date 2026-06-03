@@ -11,6 +11,7 @@ use sui::test_scenario;
 
 // constants are not exported, so we need to redefine them here
 const INIT_DELAY: u64 = 5;
+const INIT_GOV_DELAY: u64 = 5;
 
 // test addresses
 const SYS: address = @0x0;
@@ -22,7 +23,7 @@ fun init_xaum(): test_scenario::Scenario {
     deny_list::create_for_testing(scenario.ctx());
     scenario.next_tx(ADMIN);
     {
-        mt::init_for_testing(scenario.ctx(), INIT_DELAY);
+        mt::init_for_testing(scenario.ctx(), INIT_DELAY, INIT_GOV_DELAY);
     };
     scenario
 }

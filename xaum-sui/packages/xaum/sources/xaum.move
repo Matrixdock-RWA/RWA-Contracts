@@ -10,6 +10,7 @@ const DESCRIPTION: vector<u8> = b"Matrixdock Gold (XAUm) is a standardized token
 const ICON_URL: vector<u8> = b"https://app.matrixdock.com/images/xaum/xaum-64x64-icon.png";
 const ALLOW_GLOBAL_PAUSE: bool = true;
 const INIT_DELAY: u64 = 0;
+const INIT_GOV_DELAY: u64 = 0;
 
 // https://move-book.com/programmability/one-time-witness.html
 public struct XAUM has drop {}
@@ -26,6 +27,7 @@ fun init(witness: XAUM, ctx: &mut TxContext) {
         icon_url,
         ALLOW_GLOBAL_PAUSE,
         INIT_DELAY,
+        INIT_GOV_DELAY,
         ctx,
     );
 }

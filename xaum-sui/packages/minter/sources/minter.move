@@ -12,6 +12,8 @@ use sui::table;
 const EWrongVersion: u64 = 100;
 const ENotOwner: u64 = 101;
 const EUpgradeCapIdNotNone: u64 = 102;
+const ENoOwnerTransferRequest: u64 = 103;
+const EOwnerTransferNotReady: u64 = 104;
 const EUpgradeCapInvalid: u64 = 108;
 
 const EInvalidTokenForMint: u64 = 200;
@@ -26,12 +28,23 @@ const VERSION: u64 = 2;
 // const PREPRICE_DECIMAL: u8 = 6; // 6 decimal places for preprice
 // const SLIPPAGE_DECIMAL: u8 = 6; // 6 decimal places for slippage
 const DELAY_MAX: u64 = 59; // 59 seconds, max delay for requests
+const OWNER_TRANSFER_DELAY: u64 = 12 * 60 * 60; // 12 hours
 
 // === Events ===
 
-public struct TransferOwnership has copy, drop {
+public struct TransferOwnershipRequest has copy, drop {
     old_owner: address,
     new_owner: address,
+    et: u64,
+}
+
+public struct TransferOwnershipEffected has copy, drop {
+    old_owner: address,
+    new_owner: address,
+}
+
+public struct TransferOwnershipRevoked has copy, drop {
+    owner: address,
 }
 
 public struct SetPoolAccountA has copy, drop {
@@ -81,6 +94,8 @@ public struct State has key {
     version: u64,
     upgrade_cap_id: Option<ID>,
     owner: address,
+    next_owner: Option<address>,
+    next_owner_et: u64,
     pool_account_a: address, //stable coin pool
     pool_account_b: address, //rwa pool
     accepted_by_a: table::Table<TypeName, bool>,
@@ -95,6 +110,8 @@ fun init(ctx: &mut TxContext) {
         version: VERSION,
         upgrade_cap_id: option::none(),
         owner,
+        next_owner: option::none(),
+        next_owner_et: 0,
         pool_account_a: owner,
         pool_account_b: owner,
         accepted_by_a: table::new<TypeName, bool>(ctx),
@@ -112,21 +129,45 @@ entry fun init_upgrade_cap_id(state: &mut State, upgrade_cap: &UpgradeCap, ctx: 
     state.upgrade_cap_id = option::some(object::id(upgrade_cap));
 }
 
-entry fun transfer_ownership(
+entry fun request_transfer_ownership(
     state: &mut State,
     new_owner: address,
-    upgrade_cap: UpgradeCap,
+    clock: &Clock,
     ctx: &TxContext,
 ) {
     check_version(state);
     check_owner(state, ctx);
-    let old_owner = state.owner;
-    // transfer UpgradeCap !
-    assert!(state.upgrade_cap_id.contains(&object::id(&upgrade_cap)), EUpgradeCapInvalid);
-    transfer::public_transfer(upgrade_cap, new_owner);
+    let et = clock.timestamp_ms() / 1000 + OWNER_TRANSFER_DELAY;
+    state.next_owner = option::some(new_owner);
+    state.next_owner_et = et;
+    event::emit(TransferOwnershipRequest { old_owner: state.owner, new_owner, et });
+}
 
+entry fun execute_transfer_ownership(
+    state: &mut State,
+    upgrade_cap: UpgradeCap,
+    clock: &Clock,
+) {
+    check_version(state);
+    assert!(state.next_owner.is_some(), ENoOwnerTransferRequest);
+    let now = clock.timestamp_ms() / 1000;
+    assert!(now >= state.next_owner_et, EOwnerTransferNotReady);
+    assert!(state.upgrade_cap_id.contains(&object::id(&upgrade_cap)), EUpgradeCapInvalid);
+    let new_owner = state.next_owner.extract();
+    state.next_owner_et = 0;
+    let old_owner = state.owner;
     state.owner = new_owner;
-    event::emit(TransferOwnership { old_owner, new_owner });
+    transfer::public_transfer(upgrade_cap, new_owner);
+    event::emit(TransferOwnershipEffected { old_owner, new_owner });
+}
+
+entry fun revoke_transfer_ownership(state: &mut State, ctx: &TxContext) {
+    check_version(state);
+    check_owner(state, ctx);
+    assert!(state.next_owner.is_some(), ENoOwnerTransferRequest);
+    state.next_owner = option::none();
+    state.next_owner_et = 0;
+    event::emit(TransferOwnershipRevoked { owner: state.owner });
 }
 
 entry fun migrate(state: &mut State, ctx: &TxContext) {
@@ -261,6 +302,14 @@ public fun upgrade_cap_id(state: &State): Option<ID> {
 
 public fun owner(state: &State): address {
     state.owner
+}
+
+public fun next_owner(state: &State): Option<address> {
+    state.next_owner
+}
+
+public fun next_owner_et(state: &State): u64 {
+    state.next_owner_et
 }
 
 public fun pool_account_a(state: &State): address {
