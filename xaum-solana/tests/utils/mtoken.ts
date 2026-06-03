@@ -1,7 +1,7 @@
 import fs from "fs";
 import { Keypair, PublicKey } from "@solana/web3.js";
-import { 
-    TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, 
+import {
+    TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID,
     getAssociatedTokenAddressSync, createAssociatedTokenAccount,
 } from "@solana/spl-token";
 import * as anchor from "@coral-xyz/anchor";
@@ -32,9 +32,9 @@ export async function getTokenState() {
 
 
 // init
-export async function createToken(payer: Keypair, name: string, symbol: string, uri: string, initDelay: number) {
+export async function createToken(payer: Keypair, name: string, symbol: string, uri: string, initDelay: number, initGovDelay: number) {
     await program.methods
-        .createToken(name, symbol, uri, new anchor.BN(initDelay))
+        .createToken(name, symbol, uri, new anchor.BN(initDelay), new anchor.BN(initGovDelay))
         .accounts({
             payer: payer.publicKey,
             mintAccount: mintPDA,
@@ -48,6 +48,14 @@ export async function setOwner(signer: Keypair, newOwner: PublicKey) {
     await program.methods
         .transferOwnership(newOwner)
         .accounts({owner: signer.publicKey})
+        .signers([signer])
+        .rpc();
+}
+// only pending owner (next_owner)
+export async function acceptOwnership(signer: Keypair) {
+    await program.methods
+        .acceptOwnership()
+        .accounts({nextOwner: signer.publicKey})
         .signers([signer])
         .rpc();
 }
@@ -160,7 +168,7 @@ export async function mint(signer: Keypair, to: PublicKey, amt: number, idx=0, a
     const ataAddr = getATA(ataOwner || to, allowOwnerOffCurve);
     const ataInfo = await program.provider.connection.getAccountInfo(ataAddr);
     if (!ataInfo) {
-        await createAssociatedTokenAccount(program.provider.connection, signer, mintPDA, ataOwner || to, 
+        await createAssociatedTokenAccount(program.provider.connection, signer, mintPDA, ataOwner || to,
             undefined, TOKEN_2022_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, allowOwnerOffCurve);
     }
 

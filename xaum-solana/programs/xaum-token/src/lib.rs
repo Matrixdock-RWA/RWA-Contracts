@@ -17,9 +17,10 @@ pub mod xaum_token {
         token_name: String,
         token_symbol: String,
         token_uri: String,
-        delay: i64, // Delay in seconds
+        delay: i64,
+        gov_delay: i64,
     ) -> Result<()> {
-        create::create_token(ctx, token_name, token_symbol, token_uri, delay)
+        create::create_token(ctx, token_name, token_symbol, token_uri, delay, gov_delay)
     }
 
     pub fn mint_token(ctx: Context<MintToken>, amount: u64, nonce: [u8; 32]) -> Result<()> {
@@ -53,6 +54,10 @@ pub mod xaum_token {
 
     pub fn transfer_ownership(ctx: Context<OwnerOp>, new_owner: Pubkey) -> Result<()> {
         authority::transfer_ownership(ctx, new_owner)
+    }
+
+    pub fn accept_ownership(ctx: Context<AcceptOwnerOp>) -> Result<()> {
+        authority::accept_ownership(ctx)
     }
 
     pub fn revoke_next_owner(ctx: Context<OwnerOp>) -> Result<()> {
@@ -89,6 +94,14 @@ pub mod xaum_token {
 
     pub fn revoke_next_delay(ctx: Context<RevokerOp>) -> Result<()> {
         authority::revoke_next_delay(ctx)
+    }
+
+    pub fn set_gov_delay(ctx: Context<OwnerOp>, new_delay: i64) -> Result<()> {
+        authority::set_gov_delay(ctx, new_delay)
+    }
+
+    pub fn revoke_next_gov_delay(ctx: Context<OwnerOp>) -> Result<()> {
+        authority::revoke_next_gov_delay(ctx)
     }
 
     pub fn force_transfer_tokens(ctx: Context<ForceTransferTokens>, amount: u64) -> Result<()> {

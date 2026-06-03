@@ -1,6 +1,6 @@
 import { Keypair, PublicKey } from "@solana/web3.js";
 import {
-    getAccount as getTokenAccountInfo, 
+    getAccount as getTokenAccountInfo,
     transferCheckedWithFee, createAssociatedTokenAccount,
     TOKEN_2022_PROGRAM_ID,
     getMint,
@@ -19,8 +19,8 @@ import {
     mintPDA, statePDA,
     getATA,
     getTokenState,
-    createToken,  
-    setOwner, setRevoker, setOperator, setMessager, setDelay, 
+    createToken,
+    setOwner, acceptOwnership, setRevoker, setOperator, setMessager, setDelay,
     revokeNextOwner, revokeNextRevoker, revokeNextOperator, revokeNextMessager, revokeNextDelay,
     changeMintBudget, mint, redeem, revokeNextMint, addToBlockedList, removeFromBlockedList,
     forcedTransfer,
@@ -28,8 +28,8 @@ import {
     withdrawTransferFees,
 } from "./utils/mtoken";
 
-const minDelay = 3600; // 1 hour
-const maxDelay = 48 * 3600; // 48 hours
+const minDelay = 3600; // 1 hour (MIN_ACCEPTABLE_DELAY)
+const maxDelay = 7 * 24 * 3600; // 7 days (MAX_ACCEPTABLE_DELAY)
 
 const initDelay = 3;
 const xaumName = "Solana Gold";
@@ -80,7 +80,7 @@ describe("MToken", () => {
             mintPDA, // mint
             toATA, // destination
             from.publicKey, // owner
-            BigInt(amount), 
+            BigInt(amount),
             9, // decimals
             0n, // fee
             [], // multiSigners
@@ -89,7 +89,7 @@ describe("MToken", () => {
         );
     }
     function createATA(payer: Keypair, owner: PublicKey) {
-        return createAssociatedTokenAccount(provider.connection, payer, mintPDA, owner, 
+        return createAssociatedTokenAccount(provider.connection, payer, mintPDA, owner,
             undefined, TOKEN_2022_PROGRAM_ID);
     }
 
@@ -114,7 +114,7 @@ describe("MToken", () => {
     });
 
     it("initialize", async () => {
-        await createToken(deployer.payer, xaumName, xaumSymbol, xaumUri, initDelay);
+        await createToken(deployer.payer, xaumName, xaumSymbol, xaumUri, initDelay, initDelay);
         const stateData = await getTokenState();
         const admin = deployer.payer.publicKey;
         assert.deepEqual(stateData.owner, admin);
@@ -144,12 +144,62 @@ describe("MToken", () => {
     });
 
     describe("delayed ops", () => {
+        // Ownership transfer is a two-step flow (start by owner, accept by the new owner)
+        // and cannot share the generic request/execute loop below.
+        it("setOwner", async () => {
+            // only the current owner can start a transfer
+            await checkErrorCode(setOwner(user1, owner.publicKey), "NotOwner");
+
+            // step 1: current owner (deployer.payer) starts the transfer
+            await setOwner(deployer.payer, owner.publicKey);
+            const state = await getTokenState();
+            assert.deepEqual(state.owner, deployer.payer.publicKey);
+            assert.deepEqual(state.nextOwner, owner.publicKey);
+            assert.isTrue(state.nextOwnerEt.toNumber() > 0);
+
+            // cannot start another transfer while one is pending
+            await checkErrorCode(setOwner(deployer.payer, user1.publicKey), "PendingOwnerExist");
+
+            // step 2 too early
+            await checkErrorCode(acceptOwnership(owner), "NotEffective");
+            // only the pending owner can accept
+            await checkErrorCode(acceptOwnership(user1), "NotNextOwner");
+
+            // wait for gov_delay, then the pending owner accepts
+            await increaseBlockTime(provider, initDelay);
+            await acceptOwnership(owner);
+            const state2 = await getTokenState();
+            assert.deepEqual(state2.owner, owner.publicKey);
+            assert.equal(state2.nextOwnerEt.toNumber(), 0);
+
+            // accepting again with no pending transfer fails
+            await checkErrorCode(acceptOwnership(owner), "NoPendingOwner");
+        });
+
+        it("revoke_setOwner", async () => {
+            // only owner can revoke
+            await checkErrorCode(revokeNextOwner(user1), "NotOwner");
+
+            // start a transfer, then revoke it
+            await setOwner(owner, user1.publicKey);
+            const state = await getTokenState();
+            assert.isTrue(state.nextOwnerEt.toNumber() > 0);
+
+            await revokeNextOwner(owner);
+            const state2 = await getTokenState();
+            assert.equal(state2.nextOwnerEt.toNumber(), 0);
+            assert.deepEqual(state2.owner, owner.publicKey); // owner unchanged
+        });
+
         const testCases = [
             {name: "setOwner", func: setOwner, revokeFunc: revokeNextOwner, field: "owner", nextField: "nextOwner", nextEtField: "nextOwnerEt", roleErr: "NotOwner", caller: deployer.payer, oldVal: deployer.payer.publicKey, newVal: owner.publicKey, newVal2: user1.publicKey, revoker: owner},
             {name: "setRevoker", func: setRevoker, revokeFunc: revokeNextRevoker, field: "revoker", nextField: "nextRevoker", nextEtField: "nextRevokerEt", roleErr: "NotOwner", caller: owner, oldVal: deployer.payer.publicKey, newVal: revoker.publicKey, newVal2: user1.publicKey, revoker: owner},
             {name: "setOperator", func: setOperator, revokeFunc: revokeNextOperator, field: "operator", nextField: "nextOperator", nextEtField: "nextOperatorEt", roleErr: "NotOwner", caller: owner, oldVal: deployer.payer.publicKey, newVal: operator.publicKey, newVal2: user1.publicKey, revoker},
             {name: "setMessager", func: setMessager, revokeFunc: revokeNextMessager, field: "messager", nextField: "nextMessager", nextEtField: "nextMessagerEt", roleErr: "NotOwner", caller: owner, oldVal: deployer.payer.publicKey, newVal: messager.publicKey, newVal2: user1.publicKey, revoker: revoker},
-            {name: "setDelay", func: setDelay, revokeFunc: revokeNextDelay, field: "delay", nextField: "nextDelay", nextEtField: "nextDelayEt", roleErr: "NotOwner", caller: owner, oldVal: new anchor.BN(initDelay), newVal: new anchor.BN(initDelay - 1), newVal2: new anchor.BN(12345), revoker},
+            // NOTE: setDelay is tested separately at the end of the suite. It enforces the
+            // [MIN_ACCEPTABLE_DELAY, MAX_ACCEPTABLE_DELAY] bounds and executing it would
+            // permanently raise `delay` above the fast (initDelay) value the other timed
+            // tests depend on, so it cannot share this generic loop.
         ];
 
         for (const testCase of testCases) {
@@ -178,7 +228,7 @@ describe("MToken", () => {
                 await func(caller, newVal as any);
                 const state2 = await getTokenState();
                 assert.deepEqual(state2[field], newVal);
-                assert.isTrue(state2[nextEtField].toNumber() == 0);  
+                assert.isTrue(state2[nextEtField].toNumber() == 0);
             });
         }; // end of for
 
@@ -190,14 +240,14 @@ describe("MToken", () => {
                 await checkErrorCode(revokeFunc(user1), err);
 
                 // request
-                await func(name == "setOwner" ? owner : caller, oldVal as any);
+                await func(caller, oldVal as any);
                 const state = await getTokenState();
                 assert.isTrue(state[nextEtField].toNumber() > 0);
 
                 // revoke
                 await revokeFunc(revoker);
                 const state2 = await getTokenState();
-                assert.isTrue(state2[nextEtField].toNumber() == 0);  
+                assert.isTrue(state2[nextEtField].toNumber() == 0);
             });
         } // end of for
 
@@ -215,31 +265,31 @@ describe("MToken", () => {
         it("check extensions", async () => {
             const mintInfo = await getMint(provider.connection, mintPDA, "confirmed", TOKEN_2022_PROGRAM_ID);
             const extensionTypes = getExtensionTypes(mintInfo.tlvData);
-            
+
             console.log("Enabled extensions:", extensionTypes.map(t => ExtensionType[t]).join(", "));
-            
+
             // Check MetadataPointer extension
             const metadataPointer = getMetadataPointerState(mintInfo);
             assert.isNotNull(metadataPointer, "MetadataPointer extension should be enabled");
             assert.isNotNull(metadataPointer!.authority, "MetadataPointer authority should be set");
             assert.isNotNull(metadataPointer!.metadataAddress, "MetadataPointer metadataAddress should be set");
             assert.isTrue(extensionTypes.includes(ExtensionType.MetadataPointer), "MetadataPointer should be in extension types");
-            
+
             // Check PermanentDelegate extension
             const permanentDelegate = getPermanentDelegate(mintInfo);
             assert.isNotNull(permanentDelegate, "PermanentDelegate extension should be enabled");
             assert.isTrue(extensionTypes.includes(ExtensionType.PermanentDelegate), "PermanentDelegate should be in extension types");
-            
+
             // Check TransferFee extension
             const transferFeeConfig = getTransferFeeConfig(mintInfo);
             assert.isNotNull(transferFeeConfig, "TransferFeeConfig extension should be enabled");
             assert.isTrue(extensionTypes.includes(ExtensionType.TransferFeeConfig), "TransferFeeConfig should be in extension types");
-            
+
             // Check Pausable extension
             const pausableConfig = getPausableConfig(mintInfo);
             assert.isNotNull(pausableConfig, "PausableConfig extension should be enabled");
             assert.isTrue(extensionTypes.includes(ExtensionType.PausableConfig), "PausableConfig should be in extension types");
-            
+
             // Check TokenMetadata extension
             const tokenMetadata = await getTokenMetadata(provider.connection, mintPDA, "confirmed", TOKEN_2022_PROGRAM_ID);
             assert.isNotNull(tokenMetadata, "TokenMetadata extension should be enabled");
@@ -247,7 +297,7 @@ describe("MToken", () => {
             assert.equal(tokenMetadata!.symbol, xaumSymbol, "Token symbol should match");
             assert.equal(tokenMetadata!.uri, xaumUri, "Token URI should match");
             assert.isTrue(extensionTypes.includes(ExtensionType.TokenMetadata), "TokenMetadata should be in extension types");
-            
+
             console.log("✓ All extensions are enabled and configured correctly");
         });
 
@@ -290,7 +340,7 @@ describe("MToken", () => {
 
         it("change_mint_budget", async () => {
             await checkErrorCode(changeMintBudget(user1, 5000), "NotOperator");
-        
+
             // increase
             await changeMintBudget(operator, 5000);
             const state = await getTokenState();
@@ -350,7 +400,7 @@ describe("MToken", () => {
             const totalSupply = await provider.connection.getTokenSupply(mintPDA);
             assert.equal(totalSupply.value.amount, "500");
         });
-    
+
         it("revoke_mint", async () => {
             await checkErrorCode(revokeNextMint(user1), "NotRevoker");
 
@@ -366,7 +416,7 @@ describe("MToken", () => {
             const state2 = await getTokenState();
             assert.equal(state2.nextMintEt.toNumber(), 0);
         });
-    
+
         it("redeem", async () => {
             // mint to operator some tokens
             await mint(operator, operator.publicKey, 100);
@@ -460,7 +510,7 @@ describe("MToken", () => {
         it("block_error", async () => {
             const user = Keypair.generate();
             await checkErrorMsg(addToBlockedList(operator, user.publicKey), "AccountNotInitialized");
-      
+
             await createATA(owner, user.publicKey);
             await checkErrorCode(addToBlockedList(operator, user.publicKey), "TokenBalanceZero");
         });
@@ -506,6 +556,59 @@ describe("MToken", () => {
                 transferToken(user1, user2.publicKey, 100),
                 "Transferring, minting, and burning is paused on this mint",
             );
+        });
+
+    });
+
+    // setDelay is tested last: executing it raises `delay` above initDelay, which would
+    // break the fast-timing of the other delayed-op tests if run earlier. The pending
+    // request still becomes effective after the *current* (small) delay, so the full
+    // request -> execute flow is still exercisable here.
+    describe("delayed setDelay", () => {
+
+        it("setDelay", async () => {
+            const curDelay = (await getTokenState()).delay.toNumber();
+            const newDelay = minDelay;       // 1h, within bounds
+            const newDelay2 = minDelay + 60; // a different valid value
+
+            // role check
+            await checkErrorCode(setDelay(user1, newDelay), "NotOwner");
+
+            // request
+            await setDelay(owner, newDelay);
+            const state = await getTokenState();
+            assert.equal(state.delay.toNumber(), curDelay);
+            assert.equal(state.nextDelay.toNumber(), newDelay);
+            assert.isTrue(state.nextDelayEt.toNumber() > 0);
+
+            // execute too early
+            await checkErrorCode(setDelay(owner, newDelay), "NotEffective");
+
+            // wait for the (still small) current delay to elapse
+            await increaseBlockTime(provider, curDelay);
+
+            // request with different value
+            await checkErrorCode(setDelay(owner, newDelay2), "RequestMismatch");
+
+            // execute OK
+            await setDelay(owner, newDelay);
+            const state2 = await getTokenState();
+            assert.equal(state2.delay.toNumber(), newDelay);
+            assert.equal(state2.nextDelayEt.toNumber(), 0);
+        });
+
+        it("revoke_setDelay", async () => {
+            await checkErrorCode(revokeNextDelay(user1), "NotRevoker");
+
+            // request
+            await setDelay(owner, minDelay + 120);
+            const state = await getTokenState();
+            assert.isTrue(state.nextDelayEt.toNumber() > 0);
+
+            // revoke
+            await revokeNextDelay(revoker);
+            const state2 = await getTokenState();
+            assert.equal(state2.nextDelayEt.toNumber(), 0);
         });
 
     });

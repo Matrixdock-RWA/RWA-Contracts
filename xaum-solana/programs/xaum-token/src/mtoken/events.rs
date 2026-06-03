@@ -61,6 +61,21 @@ pub struct SetDelayEffected {
 }
 
 #[event]
+pub struct SetGovDelayRequest {
+    pub old_delay: i64,
+    pub new_delay: i64,
+    pub et: i64,
+}
+
+#[event]
+pub struct SetGovDelayEffected {
+    pub new_delay: i64,
+}
+
+#[event]
+pub struct RevokeNextGovDelay {}
+
+#[event]
 pub struct MintRequest {
     pub recipient: Pubkey,
     pub amount: u64,

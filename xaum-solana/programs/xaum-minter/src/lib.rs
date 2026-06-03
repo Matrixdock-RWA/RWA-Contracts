@@ -4,12 +4,14 @@ use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, Tran
 
 declare_id!("7oRKE73rQCQ13hrmGrVUmUwg7S6LzEV8yuV3GTgAzjGY");
 
+pub const DELAY_MAX: i64 = 59;
+pub const MAX_ACCEPTED_TOKENS: usize = 10;
+// Ownership transfer timelock: request must wait this long before taking effect.
+pub const OWNER_TRANSFER_DELAY: i64 = 12 * 3600; // 12 hours
+
 #[program]
 pub mod xaum_minter {
     use super::*;
-
-    pub const DELAY_MAX: i64 = 59;
-    pub const MAX_ACCEPTED_TOKENS: usize = 10;
 
     pub fn initialize(
         ctx: Context<Initialize>,
@@ -27,7 +29,10 @@ pub mod xaum_minter {
             ErrorCode::ExceedsMaxAcceptedTokens
         );
         let state = &mut ctx.accounts.state;
-        state.owner = *ctx.accounts.owner.key;
+        let owner = *ctx.accounts.owner.key;
+        state.owner = owner;
+        state.next_owner = owner;
+        state.next_owner_et = 0;
         state.pool_account_a = pool_account_a;
         state.pool_account_b = pool_account_b;
         state.accepted_by_a = tokens_accepted_by_a;
@@ -36,9 +41,44 @@ pub mod xaum_minter {
         Ok(())
     }
 
+    // Two-step ownership transfer with a hardcoded 12-hour timelock.
+    // Step 1 (owner): records the pending new owner and starts the countdown.
+    // Step 2 (new owner): the pending owner calls accept_ownership after the delay.
+    // A pending transfer must be revoked before a new one can be started.
     pub fn transfer_ownership(ctx: Context<OnlyOwner>, new_owner: Pubkey) -> Result<()> {
         let state = &mut ctx.accounts.state;
-        state.owner = new_owner;
+        require!(state.next_owner_et == 0, ErrorCode::PendingOwnerExist);
+        let clock = Clock::get()?;
+        state.next_owner = new_owner;
+        state.next_owner_et = clock.unix_timestamp + OWNER_TRANSFER_DELAY;
+        emit!(SetOwnerRequest {
+            old_owner: state.owner,
+            new_owner,
+            et: state.next_owner_et,
+        });
+        Ok(())
+    }
+
+    // Step 2: the pending owner (next_owner) accepts the transfer once the timelock elapses.
+    pub fn accept_ownership(ctx: Context<AcceptOwner>) -> Result<()> {
+        let state = &mut ctx.accounts.state;
+        require!(state.next_owner_et != 0, ErrorCode::NoPendingOwner);
+        let clock = Clock::get()?;
+        require!(
+            state.next_owner_et <= clock.unix_timestamp,
+            ErrorCode::NotEffective
+        );
+        state.owner = state.next_owner;
+        state.next_owner_et = 0;
+        emit!(SetOwnerEffected {
+            new_owner: state.owner,
+        });
+        Ok(())
+    }
+
+    // Owner can cancel a pending ownership transfer before it takes effect.
+    pub fn revoke_next_owner(ctx: Context<OnlyOwner>) -> Result<()> {
+        ctx.accounts.state.next_owner_et = 0;
         Ok(())
     }
 
@@ -103,11 +143,11 @@ pub mod xaum_minter {
         preprice: u64,
         slippage: u64,
         timestamp: i64,
+        extra_data: Vec<u8>,
     ) -> Result<()> {
         let state = &ctx.accounts.state;
         require!(
-            state.accepted_by_b.contains(&for_token)
-                && for_token == ctx.accounts.for_token.key(),
+            state.accepted_by_b.contains(&for_token) && for_token == ctx.accounts.for_token.key(),
             ErrorCode::InvalidForToken
         );
         require!(
@@ -139,6 +179,7 @@ pub mod xaum_minter {
             amount,
             preprice,
             slippage,
+            extra_data,
         });
         Ok(())
     }
@@ -151,6 +192,7 @@ pub mod xaum_minter {
         preprice: u64,
         slippage: u64,
         timestamp: i64,
+        extra_data: Vec<u8>,
     ) -> Result<()> {
         let state = &ctx.accounts.state;
         require!(
@@ -186,12 +228,25 @@ pub mod xaum_minter {
             amount,
             preprice,
             slippage,
+            extra_data,
         });
         Ok(())
     }
 }
 
 // ------- Events Definitions -------
+
+#[event]
+pub struct SetOwnerRequest {
+    pub old_owner: Pubkey,
+    pub new_owner: Pubkey,
+    pub et: i64,
+}
+
+#[event]
+pub struct SetOwnerEffected {
+    pub new_owner: Pubkey,
+}
 
 #[event]
 pub struct SetPoolAccountAEvent {
@@ -227,6 +282,7 @@ pub struct MintRequestEvent {
     pub preprice: u64,
     /// client-provided off-chain pricing hint
     pub slippage: u64,
+    pub extra_data: Vec<u8>,
 }
 
 #[event]
@@ -241,16 +297,22 @@ pub struct RedeemRequestEvent {
     pub preprice: u64,
     /// client-provided off-chain pricing hint
     pub slippage: u64,
+    pub extra_data: Vec<u8>,
 }
 
 // ------- Account Definitions -------
 
 #[account]
+#[derive(InitSpace)]
 pub struct State {
     pub owner: Pubkey,
+    pub next_owner: Pubkey,
+    pub next_owner_et: i64,
     pub pool_account_a: Pubkey,
     pub pool_account_b: Pubkey,
+    #[max_len(MAX_ACCEPTED_TOKENS)]
     pub accepted_by_a: Vec<Pubkey>,
+    #[max_len(MAX_ACCEPTED_TOKENS)]
     pub accepted_by_b: Vec<Pubkey>,
     pub bump: u8,
 }
@@ -264,7 +326,7 @@ pub struct Initialize<'info> {
         seeds = [b"state"],
         bump,
         payer = owner,
-        space =  8 + 32 + 32 + 32 + 4 + 32 * MAX_ACCEPTED_TOKENS + 4 + 32 * MAX_ACCEPTED_TOKENS + 1,  // allocate MAX_ACCEPTED_TOKENS tokens for pool_a and MAX_ACCEPTED_TOKENS for pool_b)]
+        space = 8 + State::INIT_SPACE,
     )]
     pub state: Account<'info, State>,
 
@@ -287,6 +349,19 @@ pub struct OnlyOwner<'info> {
     )]
     pub state: Account<'info, State>,
     pub owner: Signer<'info>,
+}
+
+// Signed by the pending owner (next_owner) to accept a timelocked ownership transfer.
+#[derive(Accounts)]
+pub struct AcceptOwner<'info> {
+    #[account(
+        mut,
+        seeds = [b"state"],
+        bump = state.bump,
+        has_one = next_owner @ ErrorCode::NotNextOwner,
+    )]
+    pub state: Account<'info, State>,
+    pub next_owner: Signer<'info>,
 }
 
 #[derive(Accounts)]
@@ -435,4 +510,14 @@ pub enum ErrorCode {
     ExceedsMaxAcceptedTokens,
     #[msg("InvalidForToken")]
     InvalidForToken,
+    #[msg("NotEffective")]
+    NotEffective,
+    #[msg("RequestMismatch")]
+    RequestMismatch,
+    #[msg("NotNextOwner")]
+    NotNextOwner,
+    #[msg("PendingOwnerExist")]
+    PendingOwnerExist,
+    #[msg("NoPendingOwner")]
+    NoPendingOwner,
 }
