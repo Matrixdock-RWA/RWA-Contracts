@@ -117,6 +117,7 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
         __ERC721_init(name_, symbol_);
         __EIP712_init_unchained(symbol_, "1");
         __Ownable_init(_owner);
+        __Ownable2StepTimeLock_init_unchained();
         mtokenContract = _mtokenContract; // cannot change after init
         packSigner = _packSigner;
     }

@@ -4,8 +4,6 @@ pragma solidity ^0.8.24;
 import {DelayedUpgradeable} from "./DelayedUpgradeable.sol";
 
 abstract contract Delayable is DelayedUpgradeable {
-    uint64 constant MIN_DELAY = 1 hours;
-
     uint64 public delay;
     uint64 public nextDelay;
     uint64 public etNextDelay;
@@ -27,7 +25,6 @@ abstract contract Delayable is DelayedUpgradeable {
 
     error NotRevoker(address);
     error NotOperator(address);
-    error DelayTooSmall();
 
     modifier onlyRevoker() {
         if (msg.sender != revoker) {
@@ -49,6 +46,7 @@ abstract contract Delayable is DelayedUpgradeable {
         address _revoker
     ) internal onlyInitializing {
         __Ownable_init(_owner);
+        __Ownable2StepTimeLock_init_unchained();
         operator = _operator;
         revoker = _revoker;
     }

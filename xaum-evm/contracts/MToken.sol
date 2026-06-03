@@ -61,9 +61,6 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
 contract MToken is MTokenBase, ICCClient {
     using SafeCast for uint;
 
-    uint64 constant MIN_DELAY = 1 hours;
-    uint64 constant MAX_DELAY = 48 hours;
-
     uint constant TAG_SEND_TOKEN = 2;
     uint constant TAG_SEND_MINT_BUDGET = 3;
 
@@ -89,6 +86,13 @@ contract MToken is MTokenBase, ICCClient {
     event Redeem(address indexed customer, uint amount, bytes data);
     event MintRequest(address indexed receiver, uint amount, uint nonce);
     event RequestRevoked(bytes32 indexed req);
+    event DisableCcSend(bool disabled);
+    event SetNFTContract(address nft);
+    event NextDelayRevoked(uint64 nextDelay);
+    event NextOperatorRevoked(address nextOperator);
+    event NextRevokerRevoked(address nextRevoker);
+    event NextMessengerRevoked(address nextMessenger);
+    event NextUpgradeRevoked(bytes32 dataHash);
 
     error BlockedAccount(address);
     error NotOperator(address);
@@ -103,8 +107,6 @@ contract MToken is MTokenBase, ICCClient {
     error TooEarlyToExecute(address receiver, uint amount, uint nonce);
     error CcSendDisabled();
     error InvalidMsg(uint tag);
-    error DelayTooSmall();
-    error DelayTooLarge();
     error InvalidReceiver(uint length);
     error PrecisionLost();
 
@@ -180,12 +182,13 @@ contract MToken is MTokenBase, ICCClient {
         __EIP712_init_unchained(symbol, "1");
         __ERC20Permit_init_unchained(symbol);
         __Ownable_init_unchained(_owner);
+        __Ownable2StepTimeLock_init_unchained();
         operator = _operator;
     }
 
     function setDisableCcSend(bool b) public onlyOwner {
-        // note: missing event to be added in future update
         disableCcSend = b;
+        emit DisableCcSend(b);
     }
 
     function setDelay(uint64 _delay) public onlyOwner {
@@ -227,8 +230,8 @@ contract MToken is MTokenBase, ICCClient {
     function setNFTContract(address _nftContract) public onlyOwner {
         _checkZeroAddress(_nftContract);
         if (nftContract == address(0)) {
-            // note: missing event to be added in future update
             nftContract = _nftContract;
+            emit SetNFTContract(_nftContract);
         }
     }
 
@@ -270,28 +273,28 @@ contract MToken is MTokenBase, ICCClient {
     }
 
     function revokeNextDelay() public onlyRevoker {
-        // note: missing event to be added in future update
         etNextDelay = 0;
+        emit NextDelayRevoked(nextDelay);
     }
 
     function revokeNextOperator() public onlyRevoker {
-        // note: missing event to be added in future update
         etNextOperator = 0;
+        emit NextOperatorRevoked(nextOperator);
     }
 
     function revokeNextMessenger() public onlyRevoker {
-        // note: missing event to be added in future update
         etNextMessenger = 0;
+        emit NextMessengerRevoked(nextMessenger);
     }
 
     function revokeNextRevoker() public onlyOwner {
-        // note: missing event to be added in future update
         etNextRevoker = 0;
+        emit NextRevokerRevoked(nextRevoker);
     }
 
     function revokeNextUpgrade() public onlyRevoker {
-        // note: missing event to be added in future update
         etNextUpgradeToAndCall = 0;
+        emit NextUpgradeRevoked(nextUpgradeToAndCallDataHash);
     }
 
     function addToBlockedList(address _user) public onlyOperator {

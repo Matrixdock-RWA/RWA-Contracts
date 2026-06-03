@@ -28,6 +28,7 @@ contract BullionMinter is DelayedUpgradeable {
         address[] calldata _tokensAcceptedByB
     ) internal onlyInitializing {
         __Ownable_init_unchained(_owner);
+        __Ownable2StepTimeLock_init_unchained();
         poolAccountA = _poolAccountA;
         poolAccountB = _poolAccountB;
         for (uint i; i < _tokensAcceptedByA.length; i++) {
@@ -56,6 +57,7 @@ contract BullionMinter is DelayedUpgradeable {
                address indexed requestor, address pool, uint amount, uint preprice, uint slippage, bytes extraData);
     event RedeemRequest(address indexed transferredToken, address indexed forToken,
                address indexed requestor, address pool, uint amount, uint preprice, uint slippage, bytes extraData);
+    event Rescue(address indexed token, address indexed to, uint amount);
 
     function getDelay() internal pure override returns (uint64) {
         return 3600 * 12; //upgrade must be delayed by 12 hours
@@ -110,8 +112,9 @@ contract BullionMinter is DelayedUpgradeable {
     }
 
     // rescue ERC20 tokens which were accidentally sent to this contract
-    function rescue(address token, address receiver, uint amount) onlyOwner external {
+    function rescue(address token, address receiver, uint amount) onlyOwner external virtual {
         IERC20(token).safeTransfer(receiver, amount);
+        emit Rescue(token, receiver, amount);
     }
 }
 
