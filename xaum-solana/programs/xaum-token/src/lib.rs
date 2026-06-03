@@ -120,8 +120,12 @@ pub mod xaum_token {
         extensions::update_transfer_fee(ctx, transfer_fee_basis_points, maximum_fee)
     }
 
-    pub fn set_paused(ctx: Context<UpdateExtension>, paused: bool) -> Result<()> {
-        extensions::set_paused(ctx, paused)
+    pub fn pause(ctx: Context<Pause>) -> Result<()> {
+        extensions::pause(ctx)
+    }
+
+    pub fn unpause(ctx: Context<UpdateExtension>) -> Result<()> {
+        extensions::unpause(ctx)
     }
 
     pub fn harvest_transfer_fees<'info>(

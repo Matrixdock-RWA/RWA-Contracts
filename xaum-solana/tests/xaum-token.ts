@@ -24,7 +24,7 @@ import {
     revokeNextOwner, revokeNextRevoker, revokeNextOperator, revokeNextMessager, revokeNextDelay,
     changeMintBudget, mint, redeem, revokeNextMint, addToBlockedList, removeFromBlockedList,
     forcedTransfer,
-    updateMetadata, updateTransferFee, setPaused,
+    updateMetadata, updateTransferFee, pause, unpause,
     withdrawTransferFees,
 } from "./utils/mtoken";
 
@@ -104,11 +104,11 @@ describe("MToken", () => {
 
     it("create_token: invalid delay", async () => {
         await checkErrorCode(
-            createToken(deployer.payer, xaumName, xaumSymbol, xaumUri, -1),
+            createToken(deployer.payer, xaumName, xaumSymbol, xaumUri, -1, 0),
             "NegativeDelay",
         );
         await checkErrorCode(
-            createToken(deployer.payer, xaumName, xaumSymbol, xaumUri, maxDelay + 1),
+            createToken(deployer.payer, xaumName, xaumSymbol, xaumUri, maxDelay + 1, 0),
             "DelayExceedsMaximum",
         );
     });
@@ -138,7 +138,7 @@ describe("MToken", () => {
         assert.equal(stateData.mintBudget.toNumber(), 0);
 
         await checkErrorMsg(
-            createToken(deployer.payer, xaumName, xaumSymbol, xaumUri, initDelay),
+            createToken(deployer.payer, xaumName, xaumSymbol, xaumUri, initDelay, 0),
             "already in use",
         );
     });
@@ -192,7 +192,6 @@ describe("MToken", () => {
         });
 
         const testCases = [
-            {name: "setOwner", func: setOwner, revokeFunc: revokeNextOwner, field: "owner", nextField: "nextOwner", nextEtField: "nextOwnerEt", roleErr: "NotOwner", caller: deployer.payer, oldVal: deployer.payer.publicKey, newVal: owner.publicKey, newVal2: user1.publicKey, revoker: owner},
             {name: "setRevoker", func: setRevoker, revokeFunc: revokeNextRevoker, field: "revoker", nextField: "nextRevoker", nextEtField: "nextRevokerEt", roleErr: "NotOwner", caller: owner, oldVal: deployer.payer.publicKey, newVal: revoker.publicKey, newVal2: user1.publicKey, revoker: owner},
             {name: "setOperator", func: setOperator, revokeFunc: revokeNextOperator, field: "operator", nextField: "nextOperator", nextEtField: "nextOperatorEt", roleErr: "NotOwner", caller: owner, oldVal: deployer.payer.publicKey, newVal: operator.publicKey, newVal2: user1.publicKey, revoker},
             {name: "setMessager", func: setMessager, revokeFunc: revokeNextMessager, field: "messager", nextField: "nextMessager", nextEtField: "nextMessagerEt", roleErr: "NotOwner", caller: owner, oldVal: deployer.payer.publicKey, newVal: messager.publicKey, newVal2: user1.publicKey, revoker: revoker},
@@ -304,7 +303,8 @@ describe("MToken", () => {
         it("update: onlyOwner", async () => {
             await checkErrorCode(updateMetadata(user1, "newURI"), "NotOwner");
             await checkErrorCode(updateTransferFee(user1, 100, 1000), "NotOwner");
-            await checkErrorCode(setPaused(user1, true), "NotOwner");
+            await checkErrorCode(unpause(user1), "NotOwner");
+            await checkErrorCode(pause(user1), "NotOperator");
         });
 
         it("update_metadata", async () => {
@@ -329,8 +329,8 @@ describe("MToken", () => {
         });
 
         it("set_paused", async () => {
-            await setPaused(owner, true); // ok
-            await setPaused(owner, false); // ok
+            await pause(operator); // ok
+            await unpause(owner); // ok
         });
 
     });
@@ -551,7 +551,7 @@ describe("MToken", () => {
         });
 
         it("pausable", async () => {
-            await setPaused(owner, true); // ok
+            await pause(operator); // ok
             await checkErrorMsg(
                 transferToken(user1, user2.publicKey, 100),
                 "Transferring, minting, and burning is paused on this mint",

@@ -4,9 +4,10 @@ use anchor_spl::token_interface::{
     token_metadata_update_field, transfer_fee_set, Mint, Token2022, TokenMetadataUpdateField,
     TransferFeeSetTransferFee,
 };
-use spl_token_2022::extension::pausable::instruction::{pause, resume};
+use spl_token_2022::extension::pausable::instruction::{pause as pause_instr, resume};
 use spl_token_metadata_interface::state::Field;
 
+use super::super::mtoken::events::{Paused, Unpaused};
 use super::super::mtoken::utils::update_account_lamports_to_minimum_rent_balance;
 use super::super::mtoken::{errors::ErrorCode, state::State};
 
@@ -19,6 +20,29 @@ pub struct UpdateExtension<'info> {
         seeds = [b"state"],
         bump = state.bump,
         has_one = owner @ ErrorCode::NotOwner,
+    )]
+    state: Account<'info, State>,
+
+    #[account(
+        mut,
+        seeds = [b"mint"],
+        bump
+    )]
+    pub mint_account: InterfaceAccount<'info, Mint>,
+
+    pub token_program: Program<'info, Token2022>,
+    pub system_program: Program<'info, System>,
+}
+
+#[derive(Accounts)]
+pub struct Pause<'info> {
+    #[account(mut)]
+    pub operator: Signer<'info>,
+
+    #[account(
+        seeds = [b"state"],
+        bump = state.bump,
+        has_one = operator @ ErrorCode::NotOperator,
     )]
     state: Account<'info, State>,
 
@@ -79,24 +103,17 @@ pub fn update_transfer_fee(
     )
 }
 
-pub fn set_paused(ctx: Context<UpdateExtension>, paused: bool) -> Result<()> {
+// Pause minting, burning, and transferring.
+// Callable by operator only; takes effect immediately with no timelock (emergency safety brake).
+pub fn pause(ctx: Context<Pause>) -> Result<()> {
     let signer_seeds: &[&[&[u8]]] = &[&[b"mint", &[ctx.bumps.mint_account]]];
 
-    let instruction = if paused {
-        pause(
-            &ctx.accounts.token_program.key(),
-            &ctx.accounts.mint_account.key(),
-            &ctx.accounts.mint_account.key(),    // authority
-            &[&ctx.accounts.mint_account.key()], // signers
-        )?
-    } else {
-        resume(
-            &ctx.accounts.token_program.key(),
-            &ctx.accounts.mint_account.key(),
-            &ctx.accounts.mint_account.key(),    // authority
-            &[&ctx.accounts.mint_account.key()], // signers
-        )?
-    };
+    let instruction = pause_instr(
+        &ctx.accounts.token_program.key(),
+        &ctx.accounts.mint_account.key(),
+        &ctx.accounts.mint_account.key(),    // authority
+        &[&ctx.accounts.mint_account.key()], // signers
+    )?;
 
     anchor_lang::solana_program::program::invoke_signed(
         &instruction,
@@ -104,5 +121,32 @@ pub fn set_paused(ctx: Context<UpdateExtension>, paused: bool) -> Result<()> {
         signer_seeds,
     )?;
 
+    emit!(Paused {
+        caller: ctx.accounts.operator.key()
+    });
+    Ok(())
+}
+
+// Resume minting, burning, and transferring.
+// Callable by owner only.
+pub fn unpause(ctx: Context<UpdateExtension>) -> Result<()> {
+    let signer_seeds: &[&[&[u8]]] = &[&[b"mint", &[ctx.bumps.mint_account]]];
+
+    let instruction = resume(
+        &ctx.accounts.token_program.key(),
+        &ctx.accounts.mint_account.key(),
+        &ctx.accounts.mint_account.key(),    // authority
+        &[&ctx.accounts.mint_account.key()], // signers
+    )?;
+
+    anchor_lang::solana_program::program::invoke_signed(
+        &instruction,
+        &[ctx.accounts.mint_account.to_account_info()],
+        signer_seeds,
+    )?;
+
+    emit!(Unpaused {
+        caller: ctx.accounts.owner.key()
+    });
     Ok(())
 }

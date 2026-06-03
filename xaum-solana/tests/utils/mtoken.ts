@@ -117,9 +117,16 @@ export async function updateTransferFee(signer: Keypair, transferFeeBasisPoints:
         .signers([signer])
         .rpc();
 }
-export async function setPaused(signer: Keypair, paused: boolean) {
+export async function pause(signer: Keypair) {
     await program.methods
-        .setPaused(paused)
+        .pause()
+        .accounts({operator: signer.publicKey})
+        .signers([signer])
+        .rpc();
+}
+export async function unpause(signer: Keypair) {
+    await program.methods
+        .unpause()
         .accounts({owner: signer.publicKey})
         .signers([signer])
         .rpc();

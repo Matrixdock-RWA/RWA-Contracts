@@ -118,3 +118,13 @@ pub struct ForceTransfer {
     pub to: Pubkey,
     pub amount: u64,
 }
+
+#[event]
+pub struct Paused {
+    pub caller: Pubkey,
+}
+
+#[event]
+pub struct Unpaused {
+    pub caller: Pubkey,
+}
