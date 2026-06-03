@@ -55,6 +55,9 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
     address public fallbackFeed;
     address public nextFallbackFeed;
     uint64 public etNextFallbackFeed; //effective time
+
+    // Global pause flag (2026-05-11)
+    bool public paused;
 }
 
 // this contract will be deployed on EVM-compatible chains other than Ethereum
@@ -86,6 +89,8 @@ contract MToken is MTokenBase, ICCClient {
     event Redeem(address indexed customer, uint amount, bytes data);
     event MintRequest(address indexed receiver, uint amount, uint nonce);
     event RequestRevoked(bytes32 indexed req);
+    event Paused(address indexed _userAddress);
+    event Unpaused(address indexed _userAddress);
     event DisableCcSend(bool disabled);
     event SetNFTContract(address nft);
     event NextDelayRevoked(uint64 nextDelay);
@@ -116,6 +121,14 @@ contract MToken is MTokenBase, ICCClient {
     error InvalidMsg(uint tag);
     error InvalidReceiver(uint length);
     error PrecisionLost();
+    error GlobalPaused();
+
+    modifier whenNotPaused() {
+        if (paused) {
+            revert GlobalPaused();
+        }
+        _;
+    }
 
     modifier onlyNotBlocked() {
         _checkBlocked(_msgSender());
@@ -196,6 +209,16 @@ contract MToken is MTokenBase, ICCClient {
     function setDisableCcSend(bool b) public onlyOwner {
         disableCcSend = b;
         emit DisableCcSend(b);
+    }
+
+    function pause() external onlyOperator {
+        paused = true;
+        emit Paused(msg.sender);
+    }
+
+    function unpause() external onlyOwner {
+        paused = false;
+        emit Unpaused(msg.sender);
     }
 
     function setDelay(uint64 _delay) public onlyOwner {
@@ -316,13 +339,13 @@ contract MToken is MTokenBase, ICCClient {
 
     // NFT Contract packs tokens into one NFT.
     // note: allows blocked tokenOwner by design
-    function pack(address tokenOwner, uint amount) public onlyNFTContract {
+    function pack(address tokenOwner, uint amount) public onlyNFTContract whenNotPaused {
         _transfer(tokenOwner, msg.sender, amount);
     }
 
     // NFT Contract unpacks a NFT and return the tokens to tokenOwner
     // note: allows blocked tokenOwner by design
-    function unpack(address tokenOwner, uint amount) public onlyNFTContract {
+    function unpack(address tokenOwner, uint amount) public onlyNFTContract whenNotPaused {
         _transfer(msg.sender, tokenOwner, amount);
     }
 
@@ -333,7 +356,7 @@ contract MToken is MTokenBase, ICCClient {
         address receiver,
         uint amount,
         uint nonce
-    ) public onlyOperatorAndNft returns (bool) {
+    ) public onlyOperatorAndNft whenNotPaused returns (bool) {
         bytes32 req = keccak256(abi.encode(receiver, amount, nonce));
         uint et = requestMap[req];
         if (et == 0) {
@@ -360,7 +383,7 @@ contract MToken is MTokenBase, ICCClient {
         uint amount,
         address customer,
         bytes calldata data
-    ) public onlyOperatorAndNft {
+    ) public onlyOperatorAndNft whenNotPaused {
         _burn(operator, amount);
         emit Redeem(customer, amount, data);
         mintBudget += amount.toUint112();
@@ -370,7 +393,7 @@ contract MToken is MTokenBase, ICCClient {
     function transfer(
         address _recipient,
         uint256 _amount
-    ) public virtual override onlyNotBlocked returns (bool) {
+    ) public virtual override onlyNotBlocked whenNotPaused returns (bool) {
         if (_recipient == address(this)) {
             revert TransferToContract();
         }
@@ -382,7 +405,7 @@ contract MToken is MTokenBase, ICCClient {
         address _sender,
         address _recipient,
         uint256 _amount
-    ) public virtual override onlyNotBlocked returns (bool) {
+    ) public virtual override onlyNotBlocked whenNotPaused returns (bool) {
         if (_recipient == address(this)) {
             revert TransferToContract();
         }
@@ -455,7 +478,7 @@ contract MToken is MTokenBase, ICCClient {
         address sender,
         bytes calldata receiver,
         uint256 value
-    ) public onlyMessenger returns (bytes memory message) {
+    ) public onlyMessenger whenNotPaused returns (bytes memory message) {
         if (disableCcSend) {
             revert CcSendDisabled();
         }
@@ -476,7 +499,7 @@ contract MToken is MTokenBase, ICCClient {
     // called by the messenger contract to initialize a cross-chain mint-budget transfer
     function ccSendMintBudget(
         uint112 value
-    ) public onlyMessenger returns (bytes memory message) {
+    ) public onlyMessenger whenNotPaused returns (bytes memory message) {
         // note: we are very careful with any third-party contracts the operator calls
         // to avoid unintended shuffling of cross-chain mint budgets
         _checkOperator(tx.origin);
