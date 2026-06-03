@@ -559,6 +559,7 @@ public fun lz_receive(
     my_oapp: &OApp,
     call: Call<LzReceiveParam, Void>,
     deny_list: &DenyList,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     state.check_version();
@@ -574,6 +575,7 @@ public fun lz_receive(
         state.borrow_messenger_cap(),
         msg,
         deny_list,
+        clock,
         ctx,
     );
     handle_cc_receive(state, receiver, blocked_token);

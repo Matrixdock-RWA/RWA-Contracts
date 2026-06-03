@@ -5,6 +5,7 @@ use mtoken::message_codec;
 use mtoken::mt::{Self, MT as XAUM};
 use mtoken::mtoken::{Self, MessengerCap};
 use std::unit_test::{assert_eq, destroy};
+use sui::clock;
 use sui::coin::{Self, Coin};
 use sui::deny_list::{Self, DenyList};
 use sui::test_scenario;
@@ -67,10 +68,18 @@ fun receive_msg(
         let mut state = scenario.take_shared<mtoken::State<XAUM>>();
         let msg_cap = scenario.take_from_sender<MessengerCap>();
         let _deny_list = scenario.take_shared<DenyList>();
-        let (_receiver, _opt) = state.cc_receive(&msg_cap, msg, &_deny_list, scenario.ctx());
+        let _clock = clock::create_for_testing(scenario.ctx());
+        let (_receiver, _opt) = state.cc_receive(
+            &msg_cap,
+            msg,
+            &_deny_list,
+            &_clock,
+            scenario.ctx(),
+        );
         scenario.return_to_sender(msg_cap);
         test_scenario::return_shared(state);
         test_scenario::return_shared(_deny_list);
+        clock::destroy_for_testing(_clock);
         (_receiver, _opt)
     }
 }

@@ -111,7 +111,7 @@ fun migrate_err_wrong_version() {
     scenario.next_tx(ADMIN);
     {
         let mut state = scenario.take_shared<mtoken::State<XAUM>>();
-        state.set_version(VERSION);
+        state.set_version(VERSION+1);
         mtoken::migrate(&mut state, scenario.ctx());
     };
     abort
@@ -124,9 +124,7 @@ fun migrate_ok() {
     scenario.next_tx(ADMIN);
     {
         let mut state = scenario.take_shared<mtoken::State<XAUM>>();
-        // Simulate a pre-v3 state, then migrate to the current version.
-        state.set_version(2);
-
+        state.set_version(VERSION-1);
         mtoken::migrate(&mut state, scenario.ctx());
         assert_eq!(state.version(), VERSION);
         test_scenario::return_shared(state);

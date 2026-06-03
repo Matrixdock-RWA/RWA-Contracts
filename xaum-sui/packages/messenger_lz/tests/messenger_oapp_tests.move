@@ -635,6 +635,7 @@ fun lz_receive_mint_budget_ok() {
             &my_oapp,
             receive_call,
             &_deny_list,
+            &_clock,
             scenario.ctx(),
         );
 

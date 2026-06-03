@@ -11,6 +11,7 @@ version = "0.1.0"
 # For remote import, use the `{ git = "...", subdir = "...", rev = "..." }`.
 # Revision can be a branch, a tag, and a commit hash.
 # MyRemotePackage = { git = "https://some.remote/host.git", subdir = "remote/path", rev = "main" }
+utils = { git = "https://github.com/LayerZero-Labs/LayerZero-v2.git", subdir = "packages/layerzero-v2/sui/contracts/utils", rev = "ab9b083410b9359285a5756807e1b6145d4711a7" }
 
 # For local dependencies use `local = path`. Path is relative to the package root
 # Local = { local = "../path/to" }
