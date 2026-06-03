@@ -10,13 +10,45 @@ const config: HardhatUserConfig = {
 
 module.exports = {
   solidity: {
-    version: "0.8.24",
-    settings: {
-      optimizer: {
-        enabled: true,
-        runs: 1000,
+    compilers: [
+      {
+        version: "0.8.24",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 1000,
+          },
+        },
+      },
+    ],
+    overrides: {
+      "contracts/XAUMDCA.sol": {
+        version: "0.8.24",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 800,
+          },
+        },
+      },
+      "contracts/MTokenMain.sol": {
+        version: "0.8.24",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 800,
+          },
+        },
       },
     },
+  },
+  tronSolc: {
+    enable: true,
+    // Optional: specify an array of contract filenames (without path) to selectively compile. Leave as empty array to compile all contracts.
+    filter: [],
+    compilers: [{ version: "0.8.24" }], // can be any tron-solc version
+    // Optional: Define version remappings for compiler versions
+    versionRemapping: [],
   },
   etherscan: {
     apiKey: {

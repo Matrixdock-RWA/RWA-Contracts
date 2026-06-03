@@ -22,12 +22,13 @@ describe("MTokenFT", function () {
   describe("delayedSet", function () {
     const testCases = [ 
       {c: "mt",  field: "delay",       zeroVal: 0,        initVal: 0,        newVal: 12345},
-      {c: "mt",  field: "messenger",    zeroVal: zeroAddr, initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000001"},
-      {c: "mt",  field: "revoker",     zeroVal: zeroAddr, initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000005"},
-      {c: "mt",  field: "operator",    zeroVal: zeroAddr, initVal: "opAddr", newVal: "0x0000000000000000000000000000000000000002"},
-      {c: "mt",  field: "reserveFeed", zeroVal: zeroAddr, initVal: "rfAddr", newVal: "0x0000000000000000000000000000000000000003"},
-      {c: "mt",  field: "fallbackFeed",zeroVal: zeroAddr, initVal: "fbAddr", newVal: "0x0000000000000000000000000000000000000006"},
-      {c: "nft", field: "packSigner",  zeroVal: zeroAddr, initVal: "psAddr", newVal: "0x0000000000000000000000000000000000000004"},
+      {c: "mt",  field: "messenger",   zeroVal: zeroAddr, initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000001"},
+      {c: "mt",  field: "revoker",     zeroVal: zeroAddr, initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000002"},
+      {c: "mt",  field: "operator",    zeroVal: zeroAddr, initVal: "opAddr", newVal: "0x0000000000000000000000000000000000000003"},
+      {c: "mt",  field: "reserveFeed", zeroVal: zeroAddr, initVal: "rfAddr", newVal: "0x0000000000000000000000000000000000000004"},
+      {c: "mt",  field: "fallbackFeed",zeroVal: zeroAddr, initVal: "fbAddr", newVal: "0x0000000000000000000000000000000000000005"},
+      {c: "mt",  field: "rateLimiter", zeroVal: zeroAddr, initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000006"},
+      {c: "nft", field: "packSigner",  zeroVal: zeroAddr, initVal: "psAddr", newVal: "0x0000000000000000000000000000000000000011"},
     ];
 
     it("setDelay: MIN_DELAY", async function () {
@@ -118,7 +119,7 @@ describe("MTokenFT", function () {
 
       const testCases = [
         mt.connect(owner).setMessenger(zeroAddr),
-        mt.connect(owner).setMessenger(zeroAddr),
+        // mt.connect(owner).setRateLimiter(zeroAddr),
         mt.connect(owner).setNFTContract(zeroAddr),
         mt.connect(owner).setRevoker(zeroAddr),
         mt.connect(owner).setOperator(zeroAddr),
@@ -152,6 +153,10 @@ describe("MTokenFT", function () {
         ["NotOperator", mt.connect(alice).pause()],
         ["NotOperator", mt.connect(alice).addToBlockedList(alice.address)],
         ["NotOperator", mt.connect(alice).removeFromBlockedList(alice.address)],
+        ["NotOperator", mt.connect(alice).ccProcessRateLimitedMsg(123)],
+        ["NotOperator", mt.connect(alice).ccDiscardRateLimitedMsg(456)],
+        ["NotOperator", mt.connect(alice).ccBatchProcessRateLimitedMsgs([123, 456])],
+        ["NotOperator", mt.connect(alice).ccBatchDiscardRateLimitedMsgs([123, 456])],
         // onlyNFTContract
         ["NotNftContract", mt.connect(alice).pack(alice.address, 123)],
         ["NotNftContract", mt.connect(alice).unpack(alice.address, 1)],

@@ -64,9 +64,12 @@ export async function deployTestFixture() {
     },
   );
 
+  const MTokenRateLimiter = await ethers.getContractFactory("MTokenRateLimiter");
+  const rateLimiter = await MTokenRateLimiter.deploy(mt.target, 0, 0);
+
   return {
     reserveFeed, ccipRouter, lzEndpoint, // fake
-    mt, mtSide, nft, mtMsg, mtMsgSide, // contracts
+    mt, mtSide, nft, mtMsg, mtMsgSide, rateLimiter, // contracts
     owner, operator, packSigner, fakeNft, alice, bob,
   };
 }
