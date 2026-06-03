@@ -93,6 +93,13 @@ contract MToken is MTokenBase, ICCClient {
     event NextRevokerRevoked(address nextRevoker);
     event NextMessengerRevoked(address nextMessenger);
     event NextUpgradeRevoked(bytes32 dataHash);
+    event ForcedTransfer(
+        address indexed _from,
+        address indexed _to,
+        uint256 _value,
+        bytes _data,
+        bytes _operatorData
+    );
 
     error BlockedAccount(address);
     error NotOperator(address);
@@ -387,13 +394,25 @@ contract MToken is MTokenBase, ICCClient {
     function multiTransfer(
         address[] calldata _recipients,
         uint256[] calldata _values
-    ) public onlyNotBlocked {
+    ) public {
         if (_recipients.length != _values.length) {
             revert ArgsMismatch();
         }
         for (uint256 i = 0; i < _recipients.length; i++) {
             transfer(_recipients[i], _values[i]);
         }
+    }
+
+    // forced transfer by owner
+    function forcedTransfer(
+        address _from,
+        address _to,
+        uint256 _value,
+        bytes calldata _data,
+        bytes calldata _extraData
+    ) external onlyOwner {
+        _transfer(_from, _to, _value);
+        emit ForcedTransfer(_from, _to, _value, _data, _extraData);
     }
 
     //-------------

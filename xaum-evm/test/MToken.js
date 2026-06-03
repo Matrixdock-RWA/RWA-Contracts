@@ -36,7 +36,7 @@ describe("MTokenFT", function () {
         for (const delay of [0, 1, 43, 888, 3599]) {
           await expect(mt.setDelay(delay)).to.be.revertedWithCustomError(mt, "DelayTooSmall");
         }
-        await expect(mt.setDelay(48 * 3600 + 1)).to.be.revertedWithCustomError(mt, "DelayTooLarge");
+        await expect(mt.setDelay(7 * 24 * 3600 + 1)).to.be.revertedWithCustomError(mt, "DelayTooLarge");
 
         await mt.setDelay(3600); // ok
     });
@@ -146,6 +146,7 @@ describe("MTokenFT", function () {
         ["OwnableUnauthorizedAccount", mt.connect(alice).setRevoker(alice.address)],
         ["OwnableUnauthorizedAccount", mt.connect(alice).setDisableCcSend(true)],
         ["OwnableUnauthorizedAccount", mt.connect(alice).revokeNextRevoker()],
+        ["OwnableUnauthorizedAccount", mt.connect(alice).forcedTransfer(alice.address, bob.address, 123, "0x123456", "0x12345678")],
         // onlyOperator
         ["NotOperator", mt.connect(alice).addToBlockedList(alice.address)],
         ["NotOperator", mt.connect(alice).removeFromBlockedList(alice.address)],
@@ -385,6 +386,23 @@ describe("MTokenFT", function () {
 
       await expect(mt.connect(alice).multiTransfer([a1, a2, a3], [123, 234, 345]))
         .to.changeTokenBalances(mt, [alice.address, a1, a2, a3], [-702, 123, 234, 345])
+    });
+
+    it("forcedTransfer", async function () {
+      const { mt, owner, operator, alice, bob } = await loadFixture(deployTestFixture);
+      await mt.connect(operator).increaseMintBudget(50000);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0);
+
+      await expect(mt.connect(alice).forcedTransfer(alice.address, bob.address, 123, "0x123456", "0x12345678"))
+        .to.be.revertedWithCustomError(mt, "OwnableUnauthorizedAccount")
+        .withArgs(alice.address);
+
+      await expect(mt.connect(owner).forcedTransfer(alice.address, bob.address, 123, "0x123456", "0x12345678"))
+        .to.emit(mt, "ForcedTransfer")
+        .withArgs(alice.address, bob.address, 123, "0x123456", "0x12345678");
+      expect(await mt.balanceOf(alice.address)).to.equal(20000-123);
+      expect(await mt.balanceOf(bob.address)).to.equal(123);
     });
 
     it("msgOfCcSendToken", async function () {
