@@ -22,7 +22,7 @@ contract BullionMinterForTron is BullionMinter {
 
     // Override rescue to handle Tron USDT which does not return a boolean from transfer().
     function rescue(address token, address receiver, uint amount) onlyOwner external override {
-        _tronSafeTransfer(token, receiver, amount);
+        require(_tronSafeTransfer(token, receiver, amount), "TRANSFER_FAILED");
         emit Rescue(token, receiver, amount);
     }
 

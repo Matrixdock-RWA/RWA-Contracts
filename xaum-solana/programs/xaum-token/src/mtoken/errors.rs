@@ -41,12 +41,6 @@ pub enum ErrorCode {
     #[msg("NegativeDelay")]
     NegativeDelay,
 
-    #[msg("GovDelayBelowMinimum")]
-    GovDelayBelowMinimum,
-
-    #[msg("GovDelayExceedsMaximum")]
-    GovDelayExceedsMaximum,
-
     #[msg("NotNextOwner")]
     NotNextOwner,
 

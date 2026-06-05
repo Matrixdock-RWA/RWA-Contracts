@@ -90,6 +90,9 @@ pub fn accept_ownership(ctx: Context<AcceptOwnerOp>) -> Result<()> {
 
 pub fn revoke_next_owner(ctx: Context<OwnerOp>) -> Result<()> {
     ctx.accounts.state.next_owner_et = 0;
+    emit!(RevokeNextOwner {
+        pending_owner: ctx.accounts.state.next_owner,
+    });
     Ok(())
 }
 
@@ -124,6 +127,9 @@ pub fn set_operator(ctx: Context<OwnerOp>, new_operator: Pubkey) -> Result<()> {
 
 pub fn revoke_next_operator(ctx: Context<RevokerOp>) -> Result<()> {
     ctx.accounts.state.next_operator_et = 0;
+    emit!(RevokeNextOperator {
+        pending_operator: ctx.accounts.state.next_operator,
+    });
     Ok(())
 }
 
@@ -158,6 +164,9 @@ pub fn set_revoker(ctx: Context<OwnerOp>, new_revoker: Pubkey) -> Result<()> {
 
 pub fn revoke_next_revoker(ctx: Context<OwnerOp>) -> Result<()> {
     ctx.accounts.state.next_revoker_et = 0;
+    emit!(RevokeNextRevoker {
+        pending_revoker: ctx.accounts.state.next_revoker,
+    });
     Ok(())
 }
 
@@ -192,6 +201,9 @@ pub fn set_messager(ctx: Context<OwnerOp>, new_messager: Pubkey) -> Result<()> {
 
 pub fn revoke_next_messager(ctx: Context<RevokerOp>) -> Result<()> {
     ctx.accounts.state.next_messager_et = 0;
+    emit!(RevokeNextMessager {
+        pending_messager: ctx.accounts.state.next_messager,
+    });
     Ok(())
 }
 
@@ -232,6 +244,9 @@ pub fn set_delay(ctx: Context<OwnerOp>, new_delay: i64) -> Result<()> {
 
 pub fn revoke_next_delay(ctx: Context<RevokerOp>) -> Result<()> {
     ctx.accounts.state.next_delay_et = 0;
+    emit!(RevokeNextDelay {
+        pending_delay: ctx.accounts.state.next_delay,
+    });
     Ok(())
 }
 
@@ -280,7 +295,9 @@ pub fn set_gov_delay(ctx: Context<OwnerOp>, new_delay: i64) -> Result<()> {
 // Only owner can revoke a pending gov_delay change (mirrors EVM revokeNextGovDelay onlyOwner).
 pub fn revoke_next_gov_delay(ctx: Context<OwnerOp>) -> Result<()> {
     ctx.accounts.state.next_gov_delay_et = 0;
-    emit!(RevokeNextGovDelay {});
+    emit!(RevokeNextGovDelay {
+        pending_gov_delay: ctx.accounts.state.next_gov_delay,
+    });
     Ok(())
 }
 
@@ -288,6 +305,9 @@ pub fn revoke_next_gov_delay(ctx: Context<OwnerOp>) -> Result<()> {
 
 pub fn revoke_mint(ctx: Context<RevokerOp>) -> Result<()> {
     ctx.accounts.state.next_mint_et = 0;
+    emit!(RevokeNextMint {
+        pending_mint_nonce: ctx.accounts.state.next_mint_nonce,
+    });
     Ok(())
 }
 

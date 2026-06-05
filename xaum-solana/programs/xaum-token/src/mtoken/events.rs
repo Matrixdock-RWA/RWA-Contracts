@@ -13,6 +13,11 @@ pub struct SetOwnerEffected {
 }
 
 #[event]
+pub struct RevokeNextOwner {
+    pub pending_owner: Pubkey,
+}
+
+#[event]
 pub struct SetOperatorRequest {
     pub old_operator: Pubkey,
     pub new_operator: Pubkey,
@@ -22,6 +27,11 @@ pub struct SetOperatorRequest {
 #[event]
 pub struct SetOperatorEffected {
     pub new_operator: Pubkey,
+}
+
+#[event]
+pub struct RevokeNextOperator {
+    pub pending_operator: Pubkey,
 }
 
 #[event]
@@ -37,6 +47,11 @@ pub struct SetRevokerEffected {
 }
 
 #[event]
+pub struct RevokeNextRevoker {
+    pub pending_revoker: Pubkey,
+}
+
+#[event]
 pub struct SetMessagerRequest {
     pub old_messager: Pubkey,
     pub new_messager: Pubkey,
@@ -46,6 +61,11 @@ pub struct SetMessagerRequest {
 #[event]
 pub struct SetMessagerEffected {
     pub new_messager: Pubkey,
+}
+
+#[event]
+pub struct RevokeNextMessager {
+    pub pending_messager: Pubkey,
 }
 
 #[event]
@@ -61,6 +81,11 @@ pub struct SetDelayEffected {
 }
 
 #[event]
+pub struct RevokeNextDelay {
+    pub pending_delay: i64,
+}
+
+#[event]
 pub struct SetGovDelayRequest {
     pub old_delay: i64,
     pub new_delay: i64,
@@ -73,7 +98,9 @@ pub struct SetGovDelayEffected {
 }
 
 #[event]
-pub struct RevokeNextGovDelay {}
+pub struct RevokeNextGovDelay {
+    pub pending_gov_delay: i64,
+}
 
 #[event]
 pub struct MintRequest {
@@ -88,6 +115,11 @@ pub struct MintEffected {
     pub recipient: Pubkey,
     pub amount: u64,
     pub nonce: [u8; 32],
+}
+
+#[event]
+pub struct RevokeNextMint {
+    pub pending_mint_nonce: [u8; 32],
 }
 
 #[event]

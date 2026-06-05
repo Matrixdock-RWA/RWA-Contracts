@@ -22,6 +22,10 @@ abstract contract Delayable is DelayedUpgradeable {
     event SetRevokerEffected(address newAddr);
     event SetOperatorRequest(address oldAddr, address newAddr, uint64 et);
     event SetOperatorEffected(address newAddr);
+    event NextUpgradeRevoked(bytes32 nextDataHash);
+    event NextDelayRevoked(uint64 nextDelay);
+    event NextRevokerRevoked(address nextRevoker);
+    event NextOperatorRevoked(address nextOperator);
 
     error NotRevoker(address);
     error NotOperator(address);
@@ -56,8 +60,8 @@ abstract contract Delayable is DelayedUpgradeable {
     }
 
     function revokeNextUpgrade() public onlyRevoker {
-        // note: missing event to be added in future update
         etNextUpgradeToAndCall = 0;
+        emit NextUpgradeRevoked(nextUpgradeToAndCallDataHash);
     }
 
     function setDelay(uint64 _delay) public onlyOwner {
@@ -79,8 +83,8 @@ abstract contract Delayable is DelayedUpgradeable {
     }
 
     function revokeNextDelay() public onlyRevoker {
-        // note: missing event to be added in future update
         etNextDelay = 0;
+        emit NextDelayRevoked(nextDelay);
     }
 
     function setRevoker(address _revoker) public onlyOwner {
@@ -98,8 +102,8 @@ abstract contract Delayable is DelayedUpgradeable {
     }
 
     function revokeNextRevoker() public onlyOwner {
-        // note: missing event to be added in future update
         etNextRevoker = 0;
+        emit NextRevokerRevoked(nextRevoker);
     }
 
     function setOperator(address _operator) public onlyOwner {
@@ -117,7 +121,7 @@ abstract contract Delayable is DelayedUpgradeable {
     }
 
     function revokeNextOperator() public onlyRevoker {
-        // note: missing event to be added in future update
         etNextOperator = 0;
+        emit NextOperatorRevoked(nextOperator);
     }
 }

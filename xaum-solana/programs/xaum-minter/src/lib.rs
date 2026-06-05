@@ -79,6 +79,9 @@ pub mod xaum_minter {
     // Owner can cancel a pending ownership transfer before it takes effect.
     pub fn revoke_next_owner(ctx: Context<OnlyOwner>) -> Result<()> {
         ctx.accounts.state.next_owner_et = 0;
+        emit!(RevokeNextOwner {
+            pending_owner: ctx.accounts.state.next_owner,
+        });
         Ok(())
     }
 
@@ -246,6 +249,11 @@ pub struct SetOwnerRequest {
 #[event]
 pub struct SetOwnerEffected {
     pub new_owner: Pubkey,
+}
+
+#[event]
+pub struct RevokeNextOwner {
+    pub pending_owner: Pubkey,
 }
 
 #[event]
