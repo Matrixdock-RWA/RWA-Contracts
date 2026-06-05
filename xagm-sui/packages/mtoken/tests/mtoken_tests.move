@@ -95,6 +95,28 @@ fun set_icon_url(
     };
 }
 
+fun pause(scenario: &mut test_scenario::Scenario, caller: address) {
+    scenario.next_tx(caller);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
+        let mut _deny_list = scenario.take_shared<DenyList>();
+        mtoken::pause(&mut state, &mut _deny_list, scenario.ctx());
+        test_scenario::return_shared(_deny_list);
+        test_scenario::return_shared(state);
+    };
+}
+
+fun unpause(scenario: &mut test_scenario::Scenario, caller: address) {
+    scenario.next_tx(caller);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
+        let mut _deny_list = scenario.take_shared<DenyList>();
+        mtoken::unpause(&mut state, &mut _deny_list, scenario.ctx());
+        test_scenario::return_shared(_deny_list);
+        test_scenario::return_shared(state);
+    };
+}
+
 fun request_set_owner(
     scenario: &mut test_scenario::Scenario,
     _clock: &Clock,
@@ -417,6 +439,29 @@ fun update_metadata_ok() {
         test_scenario::return_shared(metadata);
     };
 
+    clock::destroy_for_testing(_clock);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = mtoken::ENotOperator)]
+fun pause_err_not_operator() {
+    let (mut scenario, _clock) = init_xagm();
+    pause(&mut scenario, ALICE);
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::ENotOwner)]
+fun unpause_err_not_owner() {
+    let (mut scenario, _clock) = init_xagm();
+    unpause(&mut scenario, ALICE);
+    abort
+}
+
+#[test]
+fun pause_unpause_ok() {
+    let (mut scenario, _clock) = init_xagm();
+    pause(&mut scenario, ADMIN);
+    unpause(&mut scenario, ADMIN);
     clock::destroy_for_testing(_clock);
     scenario.end();
 }
