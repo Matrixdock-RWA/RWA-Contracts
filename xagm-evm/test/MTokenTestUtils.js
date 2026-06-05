@@ -7,9 +7,6 @@ export function addrTo32Bytes(addr) {
   return addr.toLowerCase().replace('0x', '') + '000000000000000000000000';
 }
 
-export function scaleDown(amt) { return amt / 1e9; }
-export function scaleUp(amt) { return amt * 1e9; }
-
 export async function getTS(tx) {
   const block = await ethers.provider.getBlock(tx.blockNumber);
   return block.timestamp;
@@ -80,9 +77,12 @@ export async function deployTestFixture() {
     },
   );
 
+  const MTokenRateLimiter = await ethers.getContractFactory("MTokenRateLimiter");
+  const rateLimiter = await MTokenRateLimiter.deploy(mt.target, 0, 0);
+
   return {
     reserveFeed, ccipRouter, lzEndpoint, // fake
-    mt, mtSide, mtMsg, mtMsgSide, // contracts
+    mt, mtSide, mtMsg, mtMsgSide, rateLimiter, // contracts
     owner, operator, alice, bob, feeCollector
   };
 }

@@ -5,6 +5,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {ERC20PermitUpgradeable} from "@openzeppelin/contracts-upgradeable/token/ERC20/extensions/ERC20PermitUpgradeable.sol";
 import {DelayedUpgradeable} from "./DelayedUpgradeable.sol";
 import {ICCClient} from "./interfaces/ICCClient.sol";
+import {IMTokenRateLimiter} from "./interfaces/IMTokenRateLimiter.sol";
 // import "hardhat/console.sol";
 
 abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
@@ -63,6 +64,11 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
     uint64 public annualFeeRate; // the annual fee rate, 9 decimals
     uint64 public ozPerTokenBase; // calculated when annualFeeRate is updated, 9 decimals
 
+    // RateLimiter
+    address public rateLimiter;
+    address public nextRateLimiter;
+    uint64 public etNextRateLimiter; //effective time
+
     // Global pause flag
     bool public paused;
 }
@@ -88,6 +94,8 @@ contract MToken is MTokenBase, ICCClient {
     event SetRevokerEffected(address newAddr);
     event SetMessengerRequest(address oldAddr, address newAddr, uint64 et);
     event SetMessengerEffected(address newAddr);
+    event SetRateLimiterRequest(address oldAddr, address newAddr, uint64 et);
+    event SetRateLimiterEffected(address newAddr);
     event BlockPlaced(address indexed _user);
     event BlockReleased(address indexed _user);
     event CCSendToken(address indexed sender, bytes receiver, uint256 value);
@@ -99,6 +107,8 @@ contract MToken is MTokenBase, ICCClient {
     event Redeem(address indexed customer, uint256 amount, bytes data);
     event MintRequest(address indexed receiver, uint256 amount, uint256 nonce);
     event RequestRevoked(bytes32 indexed req);
+    event RateLimitedMsgProcessed(uint256 index);
+    event RateLimitedMsgDiscarded(uint256 index);
     event Paused(address indexed _userAddress);
     event Unpaused(address indexed _userAddress);
     event DisableCcSend(bool disabled);
@@ -106,6 +116,7 @@ contract MToken is MTokenBase, ICCClient {
     event NextOperatorRevoked(address nextOperator);
     event NextRevokerRevoked(address nextRevoker);
     event NextMessengerRevoked(address nextMessenger);
+    event NextRateLimiterRevoked(address nextRateLimiter);
     event NextUpgradeRevoked(bytes32 dataHash);
     event UpdateAnnualFeeRate(
         uint64 newAnnualFeeRate,
@@ -136,6 +147,7 @@ contract MToken is MTokenBase, ICCClient {
     error OzPerTokenBaseTooLarge();
     error UnexpectedOzPerToken(uint64 expectedOzPerToken, uint64 actualOzPerToken);
     error GlobalPaused();
+    error PendingRateLimitedMsgsExist();
 
     modifier whenNotPaused() {
         if (paused) {
@@ -321,6 +333,29 @@ contract MToken is MTokenBase, ICCClient {
         }
     }
 
+    // note: allows setting rateLimiter to zero address by design
+    function setRateLimiter(address _rateLimiter) public onlyOwner {
+        // _checkZeroAddress(_rateLimiter);
+        uint64 et = etNextRateLimiter;
+        if (_rateLimiter == nextRateLimiter && et != 0 && et < block.timestamp) {
+            // The old rate limiter's queue can only be drained through this MToken
+            // (removeRateLimitedMsg is onlyMToken). Refuse to detach/replace it while
+            // messages are still queued, otherwise those tokens would be orphaned.
+            // Process or discard all pending messages first.
+            address oldRateLimiter = rateLimiter;
+            if (oldRateLimiter != address(0) && IMTokenRateLimiter(oldRateLimiter).hasPendingMsgs()) {
+                revert PendingRateLimitedMsgsExist();
+            }
+            rateLimiter = _rateLimiter;
+            emit SetRateLimiterEffected(_rateLimiter);
+        } else {
+            nextRateLimiter = _rateLimiter;
+            uint64 _etNextRateLimiter = uint64(block.timestamp) + delay;
+            etNextRateLimiter = _etNextRateLimiter;
+            emit SetRateLimiterRequest(rateLimiter, _rateLimiter, _etNextRateLimiter);
+        }
+    }
+
     function setRevoker(address _revoker) public onlyOwner {
         _checkZeroAddress(_revoker);
         uint64 et = etNextRevoker;
@@ -371,6 +406,11 @@ contract MToken is MTokenBase, ICCClient {
     function revokeNextMessenger() public onlyRevoker {
         etNextMessenger = 0;
         emit NextMessengerRevoked(nextMessenger);
+    }
+
+    function revokeNextRateLimiter() public onlyRevoker {
+        etNextRateLimiter = 0;
+        emit NextRateLimiterRevoked(nextRateLimiter);
     }
 
     function revokeNextRevoker() public onlyOwner {
@@ -553,8 +593,14 @@ contract MToken is MTokenBase, ICCClient {
             revert InvalidReceiver(receiverBytes.length);
         }
         address receiver = address(bytes20(receiverBytes));
-        _mint(receiver, value);
-        emit CCReceiveToken(senderBytes, receiver, value);
+        if (rateLimiter == address(0) ||
+                IMTokenRateLimiter(rateLimiter).checkAndUpdateRateLimit(receiver, value, senderBytes)) {
+
+            _mint(receiver, value);
+            emit CCReceiveToken(senderBytes, receiver, value);
+        } else {
+            // Message is queued by the RateLimiter logic, and an event is emitted.
+        }
     }
 
     // finish a cross-chain mint-budget transfer
@@ -591,4 +637,38 @@ contract MToken is MTokenBase, ICCClient {
         mintBudget += value;
         emit CCReceiveMintBudgetManually(value);
     }
+
+    // Process a batch of queued rate-limited cross-chain token messages.
+    // note: if any single index reverts (e.g. invalid/already-deleted slot), the entire batch reverts.
+    // Callers must exclude problematic indices and submit them separately or discard them.
+    function ccBatchProcessRateLimitedMsgs(uint256[] calldata indices) public {
+        for (uint256 i = 0; i < indices.length; i++) {
+            ccProcessRateLimitedMsg(indices[i]);
+        }
+    }
+
+    // manually deliver a queued rate-limited cross-chain token message
+    // note: allows minting to blocked receiver by design (same as ccReceiveToken)
+    function ccProcessRateLimitedMsg(uint256 index) public onlyOperator {
+        (address receiver, uint256 value, bytes memory sender) = IMTokenRateLimiter(rateLimiter).removeRateLimitedMsg(index);
+        _mint(receiver, value);
+        emit CCReceiveToken(sender, receiver, value);
+        emit RateLimitedMsgProcessed(index);
+    }
+
+    // Permanently discard a batch of queued rate-limited cross-chain token messages.
+    function ccBatchDiscardRateLimitedMsgs(uint256[] calldata indices) public {
+        for (uint256 i = 0; i < indices.length; i++) {
+            ccDiscardRateLimitedMsg(indices[i]);
+        }
+    }
+
+    // Permanently discard a queued RateLimited cross-chain token message.
+    // Use this when the queued message is identified as malicious (e.g. forged by an attacker)
+    // and should never be delivered. No tokens are minted.
+    function ccDiscardRateLimitedMsg(uint256 index) public onlyOperator {
+        IMTokenRateLimiter(rateLimiter).removeRateLimitedMsg(index);
+        emit RateLimitedMsgDiscarded(index);
+    }
+
 }

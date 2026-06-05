@@ -29,6 +29,7 @@ module.exports = {
             enabled: true,
             runs: 800,
           },
+          viaIR: true,
         },
       },
       "contracts/fake/MTokenMain2.sol": {
@@ -36,8 +37,9 @@ module.exports = {
         settings: {
           optimizer: {
             enabled: true,
-            runs: 800,
+            runs: 1,
           },
+          viaIR: true,
         },
       },
     },
