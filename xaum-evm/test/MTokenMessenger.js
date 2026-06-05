@@ -39,7 +39,7 @@ describe("MTokenMessenger", function () {
     it("setDelay", async function () {
       const {mtMsg} = await loadFixture(deployTestFixture);
       await expect(mtMsg.setDelay(3599)).to.be.revertedWithCustomError(mtMsg, "DelayTooSmall");
-      await expect(mtMsg.setDelay(48 * 3600 + 1)).to.be.revertedWithCustomError(mtMsg, "DelayTooLarge");
+      await expect(mtMsg.setDelay(7 * 24 * 3600 + 1)).to.be.revertedWithCustomError(mtMsg, "DelayTooLarge");
       await mtMsg.setDelay(3600 * 2); // ok
     });
 
@@ -288,7 +288,11 @@ describe("MTokenMessenger", function () {
       await expect(mtMsg.connect(alice).transferOwnership(bob))
         .to.be.revertedWithCustomError(mtMsg, "OwnableUnauthorizedAccount");
 
-      await mtMsg.connect(owner).transferOwnership(bob); // ok
+      await mtMsg.connect(owner).transferOwnership(bob); // starts 2-step transfer
+      expect(await mtMsg.pendingOwner()).to.equal(bob.address);
+      expect(await mtMsg.owner()).to.equal(owner.address);
+
+      await mtMsg.connect(bob).acceptOwnership(); // gov delay is 0, accept immediately
       expect(await mtMsg.owner()).to.equal(bob.address);
     });
 

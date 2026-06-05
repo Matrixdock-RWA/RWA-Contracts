@@ -60,6 +60,6 @@ contract FallbackReserveFeed is Ownable, AggregatorV3Interface {
             uint80 /*answeredInRound*/
         )
     {
-        return (roundId, reserve, uint(updatedAt), uint(updatedAt), roundId);
+        return (roundId, reserve, uint256(updatedAt), uint256(updatedAt), roundId);
     }
 }

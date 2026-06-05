@@ -7,9 +7,9 @@ import {MToken} from "./MToken.sol";
 
 // this contract will be deployed on Ethereum
 contract MTokenMain is MToken {
-    using SafeCast for uint;
+    using SafeCast for uint256;
 
-    uint constant ORACLE_OFFLINE_THRESHOLD = 2 days;
+    uint256 constant ORACLE_OFFLINE_THRESHOLD = 2 days;
 
     event SetReserveFeedRequest(address oldAddr, address newAddr, uint64 et);
     event SetReserveFeedEffected(address newAddr);
@@ -74,13 +74,13 @@ contract MTokenMain is MToken {
     }
 
     function increaseMintBudget(uint112 mintBudgetDelta) public onlyOperator {
-        uint _usedReserve = usedReserve + mintBudgetDelta;
+        uint256 _usedReserve = usedReserve + mintBudgetDelta;
         // prettier-ignore
         (
             /*uint80 roundID*/,
             int reserveFromFeed,
-            /*uint startedAt*/,
-            uint updatedAt,
+            /*uint256 startedAt*/,
+            uint256 updatedAt,
             /*uint80 answeredInRound*/
         ) = AggregatorV3Interface(reserveFeed).latestRoundData();
 
@@ -100,7 +100,7 @@ contract MTokenMain is MToken {
     }
 
     function decreaseMintBudget(uint112 mintBudgetDelta) public onlyOperator {
-        uint _usedReserve = usedReserve - mintBudgetDelta;
+        uint256 _usedReserve = usedReserve - mintBudgetDelta;
         mintBudget -= mintBudgetDelta;
         usedReserve = _usedReserve.toUint112();
     }

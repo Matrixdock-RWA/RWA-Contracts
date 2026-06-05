@@ -13,7 +13,7 @@ contract BullionMinter is DelayedUpgradeable {
     mapping(address token => bool accepted) public acceptedByA;
     mapping(address token => bool accepted) public acceptedByB;
 
-    uint public constant DELAY_MAX = 59;
+    uint256 public constant DELAY_MAX = 59;
 
     // note: not currently used but retained for historical reasons
     // to make it easier to view these two values
@@ -31,10 +31,10 @@ contract BullionMinter is DelayedUpgradeable {
         __Ownable2StepTimeLock_init_unchained();
         poolAccountA = _poolAccountA;
         poolAccountB = _poolAccountB;
-        for (uint i; i < _tokensAcceptedByA.length; i++) {
+        for (uint256 i; i < _tokensAcceptedByA.length; i++) {
             acceptedByA[_tokensAcceptedByA[i]] = true;
         }
-        for (uint i; i < _tokensAcceptedByB.length; i++) {
+        for (uint256 i; i < _tokensAcceptedByB.length; i++) {
             acceptedByB[_tokensAcceptedByB[i]] = true;
         }
     }
@@ -54,10 +54,10 @@ contract BullionMinter is DelayedUpgradeable {
     event SetAcceptedByA(address token, bool accepted);
     event SetAcceptedByB(address token, bool accepted);
     event MintRequest(address indexed transferredToken, address indexed forToken,
-               address indexed requestor, address pool, uint amount, uint preprice, uint slippage, bytes extraData);
+               address indexed requestor, address pool, uint256 amount, uint256 preprice, uint256 slippage, bytes extraData);
     event RedeemRequest(address indexed transferredToken, address indexed forToken,
-               address indexed requestor, address pool, uint amount, uint preprice, uint slippage, bytes extraData);
-    event Rescue(address indexed token, address indexed to, uint amount);
+               address indexed requestor, address pool, uint256 amount, uint256 preprice, uint256 slippage, bytes extraData);
+    event Rescue(address indexed token, address indexed to, uint256 amount);
 
     function getDelay() internal pure override returns (uint64) {
         return 3600 * 12; //upgrade must be delayed by 12 hours
@@ -91,7 +91,7 @@ contract BullionMinter is DelayedUpgradeable {
     // note: owner is trusted not to front-run by changing poolAccountA; owner is securely
     // held in the wallet's escrow system; every owner transaction undergoes a two-step
     // process of signature and verification
-    function requestToMint(address transferredToken, address forToken, uint amount, uint preprice, uint slippage, uint timestamp, bytes calldata extraData) external {
+    function requestToMint(address transferredToken, address forToken, uint256 amount, uint256 preprice, uint256 slippage, uint256 timestamp, bytes calldata extraData) external {
         require(acceptedByA[transferredToken], "INVALID_TOKEN_FOR_MINTING");
         require(block.timestamp <= timestamp + DELAY_MAX, "INVALID_TIMESTAMP");
         address _poolAccountA = poolAccountA;
@@ -103,7 +103,7 @@ contract BullionMinter is DelayedUpgradeable {
     // note: owner is trusted not to front-run by changing poolAccountB; owner is securely
     // held in the wallet's escrow system; every owner transaction undergoes a two-step
     // process of signature and verification
-    function requestToRedeem(address transferredToken, address forToken, uint amount, uint preprice, uint slippage, uint timestamp, bytes calldata extraData) external {
+    function requestToRedeem(address transferredToken, address forToken, uint256 amount, uint256 preprice, uint256 slippage, uint256 timestamp, bytes calldata extraData) external {
         require(acceptedByB[transferredToken], "INVALID_TOKEN_FOR_REDEEMING");
         require(block.timestamp <= timestamp + DELAY_MAX, "INVALID_TIMESTAMP");
         address _poolAccountB = poolAccountB;
@@ -112,7 +112,7 @@ contract BullionMinter is DelayedUpgradeable {
     }
 
     // rescue ERC20 tokens which were accidentally sent to this contract
-    function rescue(address token, address receiver, uint amount) onlyOwner external virtual {
+    function rescue(address token, address receiver, uint256 amount) onlyOwner external virtual {
         IERC20(token).safeTransfer(receiver, amount);
         emit Rescue(token, receiver, amount);
     }

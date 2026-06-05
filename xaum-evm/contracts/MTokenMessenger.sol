@@ -81,7 +81,7 @@ contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
         bytes calldata messageReceiver,
         address sender,
         bytes calldata recipient,
-        uint value,
+        uint256 value,
         bytes calldata extraArgs
     )
         public
@@ -127,7 +127,7 @@ contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
         uint64 destinationChainSelector,
         bytes calldata messageReceiver,
         bytes calldata recipient,
-        uint value,
+        uint256 value,
         bytes calldata extraArgs
     ) external payable returns (bytes32 messageId) {
         PeerInfo memory peer = allowedPeer[destinationChainSelector][messageReceiver];

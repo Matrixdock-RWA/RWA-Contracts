@@ -104,7 +104,7 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
     function lzSendTokenToChain(
         uint32 _dstEid,
         bytes calldata recipient,
-        uint value,
+        uint256 value,
         bytes calldata _options
     ) external payable onlyLZNotPaused returns (bytes32 messageId) {
         MsgLzStorage storage $ = _getMsgLzStorage();
@@ -157,7 +157,7 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
         uint32 _dstEid, // Destination chain's endpoint ID.
         address sender,
         bytes calldata recipient,
-        uint value,
+        uint256 value,
         bytes calldata _options // Message execution options
     ) public view returns (uint256 nativeFee) {
         bytes memory _data = ICCClient(ccClient).msgOfCcSendToken(

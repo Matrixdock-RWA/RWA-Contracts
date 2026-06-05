@@ -33,7 +33,7 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
     uint64 public etNextMessenger; //effective time
 
     // the delayed minting requests are stored in requestMap
-    mapping(bytes32 requestHash => uint effectiveTime) public requestMap;
+    mapping(bytes32 requestHash => uint256 effectiveTime) public requestMap;
 
     // the gold NFT contract for bullions
     address public nftContract;
@@ -68,10 +68,10 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
 
 // this contract will be deployed on EVM-compatible chains other than Ethereum
 contract MToken is MTokenBase, ICCClient {
-    using SafeCast for uint;
+    using SafeCast for uint256;
 
-    uint constant TAG_SEND_TOKEN = 2;
-    uint constant TAG_SEND_MINT_BUDGET = 3;
+    uint256 constant TAG_SEND_TOKEN = 2;
+    uint256 constant TAG_SEND_MINT_BUDGET = 3;
 
     uint8 constant LOCAL_DECIMALS = 18;
     uint8 constant SHARED_DECIMALS = 9;
@@ -90,12 +90,12 @@ contract MToken is MTokenBase, ICCClient {
     event SetRateLimiterEffected(address newAddr);
     event BlockPlaced(address indexed _user);
     event BlockReleased(address indexed _user);
-    event CCSendToken(address indexed sender, bytes receiver, uint value);
+    event CCSendToken(address indexed sender, bytes receiver, uint256 value);
     event CCSendMintBudget(uint112 value);
-    event CCReceiveToken(bytes sender, address indexed receiver, uint value);
+    event CCReceiveToken(bytes sender, address indexed receiver, uint256 value);
     event CCReceiveMintBudget(uint112 value);
-    event Redeem(address indexed customer, uint amount, bytes data);
-    event MintRequest(address indexed receiver, uint amount, uint nonce);
+    event Redeem(address indexed customer, uint256 amount, bytes data);
+    event MintRequest(address indexed receiver, uint256 amount, uint256 nonce);
     event RequestRevoked(bytes32 indexed req);
     event RateLimitedMsgProcessed(uint256 index);
     event RateLimitedMsgDiscarded(uint256 index);
@@ -123,14 +123,14 @@ contract MToken is MTokenBase, ICCClient {
     error NotNftContract(address);
     error NotMessenger(address);
     error NotOperatorNorNft(address);
-    error MintBudgetNotEnough(uint budget, uint amount);
+    error MintBudgetNotEnough(uint256 budget, uint256 amount);
     error TransferToContract();
     error ZeroValue();
     error ArgsMismatch();
-    error TooEarlyToExecute(address receiver, uint amount, uint nonce);
+    error TooEarlyToExecute(address receiver, uint256 amount, uint256 nonce);
     error CcSendDisabled();
-    error InvalidMsg(uint tag);
-    error InvalidReceiver(uint length);
+    error InvalidMsg(uint256 tag);
+    error InvalidReceiver(uint256 length);
     error PrecisionLost();
     error GlobalPaused();
     error PendingRateLimitedMsgsExist();
@@ -192,13 +192,13 @@ contract MToken is MTokenBase, ICCClient {
         }
     }
 
-    function _checkMintBudget(uint amount) private view {
+    function _checkMintBudget(uint256 amount) private view {
         if (amount > mintBudget) {
             revert MintBudgetNotEnough(mintBudget, amount);
         }
     }
 
-    function _checkZeroValue(uint value) private pure {
+    function _checkZeroValue(uint256 value) private pure {
         if (value == 0) {
             revert ZeroValue();
         }
@@ -379,13 +379,13 @@ contract MToken is MTokenBase, ICCClient {
 
     // NFT Contract packs tokens into one NFT.
     // note: allows blocked tokenOwner by design
-    function pack(address tokenOwner, uint amount) public onlyNFTContract whenNotPaused {
+    function pack(address tokenOwner, uint256 amount) public onlyNFTContract whenNotPaused {
         _transfer(tokenOwner, msg.sender, amount);
     }
 
     // NFT Contract unpacks a NFT and return the tokens to tokenOwner
     // note: allows blocked tokenOwner by design
-    function unpack(address tokenOwner, uint amount) public onlyNFTContract whenNotPaused {
+    function unpack(address tokenOwner, uint256 amount) public onlyNFTContract whenNotPaused {
         _transfer(msg.sender, tokenOwner, amount);
     }
 
@@ -394,11 +394,11 @@ contract MToken is MTokenBase, ICCClient {
     // note: nonce used off-chain only, no on-chain validation by design
     function mintTo(
         address receiver,
-        uint amount,
-        uint nonce
+        uint256 amount,
+        uint256 nonce
     ) public onlyOperatorAndNft whenNotPaused returns (bool) {
         bytes32 req = keccak256(abi.encode(receiver, amount, nonce));
-        uint et = requestMap[req];
+        uint256 et = requestMap[req];
         if (et == 0) {
             // add a record for this mint-request and exit
             requestMap[req] = block.timestamp + delay;
@@ -420,7 +420,7 @@ contract MToken is MTokenBase, ICCClient {
     // redeem tokens owned by operator
     // note: allows redeeming for blocked customer by design
     function redeem(
-        uint amount,
+        uint256 amount,
         address customer,
         bytes calldata data
     ) public onlyOperatorAndNft whenNotPaused {
@@ -554,8 +554,8 @@ contract MToken is MTokenBase, ICCClient {
     // that a chain's totalSupply can exceed its mintBudget via cross-chain transfers
     // note: allows minting to blocked receiver by design
     function ccReceiveToken(bytes memory message) internal {
-        (bytes memory senderBytes, bytes memory receiverBytes, uint value) = abi
-            .decode(message, (bytes, bytes, uint));
+        (bytes memory senderBytes, bytes memory receiverBytes, uint256 value) = abi
+            .decode(message, (bytes, bytes, uint256));
         if (receiverBytes.length != 20) {
             revert InvalidReceiver(receiverBytes.length);
         }
@@ -581,7 +581,7 @@ contract MToken is MTokenBase, ICCClient {
 
     // called by the messenger contract to handle a received cross-chain message
     function ccReceive(bytes calldata message) public onlyMessenger {
-        (uint tag, bytes memory data) = abi.decode(message, (uint, bytes));
+        (uint256 tag, bytes memory data) = abi.decode(message, (uint256, bytes));
         if (tag == TAG_SEND_TOKEN) {
             ccReceiveToken(data);
         } else if (tag == TAG_SEND_MINT_BUDGET) {
@@ -603,7 +603,7 @@ contract MToken is MTokenBase, ICCClient {
     // manually deliver a queued rate-limited cross-chain token message
     // note: allows minting to blocked receiver by design (same as ccReceiveToken)
     function ccProcessRateLimitedMsg(uint256 index) public onlyOperator {
-        (address receiver, uint value, bytes memory sender) = IMTokenRateLimiter(rateLimiter).removeRateLimitedMsg(index);
+        (address receiver, uint256 value, bytes memory sender) = IMTokenRateLimiter(rateLimiter).removeRateLimitedMsg(index);
         _mint(receiver, value);
         emit CCReceiveToken(sender, receiver, value);
         emit RateLimitedMsgProcessed(index);
