@@ -10,18 +10,36 @@ const config: HardhatUserConfig = {
 
 module.exports = {
   solidity: {
-    version: "0.8.24",
-    settings: {
-      optimizer: {
-        enabled: true,
-        runs: 1000,
+    compilers: [
+      {
+        version: "0.8.24",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 1000,
+          },
+        },
       },
-    },
-  },
-  etherscan: {
-    apiKey: {
-      mainnet   : process.env.ETHSCAN_KEY,
-      sepolia   : process.env.ETHSCAN_KEY,
+    ],
+    overrides: {
+      "contracts/MTokenMain.sol": {
+        version: "0.8.24",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 800,
+          },
+        },
+      },
+      "contracts/fake/MTokenMain2.sol": {
+        version: "0.8.24",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 800,
+          },
+        },
+      },
     },
   },
   networks: {

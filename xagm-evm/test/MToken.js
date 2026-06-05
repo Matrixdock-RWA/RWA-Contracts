@@ -37,7 +37,7 @@ describe("MTokenFT", function () {
         for (const delay of [0, 1, 43, 888, 3599]) {
           await expect(mt.setDelay(delay)).to.be.revertedWithCustomError(mt, "DelayTooSmall");
         }
-        await expect(mt.setDelay(48 * 3600 + 1)).to.be.revertedWithCustomError(mt, "DelayTooLarge");
+        await expect(mt.setDelay(7 * 24 * 3600 + 1)).to.be.revertedWithCustomError(mt, "DelayTooLarge");
 
         await mt.setDelay(3600); // ok
     });

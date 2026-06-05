@@ -68,9 +68,6 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
 contract MToken is MTokenBase, ICCClient {
     using SafeCast for uint256;
 
-    uint64 constant MIN_DELAY = 1 hours;
-    uint64 constant MAX_DELAY = 48 hours;
-
     uint256 constant TAG_SEND_TOKEN = 2;
     uint256 constant TAG_SEND_MINT_BUDGET = 3;
 
@@ -99,6 +96,12 @@ contract MToken is MTokenBase, ICCClient {
     event Redeem(address indexed customer, uint256 amount, bytes data);
     event MintRequest(address indexed receiver, uint256 amount, uint256 nonce);
     event RequestRevoked(bytes32 indexed req);
+    event DisableCcSend(bool disabled);
+    event NextDelayRevoked(uint64 nextDelay);
+    event NextOperatorRevoked(address nextOperator);
+    event NextRevokerRevoked(address nextRevoker);
+    event NextMessengerRevoked(address nextMessenger);
+    event NextUpgradeRevoked(bytes32 dataHash);
     event UpdateAnnualFeeRate(
         uint64 newAnnualFeeRate,
         uint64 newOzPerTokenBase,
@@ -123,8 +126,6 @@ contract MToken is MTokenBase, ICCClient {
     error TooEarlyToExecute(address receiver, uint256 amount, uint256 nonce);
     error CcSendDisabled();
     error InvalidMsg(uint256 tag);
-    error DelayTooSmall();
-    error DelayTooLarge();
     error InvalidReceiver(uint256 length);
     error AnnualFeeRateTooLarge();
     error OzPerTokenBaseTooLarge();
@@ -196,6 +197,7 @@ contract MToken is MTokenBase, ICCClient {
         __ERC20_init(name, symbol);
         __ERC20Permit_init(symbol);
         __Ownable_init(_owner);
+        __Ownable2StepTimeLock_init_unchained();
         __MTOKEN_init_unchained(_operator, _annualFeeRate, _ozPerTokenBase);
     }
 
@@ -257,8 +259,8 @@ contract MToken is MTokenBase, ICCClient {
     }
 
     function setDisableCcSend(bool b) public onlyOwner {
-        // note: missing event to be added in future update
         disableCcSend = b;
+        emit DisableCcSend(b);
     }
 
     function setDelay(uint64 _delay) public onlyOwner {
@@ -334,28 +336,28 @@ contract MToken is MTokenBase, ICCClient {
     }
 
     function revokeNextDelay() public onlyRevoker {
-        // note: missing event to be added in future update
         etNextDelay = 0;
+        emit NextDelayRevoked(nextDelay);
     }
 
     function revokeNextOperator() public onlyRevoker {
-        // note: missing event to be added in future update
         etNextOperator = 0;
+        emit NextOperatorRevoked(nextOperator);
     }
 
     function revokeNextMessenger() public onlyRevoker {
-        // note: missing event to be added in future update
         etNextMessenger = 0;
+        emit NextMessengerRevoked(nextMessenger);
     }
 
     function revokeNextRevoker() public onlyOwner {
-        // note: missing event to be added in future update
         etNextRevoker = 0;
+        emit NextRevokerRevoked(nextRevoker);
     }
 
     function revokeNextUpgrade() public onlyRevoker {
-        // note: missing event to be added in future update
         etNextUpgradeToAndCall = 0;
+        emit NextUpgradeRevoked(nextUpgradeToAndCallDataHash);
     }
 
     function addToBlockedList(address _user) public onlyOperator {

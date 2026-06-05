@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.24;
 
-import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {OAppUpgradeable, Origin, MessagingFee} from "@layerzerolabs/oapp-evm-upgradeable/contracts/oapp/OAppUpgradeable.sol";
 import {MessagingReceipt} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import {MTokenMessengerBaseUpgradeable} from "./MTokenMessengerBaseUpgradeable.sol";
 import {ICCClient} from "./interfaces/ICCClient.sol";
+import {Ownable2StepTimeLockUpgradeable} from "./Ownable2StepTimeLockUpgradeable.sol";
 
 /// @custom:oz-upgrades-unsafe-allow constructor
 /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
@@ -57,6 +58,14 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
     ) internal onlyInitializing {
         __OApp_init(_initialOwner);
         __MTokenMessengerBase_init(_ccClient, _initialOwner);
+    }
+
+    function transferOwnership(address newOwner) public override(OwnableUpgradeable, Ownable2StepTimeLockUpgradeable) {
+        Ownable2StepTimeLockUpgradeable.transferOwnership(newOwner);
+    }
+
+    function renounceOwnership() public override(OwnableUpgradeable, Ownable2StepTimeLockUpgradeable) {
+        Ownable2StepTimeLockUpgradeable.renounceOwnership();
     }
 
     function lzPaused() public view returns (bool) {

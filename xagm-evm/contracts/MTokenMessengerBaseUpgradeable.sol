@@ -4,9 +4,6 @@ pragma solidity ^0.8.24;
 import {DelayedUpgradeable} from "./DelayedUpgradeable.sol";
 
 abstract contract MTokenMessengerBaseUpgradeable is DelayedUpgradeable {
-    uint64 constant MIN_DELAY = 1 hours;
-    uint64 constant MAX_DELAY = 48 hours;
-
     address public ccClient;
 
     uint64 public delay;
@@ -15,14 +12,14 @@ abstract contract MTokenMessengerBaseUpgradeable is DelayedUpgradeable {
 
     event SetDelayRequest(uint64 oldDelay, uint64 newDelay, uint64 et);
     event SetDelayEffected(uint64 newDelay);
-    error DelayTooSmall();
-    error DelayTooLarge();
+    event NextUpgradeRevoked(bytes32 nextUpgradeToAndCallDataHash);
 
     function __MTokenMessengerBase_init(
         address _ccClient,
         address _initialOwner
     ) internal onlyInitializing {
         __Ownable_init(_initialOwner);
+        __Ownable2StepTimeLock_init();
         ccClient = _ccClient;
     }
 
@@ -52,7 +49,7 @@ abstract contract MTokenMessengerBaseUpgradeable is DelayedUpgradeable {
     }
 
     function revokeNextUpgrade() public onlyOwner {
-        // note: missing event to be added in future update
         etNextUpgradeToAndCall = 0;
+        emit NextUpgradeRevoked(nextUpgradeToAndCallDataHash);
     }
 }
