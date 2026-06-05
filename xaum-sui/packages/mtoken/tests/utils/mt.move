@@ -11,7 +11,7 @@ const DESCRIPTION: vector<u8> = b"MTokenDescription";
 
 public struct MT has drop {}
 
-public fun init_for_testing(ctx: &mut TxContext, init_delay: u64, init_gov_delay: u64) {
+public fun init_for_testing(ctx: &mut TxContext, init_delay: u64) {
     mtoken::create_coin(
         MT {}, // OTW
         DECIMALS,
@@ -21,7 +21,6 @@ public fun init_for_testing(ctx: &mut TxContext, init_delay: u64, init_gov_delay
         option::none(),
         true,
         init_delay,
-        init_gov_delay,
         ctx,
     );
 }

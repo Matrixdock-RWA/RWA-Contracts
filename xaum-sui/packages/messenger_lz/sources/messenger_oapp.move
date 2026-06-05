@@ -39,7 +39,7 @@ const EReceiverLen: u64 = 7;
 const EInvalidSendContext: u64 = 8;
 
 // === Constants ===
-const VERSION: u64 = 1;
+const VERSION: u64 = 2;
 
 /// Message type for basic token transfers
 const SEND_TOKEN_TYPE: u16 = 1;

@@ -16,7 +16,7 @@ const ALICE: address = @0xA;
 const POOLA: address = @0xB;
 const POOLB: address = @0xC;
 const BOB: address = @0xD;
-const VERSION: u64 = 2;
+const VERSION: u64 = 3;
 const EXTRADATA: vector<u8> = b"DATA";
 const OWNER_TRANSFER_DELAY: u64 = 12 * 60 * 60; // 12 hours, mirrors module constant
 

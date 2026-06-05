@@ -21,7 +21,7 @@ fun init_xaum(): test_scenario::Scenario {
     let mut scenario = test_scenario::begin(SYS);
     scenario.next_tx(ADMIN);
     {
-        mt::init_for_testing(scenario.ctx(), INIT_DELAY, INIT_GOV_DELAY);
+        mt::init_for_testing(scenario.ctx(), INIT_DELAY);
     };
     scenario
 }

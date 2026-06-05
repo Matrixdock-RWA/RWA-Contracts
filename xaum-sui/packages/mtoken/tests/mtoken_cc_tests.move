@@ -24,7 +24,7 @@ fun init_xaum(): test_scenario::Scenario {
     deny_list::create_for_testing(scenario.ctx());
     scenario.next_tx(ADMIN);
     {
-        mt::init_for_testing(scenario.ctx(), INIT_DELAY, INIT_GOV_DELAY);
+        mt::init_for_testing(scenario.ctx(), INIT_DELAY);
     };
     scenario
 }

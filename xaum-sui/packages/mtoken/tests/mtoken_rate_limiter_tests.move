@@ -23,7 +23,7 @@ fun init_xaum(): (test_scenario::Scenario, Clock) {
     let _clock = clock::create_for_testing(scenario.ctx());
     scenario.next_tx(ADMIN);
     {
-        mt::init_for_testing(scenario.ctx(), 0, 0);
+        mt::init_for_testing(scenario.ctx(), 0);
     };
     scenario.next_tx(ADMIN);
     {

@@ -6,7 +6,7 @@ use std::unit_test::assert_eq;
 use sui::package::test_publish;
 use sui::test_scenario;
 
-const VERSION: u64 = 1;
+const VERSION: u64 = 2;
 
 // test addresses
 // const SYS: address = @0x0;

@@ -262,7 +262,6 @@ public fun create_coin<T: drop>(
     icon_url: Option<Url>,
     allow_global_pause: bool,
     init_delay: u64,
-    init_gov_delay: u64,
     ctx: &mut TxContext,
 ) {
     // https://github.com/MystenLabs/sui/blob/main/crates/sui-framework/docs/sui/coin.md#sui_coin_create_regulated_currency_v2
@@ -288,7 +287,7 @@ public fun create_coin<T: drop>(
         delay: init_delay,
         mint_budget: 0,
     };
-    df::add(&mut state.id, GovDelayKey(), init_gov_delay);
+    df::add(&mut state.id, GovDelayKey(), init_delay);
     dof::add(&mut state.id, TreasuryCapKey(), treasury_cap);
     dof::add(&mut state.id, DenyCapKey(), deny_cap);
 

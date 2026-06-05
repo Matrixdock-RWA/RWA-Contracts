@@ -23,7 +23,7 @@ const EInvalidTimestamp: u64 = 203;
 const EZeroValue: u64 = 204;
 
 // === Constants ===
-const VERSION: u64 = 2;
+const VERSION: u64 = 3;
 
 // const PREPRICE_DECIMAL: u8 = 6; // 6 decimal places for preprice
 // const SLIPPAGE_DECIMAL: u8 = 6; // 6 decimal places for slippage
