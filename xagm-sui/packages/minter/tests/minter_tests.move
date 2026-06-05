@@ -691,7 +691,7 @@ fun migrate_err_wrong_version() {
     scenario.next_tx(OWNER);
     {
         let mut state = scenario.take_shared<minter::State>();
-        state.set_version(2);
+        state.set_version(VERSION+1);
         minter::migrate(&mut state, scenario.ctx());
     };
     abort

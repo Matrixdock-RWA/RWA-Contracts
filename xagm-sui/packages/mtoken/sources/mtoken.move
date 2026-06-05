@@ -2,6 +2,7 @@
 module mtoken::mtoken;
 
 use mtoken::message_codec;
+use mtoken::mtoken_rate_limiter::{Self, MTokenRateLimiter};
 use std::ascii;
 use std::string;
 use std::type_name;
@@ -37,6 +38,8 @@ const EAnnualFeeRateAlreadyInitialized: u64 = 202;
 const EAnnualFeeRateNotInitialized: u64 = 203;
 const EOzPerTokenBaseTooLarge: u64 = 204;
 const EUnexpectedOzPerToken: u64 = 205;
+const EPendingMsgsExist: u64 = 117;
+const EDeprecated: u64 = 118;
 
 // === Constants ===
 
@@ -147,6 +150,14 @@ public struct CCSendTokenEvent has copy, drop {
     amount: u64,
 }
 
+public struct RateLimitedMsgProcessedEvent has copy, drop {
+    msg_id: u64,
+}
+
+public struct RateLimitedMsgDiscardedEvent has copy, drop {
+    msg_id: u64,
+}
+
 public struct PausedEvent has copy, drop {
     caller: address,
 }
@@ -168,12 +179,6 @@ public struct TransferOwnershipReq has key {
     id: UID,
     new_owner: address,
     upgrade_cap: UpgradeCap,
-    et: u64,
-}
-
-public struct SetGovDelayReq has key {
-    id: UID,
-    new_gov_delay: u64,
     et: u64,
 }
 
@@ -203,10 +208,17 @@ public struct MintReq has key {
     et: u64,
 }
 
+public struct SetGovDelayReq has key {
+    id: UID,
+    new_gov_delay: u64,
+    et: u64,
+}
+
 public struct TreasuryCapKey() has copy, drop, store;
 public struct DenyCapKey() has copy, drop, store;
 public struct MessengerCapKey() has copy, drop, store;
 public struct StateIdKey() has copy, drop, store;
+public struct RateLimiterKey() has copy, drop, store;
 public struct GovDelayKey() has copy, drop, store;
 
 // The state of the MToken contract.
@@ -233,33 +245,42 @@ public struct MessengerCap has key, store {
 // === Public & Entry Functions ===
 
 /*
- Ops\Roles\Delayed       | Owner | Operator | Revoker | Messenger| Delayed
--------------------------+-------+----------+---------+----------+---------
-init_upgrade_cap_id      |   ✓   |          |         |          |
-migrate                  |   ✓   |          |         |          |
-update_description       |   ✓   |          |         |          |
-update_icon_url          |   ✓   |          |         |          |
-transfer_ownership       |   ✓   |          |         |          | ✓
-set_operator             |   ✓   |          |         |          | ✓
-set_revoker              |   ✓   |          |         |          | ✓
-set_delay                |   ✓   |          |         |          | ✓
-mint_to                  |       |   ✓      |         |          | ✓
-pause                    |       |   ✓      |         |          |          |
-unpause                  |   ✓   |          |         |          |          |
-transfer_ownership       |   ✓   |          |         |          | ✓        | gov_delay
-set_gov_delay            |   ✓   |          |         |          | ✓        | gov_delay
-redeem                   |       |   ✓      |         |          |
-add_to_blocked_list      |       |   ✓      |         |          |
-remove_from_blocked_list |       |   ✓      |         |          |
-revoke_transfer_ownership|   ✓   |          |         |          |
-revoke_set_revoker       |   ✓   |          |         |          |
-revoke_set_operator      |       |          |   ✓     |          |
-revoke_set_delay         |       |          |   ✓     |          |
-revoke_mint_to           |       |          |   ✓     |          |
-cc_new_messenger_cap     |   ✓   |          |         |          |
-cc_send_mint_budget      |       |   ✓      |         | ✓        |
-cc_send_token            |       |          |         | ✓        |
-cc_receive               |       |          |         | ✓        |
+ Ops\Roles\Delayed                 | Owner | Operator | Revoker | Messenger| Delayed  | Uses
+-----------------------------------+-------+----------+---------+----------+----------+----------
+init_upgrade_cap_id                |   ✓   |          |         |          |          |
+migrate                            |   ✓   |          |         |          |          |
+update_description                 |   ✓   |          |         |          |          |
+update_icon_url                    |   ✓   |          |         |          |          |
+add_rate_limiter                   |   ✓   |          |         |          |          |
+remove_rate_limiter                |   ✓   |          |         |          |          |
+set_rate_limit                     |   ✓   |          |         |          |          |
+set_single_msg_limit               |   ✓   |          |         |          |          |
+update_whitelist                   |   ✓   |          |         |          |          |
+cc_batch_process_rate_limited_msgs |       |    ✓     |         |          |          |
+cc_batch_discard_rate_limited_msgs |       |    ✓     |         |          |          |
+cc_process_rate_limited_msg        |       |    ✓     |         |          |          |
+cc_discard_rate_limited_msg        |       |    ✓     |         |          |          |
+pause                              |       |   ✓      |         |          |          |
+unpause                            |   ✓   |          |         |          |          |
+transfer_ownership                 |   ✓   |          |         |          | ✓        | gov_delay
+set_gov_delay                      |   ✓   |          |         |          | ✓        | gov_delay
+set_operator                       |   ✓   |          |         |          | ✓        | delay
+set_revoker                        |   ✓   |          |         |          | ✓        | delay
+set_delay                          |   ✓   |          |         |          | ✓        | delay
+mint_to                            |       |   ✓      |         |          | ✓        | delay
+redeem                             |       |   ✓      |         |          |          |
+add_to_blocked_list                |       |   ✓      |         |          |          |
+remove_from_blocked_list           |       |   ✓      |         |          |          |
+revoke_transfer_ownership          |   ✓   |          |         |          |          |
+revoke_set_gov_delay               |   ✓   |          |         |          |          |
+revoke_set_revoker                 |   ✓   |          |         |          |          |
+revoke_set_operator                |       |          |   ✓     |          |          |
+revoke_set_delay                   |       |          |   ✓     |          |          |
+revoke_mint_to                     |       |          |   ✓     |          |          |
+cc_new_messenger_cap               |   ✓   |          |         |          |          |
+cc_send_mint_budget                |       |   ✓      |         | ✓        |          |
+cc_send_token                      |       |          |         | ✓        |          |
+cc_receive                         |       |          |         | ✓        |          |
 */
 
 #[allow(lint(share_owned), deprecated_usage)]
@@ -363,6 +384,71 @@ entry fun update_icon_url<T>(
     check_version(state);
     check_owner(state, ctx);
     coin::update_icon_url(state.borrow_treasury_cap(), metadata, new_url);
+}
+
+// add a rate limiter to the state
+entry fun add_rate_limiter<T>(
+    state: &mut State<T>,
+    amount: u64, // initial rate limit amount
+    window_seconds: u64, // initial window size in seconds
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    check_version(state);
+    check_owner(state, ctx);
+    let key = RateLimiterKey();
+    let mut rl = mtoken_rate_limiter::create(ctx);
+    rl.set_rate_limit(amount, window_seconds, clock);
+    df::add(&mut state.id, key, rl);
+}
+
+// remove the rate limiter from the state
+// note: aborts if there are pending rate-limited messages to prevent silent token loss.
+// process or discard all queued messages before calling this.
+entry fun remove_rate_limiter<T>(state: &mut State<T>, ctx: &TxContext) {
+    check_version(state);
+    check_owner(state, ctx);
+    let key = RateLimiterKey();
+    let rl: MTokenRateLimiter = df::remove(&mut state.id, key);
+    assert!(!rl.has_pending_msgs(), EPendingMsgsExist);
+    rl.drop();
+}
+
+// set the rate limit
+entry fun set_rate_limit<T>(
+    state: &mut State<T>,
+    amount: u64,
+    window_seconds: u64,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    check_version(state);
+    check_owner(state, ctx);
+    let rl_key = RateLimiterKey();
+    let rl: &mut MTokenRateLimiter = df::borrow_mut(&mut state.id, rl_key);
+    rl.set_rate_limit(amount, window_seconds, clock);
+}
+
+// set the per-message amount limit; 0 disables the check
+entry fun set_single_msg_limit<T>(state: &mut State<T>, limit: u64, ctx: &TxContext) {
+    check_version(state);
+    check_owner(state, ctx);
+    let rl: &mut MTokenRateLimiter = df::borrow_mut(&mut state.id, RateLimiterKey());
+    rl.set_single_msg_limit(limit);
+}
+
+// add or update a whitelist entry for a (sender, receiver) pair
+entry fun update_whitelist<T>(
+    state: &mut State<T>,
+    sender: vector<u8>,
+    receiver: address,
+    flag: bool,
+    ctx: &TxContext,
+) {
+    check_version(state);
+    check_owner(state, ctx);
+    let rl: &mut MTokenRateLimiter = df::borrow_mut(&mut state.id, RateLimiterKey());
+    rl.update_whitelist(sender, receiver, flag);
 }
 
 entry fun pause<T>(state: &mut State<T>, deny_list: &mut DenyList, ctx: &mut TxContext) {
@@ -838,11 +924,23 @@ public fun msg_of_cc_send_token(sender: address, receiver: vector<u8>, amount: u
     message_codec::encode_cc_token_message(sender, receiver, amount)
 }
 
+// keep for backward compatibility
 public fun cc_receive<T>(
+    _state: &mut State<T>,
+    _msg_cap: &MessengerCap,
+    _msg: vector<u8>,
+    _deny_list: &DenyList,
+    _ctx: &mut TxContext,
+): (address, Option<Coin<T>>) {
+    abort EDeprecated // cc_receive is replaced by cc_receive_v2
+}
+
+public fun cc_receive_v2<T>(
     state: &mut State<T>,
     msg_cap: &MessengerCap,
     msg: vector<u8>,
     deny_list: &DenyList,
+    clock: &Clock,
     ctx: &mut TxContext,
 ): (address, Option<Coin<T>>) {
     check_version(state);
@@ -853,20 +951,96 @@ public fun cc_receive<T>(
         let amount = decoded_msg.extract_mint_budget();
         state.mint_budget = state.mint_budget + amount;
         event::emit(CCReceiveMintBudgetEvent { amount });
-        (@0x0, option::none())
+        return (@0x0, option::none())
+    };
+
+    // handle token message
+    assert!(decoded_msg.is_token(), EInvalidMessageType);
+    let (sender, receiver, amount) = decoded_msg.extract_token_info();
+
+    // check rate limit
+    let rl_key = RateLimiterKey();
+    if (df::exists_(&state.id, rl_key)) {
+        let rl: &mut MTokenRateLimiter = df::borrow_mut(&mut state.id, rl_key);
+        if (!rl.try_consume_rate_limit_capacity(sender, receiver, amount, clock)) {
+            // message overflowed, enqueued for later processing.
+            return (@0x0, option::none())
+        };
+    };
+
+    // mint coin
+    let minted_coin = coin::mint<T>(state.borrow_treasury_cap_mut(), amount, ctx);
+    if (!coin::deny_list_v2_contains_current_epoch<T>(deny_list, receiver, ctx)) {
+        transfer::public_transfer(minted_coin, receiver);
+        event::emit(CCReceiveTokenEvent { sender, receiver, amount });
+        (receiver, option::none())
     } else {
-        assert!(decoded_msg.is_token(), EInvalidMessageType);
-        let (sender, receiver, amount) = decoded_msg.extract_token_info();
-        let minted_coin = coin::mint<T>(state.borrow_treasury_cap_mut(), amount, ctx);
-        if (!coin::deny_list_v2_contains_current_epoch<T>(deny_list, receiver, ctx)) {
-            transfer::public_transfer(minted_coin, receiver);
-            event::emit(CCReceiveTokenEvent { sender, receiver, amount });
-            (receiver, option::none())
-        } else {
-            event::emit(CCBlockedTokenEvent { sender, receiver, amount });
-            (receiver, option::some(minted_coin))
-        }
+        event::emit(CCBlockedTokenEvent { sender, receiver, amount });
+        (receiver, option::some(minted_coin))
     }
+}
+
+// process rate-limited messages in batch
+entry fun cc_batch_process_rate_limited_msgs<T>(
+    state: &mut State<T>,
+    mut msg_ids: vector<u64>,
+    ctx: &mut TxContext,
+) {
+    check_version(state);
+    check_operator(state, ctx);
+    while (!msg_ids.is_empty()) {
+        let msg_id = msg_ids.pop_back();
+        process_rate_limited_msg(state, msg_id, ctx);
+    };
+}
+
+// process a single rate-limited message
+entry fun cc_process_rate_limited_msg<T>(state: &mut State<T>, msg_id: u64, ctx: &mut TxContext) {
+    check_version(state);
+    check_operator(state, ctx);
+    process_rate_limited_msg(state, msg_id, ctx);
+}
+
+// private function to process a single rate-limited message
+// put it here because it's only used by cc_batch_process_rate_limited_msgs and process_rate_limited_msg
+fun process_rate_limited_msg<T>(state: &mut State<T>, msg_id: u64, ctx: &mut TxContext) {
+    let rl_key = RateLimiterKey();
+    let rl: &mut MTokenRateLimiter = df::borrow_mut(&mut state.id, rl_key);
+    let (sender, receiver, amount) = rl.remove_rate_limited_msg(msg_id);
+    let minted_coin = coin::mint<T>(state.borrow_treasury_cap_mut(), amount, ctx);
+    transfer::public_transfer(minted_coin, receiver);
+    event::emit(CCReceiveTokenEvent { sender, receiver, amount });
+    event::emit(RateLimitedMsgProcessedEvent { msg_id });
+}
+
+// discard rate-limited messages in batch
+entry fun cc_batch_discard_rate_limited_msgs<T>(
+    state: &mut State<T>,
+    mut msg_ids: vector<u64>,
+    ctx: &TxContext,
+) {
+    check_version(state);
+    check_operator(state, ctx);
+    while (!msg_ids.is_empty()) {
+        let msg_id = msg_ids.pop_back();
+        discard_rate_limited_msg(state, msg_id);
+    };
+}
+
+// discard a single rate-limited message
+entry fun cc_discard_rate_limited_msg<T>(state: &mut State<T>, msg_id: u64, ctx: &TxContext) {
+    check_version(state);
+    check_operator(state, ctx);
+    discard_rate_limited_msg(state, msg_id);
+}
+
+// private function to discard a single rate-limited message
+// put it here because it's only used by cc_batch_discard_rate_limited_msgs and discard_rate_limited_msg
+fun discard_rate_limited_msg<T>(state: &mut State<T>, msg_id: u64) {
+    let rl_key = RateLimiterKey();
+    let rl: &mut MTokenRateLimiter = df::borrow_mut(&mut state.id, rl_key);
+    let (_sender, _receiver, _amount) = rl.remove_rate_limited_msg(msg_id);
+    event::emit(RateLimitedMsgDiscardedEvent { msg_id });
 }
 
 // === View Functions ===
@@ -935,6 +1109,49 @@ public fun oz_per_token<T>(state: &State<T>, clock: &Clock): u64 {
 public fun get_oz_amount<T>(state: &State<T>, token_amount: u64, clock: &Clock): u64 {
     let oz_per_token = state.oz_per_token(clock) as u128;
     ((token_amount as u128 * oz_per_token) / (OZ_RATIO_BASE as u128)) as u64
+}
+
+// return true if the rate limiter is set
+public fun has_rate_limiter<T>(state: &State<T>): bool {
+    df::exists_(&state.id, RateLimiterKey())
+}
+
+// return the rate limit and window (in seconds)
+public fun rate_limit<T>(state: &State<T>): (u64, u64) {
+    let rl_key = RateLimiterKey();
+    let rl: &MTokenRateLimiter = df::borrow(&state.id, rl_key);
+    rl.get_rate_limit()
+}
+
+// return (in_flight, capacity) at the current clock time
+public fun amount_can_be_received<T>(state: &State<T>, clock: &Clock): (u64, u64) {
+    let rl_key = RateLimiterKey();
+    let rl: &MTokenRateLimiter = df::borrow(&state.id, rl_key);
+    rl.amount_can_be_received(clock)
+}
+
+// return (sender, receiver, amount) of a queued rate-limited message
+public fun rate_limited_msg<T>(state: &State<T>, msg_id: u64): (vector<u8>, address, u64) {
+    let rl: &MTokenRateLimiter = df::borrow(&state.id, RateLimiterKey());
+    rl.rate_limited_msg(msg_id)
+}
+
+// return true if the message is queued
+public fun has_rate_limited_msg<T>(state: &State<T>, msg_id: u64): bool {
+    let rl: &MTokenRateLimiter = df::borrow(&state.id, RateLimiterKey());
+    rl.has_rate_limited_msg(msg_id)
+}
+
+// return the single message limit (0 = disabled)
+public fun single_msg_limit<T>(state: &State<T>): u64 {
+    let rl: &MTokenRateLimiter = df::borrow(&state.id, RateLimiterKey());
+    rl.get_single_msg_limit()
+}
+
+// return true if the (sender, receiver) pair is whitelisted
+public fun is_in_whitelist<T>(state: &State<T>, sender: vector<u8>, receiver: address): bool {
+    let rl: &MTokenRateLimiter = df::borrow(&state.id, RateLimiterKey());
+    rl.is_in_whitelist(sender, receiver)
 }
 
 // === Private Functions ===

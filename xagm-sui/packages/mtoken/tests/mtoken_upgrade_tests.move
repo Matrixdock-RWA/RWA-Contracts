@@ -10,7 +10,6 @@ use sui::test_scenario;
 // constants are not exported, so we need to redefine them here
 const VERSION: u64 = 4;
 const INIT_DELAY: u64 = 0;
-const INIT_GOV_DELAY: u64 = 5;
 
 // test addresses
 const SYS: address = @0x0;
@@ -123,7 +122,7 @@ fun migrate_ok() {
     scenario.next_tx(ADMIN);
     {
         let mut state = scenario.take_shared<mtoken::State<XAGM>>();
-        state.set_version(0);
+        state.set_version(VERSION-1);
         mtoken::migrate(&mut state, scenario.ctx());
         assert_eq!(state.version(), VERSION);
         test_scenario::return_shared(state);

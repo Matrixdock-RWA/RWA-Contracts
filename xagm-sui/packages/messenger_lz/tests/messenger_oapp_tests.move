@@ -630,11 +630,12 @@ fun lz_receive_mint_budget_ok() {
         );
 
         let _deny_list = scenario.take_shared<DenyList>();
-        state.lz_receive(
+        state.lz_receive_v2(
             &mut mt_state,
             &my_oapp,
             receive_call,
             &_deny_list,
+            &_clock,
             scenario.ctx(),
         );
 
