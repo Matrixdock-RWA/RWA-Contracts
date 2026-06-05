@@ -144,7 +144,10 @@ describe("MTokenFT", function () {
         ["OwnableUnauthorizedAccount", mt.connect(alice).setRevoker(alice.address)],
         ["OwnableUnauthorizedAccount", mt.connect(alice).setDisableCcSend(true)],
         ["OwnableUnauthorizedAccount", mt.connect(alice).revokeNextRevoker()],
+        ["OwnableUnauthorizedAccount", mt.connect(alice).unpause()],
+        ["OwnableUnauthorizedAccount", mt.connect(alice).forcedTransfer(alice.address, bob.address, 123, "0x123456", "0x12345678")],
         // onlyOperator
+        ["NotOperator", mt.connect(alice).pause()],
         ["NotOperator", mt.connect(alice).addToBlockedList(alice.address)],
         ["NotOperator", mt.connect(alice).removeFromBlockedList(alice.address)],
         // onlyOperatorAndNft
@@ -194,6 +197,27 @@ describe("MTokenFT", function () {
       expect(await mt.isBlocked(a2)).to.equal(false);
       expect(await mt.isBlocked(a3)).to.equal(true);
       expect(await mt.isBlocked(a4)).to.equal(false);
+    });
+
+    it("pause/unpause", async function () {
+      const { mt, owner, operator, alice } = await loadFixture(deployTestFixture);
+
+      expect(await mt.paused()).to.equal(false);
+
+      await expect(mt.connect(alice).pause())
+        .to.be.revertedWithCustomError(mt, "NotOperator")
+        .withArgs(alice.address);
+      await expect(mt.connect(alice).unpause())
+        .to.be.revertedWithCustomError(mt, "OwnableUnauthorizedAccount")
+        .withArgs(alice.address);
+
+      await expect(mt.connect(operator).pause())
+        .to.emit(mt, "Paused").withArgs(operator.address);
+      expect(await mt.paused()).to.equal(true);
+
+      await expect(mt.unpause())
+        .to.emit(mt, "Unpaused").withArgs(owner.address);
+      expect(await mt.paused()).to.equal(false);
     });
 
     describe("mintTo/redeem", function () {
@@ -270,6 +294,47 @@ describe("MTokenFT", function () {
       await time.increase(10000);
       await expect(mt.connect(_op).mintTo(alice.address, 10001, 1, ozPerToken))
         .to.changeTokenBalances(mt, [zeroAddr, alice.address], [0, 10001]);
+    });
+
+    it("globalPause", async function () {
+      const { mt, reserveFeed, owner, operator, fakeNft, alice, bob } = await loadFixture(deployTestFixture);
+      await reserveFeed.setReserve(100000);
+      await mt.connect(operator).increaseMintBudget(50000);
+      // mint tokens to alice (stage + execute, delay=0)
+      await mt.connect(operator).mintTo(alice.address, 1000, 0, ozPerToken);
+      await mt.connect(operator).mintTo(alice.address, 1000, 0, ozPerToken);
+      // transfer some to operator so redeem has tokens to burn
+      await mt.connect(alice).transfer(operator.address, 100);
+      // approve bob for transferFrom
+      await mt.connect(alice).approve(bob.address, 500);
+
+      await mt.connect(operator).pause();
+
+      await expect(mt.connect(operator).mintTo(alice.address, 100, 1, ozPerToken))
+        .to.be.revertedWithCustomError(mt, "GlobalPaused");
+      await expect(mt.connect(operator).redeem(100, alice.address, ozPerToken, "0x"))
+        .to.be.revertedWithCustomError(mt, "GlobalPaused");
+      await expect(mt.connect(alice).transfer(bob.address, 100))
+        .to.be.revertedWithCustomError(mt, "GlobalPaused");
+      await expect(mt.connect(bob).transferFrom(alice.address, bob.address, 100))
+        .to.be.revertedWithCustomError(mt, "GlobalPaused");
+
+      // set messenger to owner for ccSendToken (setMessenger is not paused)
+      await mt.setMessenger(owner);
+      await mt.setMessenger(owner);
+      await expect(mt.ccSendToken(alice.address, bob.address, 100))
+        .to.be.revertedWithCustomError(mt, "GlobalPaused");
+
+      // set messenger to operator for ccSendMintBudget (tx.origin must be operator)
+      await mt.setMessenger(operator);
+      await mt.setMessenger(operator);
+      await expect(mt.connect(operator).ccSendMintBudget(1000))
+        .to.be.revertedWithCustomError(mt, "GlobalPaused");
+
+      // unpause — all operations resume
+      await mt.unpause();
+      await expect(mt.connect(alice).transfer(bob.address, 100))
+        .to.emit(mt, "Transfer").withArgs(alice.address, bob.address, 100);
     });
 
     it("revokeRequest", async function() {

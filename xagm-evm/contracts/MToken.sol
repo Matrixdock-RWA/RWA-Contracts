@@ -62,6 +62,9 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
     uint64 public ozPerTokenBaseTime; // timestamp of the update of annualFeeRate & ozPerTokenBase, rounded to daily boundary
     uint64 public annualFeeRate; // the annual fee rate, 9 decimals
     uint64 public ozPerTokenBase; // calculated when annualFeeRate is updated, 9 decimals
+
+    // Global pause flag
+    bool public paused;
 }
 
 // this contract will be deployed on EVM-compatible chains other than Ethereum
@@ -96,6 +99,8 @@ contract MToken is MTokenBase, ICCClient {
     event Redeem(address indexed customer, uint256 amount, bytes data);
     event MintRequest(address indexed receiver, uint256 amount, uint256 nonce);
     event RequestRevoked(bytes32 indexed req);
+    event Paused(address indexed _userAddress);
+    event Unpaused(address indexed _userAddress);
     event DisableCcSend(bool disabled);
     event NextDelayRevoked(uint64 nextDelay);
     event NextOperatorRevoked(address nextOperator);
@@ -130,6 +135,14 @@ contract MToken is MTokenBase, ICCClient {
     error AnnualFeeRateTooLarge();
     error OzPerTokenBaseTooLarge();
     error UnexpectedOzPerToken(uint64 expectedOzPerToken, uint64 actualOzPerToken);
+    error GlobalPaused();
+
+    modifier whenNotPaused() {
+        if (paused) {
+            revert GlobalPaused();
+        }
+        _;
+    }
 
     modifier onlyNotBlocked() {
         _checkBlocked(_msgSender());
@@ -263,6 +276,16 @@ contract MToken is MTokenBase, ICCClient {
         emit DisableCcSend(b);
     }
 
+    function pause() external onlyOperator {
+        paused = true;
+        emit Paused(msg.sender);
+    }
+
+    function unpause() external onlyOwner {
+        paused = false;
+        emit Unpaused(msg.sender);
+    }
+
     function setDelay(uint64 _delay) public onlyOwner {
         if (_delay < MIN_DELAY) {
             revert DelayTooSmall();
@@ -378,7 +401,7 @@ contract MToken is MTokenBase, ICCClient {
         uint256 amount,
         uint256 nonce,
         uint64 expectedOzPerToken
-    ) public onlyOperator returns (bool) {
+    ) public onlyOperator whenNotPaused returns (bool) {
         _checkOzPerToken(expectedOzPerToken);
 
         bytes32 req = keccak256(abi.encode(receiver, amount, nonce));
@@ -409,7 +432,7 @@ contract MToken is MTokenBase, ICCClient {
         address customer,
         uint64 expectedOzPerToken,
         bytes calldata data
-    ) public onlyOperator {
+    ) public onlyOperator whenNotPaused {
         _checkOzPerToken(expectedOzPerToken);
         _burn(operator, amount);
         emit Redeem(customer, amount, data);
@@ -420,7 +443,7 @@ contract MToken is MTokenBase, ICCClient {
     function transfer(
         address _recipient,
         uint256 _amount
-    ) public virtual override onlyNotBlocked returns (bool) {
+    ) public virtual override onlyNotBlocked whenNotPaused returns (bool) {
         if (_recipient == address(this)) {
             revert TransferToContract();
         }
@@ -432,7 +455,7 @@ contract MToken is MTokenBase, ICCClient {
         address _sender,
         address _recipient,
         uint256 _amount
-    ) public virtual override onlyNotBlocked returns (bool) {
+    ) public virtual override onlyNotBlocked whenNotPaused returns (bool) {
         if (_recipient == address(this)) {
             revert TransferToContract();
         }
@@ -489,7 +512,7 @@ contract MToken is MTokenBase, ICCClient {
         address sender,
         bytes calldata receiver,
         uint256 value
-    ) public onlyMessenger returns (bytes memory message) {
+    ) public onlyMessenger whenNotPaused returns (bytes memory message) {
         if (disableCcSend) {
             revert CcSendDisabled();
         }
@@ -509,7 +532,7 @@ contract MToken is MTokenBase, ICCClient {
     // called by the messenger contract to initialize a cross-chain mint-budget transfer
     function ccSendMintBudget(
         uint112 value
-    ) public onlyMessenger returns (bytes memory message) {
+    ) public onlyMessenger whenNotPaused returns (bytes memory message) {
         // note: we are very careful with any third-party contracts the operator calls
         // to avoid unintended shuffling of cross-chain mint budgets
         _checkOperator(tx.origin);
