@@ -8,7 +8,9 @@ use sui::package::test_publish;
 use sui::test_scenario;
 
 // constants are not exported, so we need to redefine them here
-const VERSION: u64 = 3;
+const VERSION: u64 = 4;
+const INIT_DELAY: u64 = 0;
+const INIT_GOV_DELAY: u64 = 5;
 
 // test addresses
 const SYS: address = @0x0;
@@ -19,7 +21,7 @@ fun init_xagm(): test_scenario::Scenario {
     let mut scenario = test_scenario::begin(SYS);
     scenario.next_tx(ADMIN);
     {
-        mt::init_for_testing(scenario.ctx(), 0);
+        mt::init_for_testing(scenario.ctx(), INIT_DELAY);
     };
     scenario
 }
@@ -57,12 +59,10 @@ fun init_upgrade_cap_id_err_not_none() {
     scenario.next_tx(ADMIN);
     {
         let mut state = scenario.take_shared<mtoken::State<XAGM>>();
-        let upgrade_cap = test_publish(
-            state.package_address().to_id(),
-            scenario.ctx(),
-        );
-        mtoken::init_upgrade_cap_id(&mut state, &upgrade_cap, scenario.ctx()); // ok
-        mtoken::init_upgrade_cap_id(&mut state, &upgrade_cap, scenario.ctx()); // error!
+        let upgrade_cap1 = test_publish(state.package_address().to_id(), scenario.ctx());
+        let upgrade_cap2 = test_publish(state.package_address().to_id(), scenario.ctx());
+        mtoken::init_upgrade_cap_id(&mut state, &upgrade_cap1, scenario.ctx()); // ok
+        mtoken::init_upgrade_cap_id(&mut state, &upgrade_cap2, scenario.ctx()); // error!
     };
     abort
 }
@@ -78,9 +78,10 @@ fun init_upgrade_cap_id_ok() {
             state.package_address().to_id(),
             scenario.ctx(),
         );
-        mtoken::init_upgrade_cap_id(&mut state, &upgrade_cap, scenario.ctx()); // ok
-        assert_eq!(state.upgrade_cap_id(), option::some(object::id(&upgrade_cap)));
-        transfer::public_share_object(upgrade_cap);
+        let cap_id = object::id(&upgrade_cap);
+        mtoken::init_upgrade_cap_id(&mut state, &upgrade_cap, scenario.ctx());
+        assert_eq!(state.upgrade_cap_id(), option::some(cap_id));
+        transfer::public_transfer(upgrade_cap, ADMIN);
         test_scenario::return_shared(state);
     };
 

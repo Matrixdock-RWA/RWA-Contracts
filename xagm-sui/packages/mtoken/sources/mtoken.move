@@ -40,10 +40,10 @@ const EUnexpectedOzPerToken: u64 = 205;
 
 // === Constants ===
 
-const VERSION: u64 = 3;
+const VERSION: u64 = 4;
 
-const MIN_DELAY: u64 = 3600; // 1 hour
-const MAX_DELAY: u64 = 3600 * 48; // 48 hours
+const MIN_DELAY: u64 = 3600;             // 1 hour
+const MAX_DELAY: u64 = 3600 * 24 * 7;    // 7 days
 const REQ_TTL: u64 = 3600 * 12; // 12 hours, time to live after effective
 
 const SECONDS_PER_DAY: u64 = 24 * 3600; // ozPerTokenBaseTime are rounded to daily boundary
@@ -147,12 +147,25 @@ public struct CCSendTokenEvent has copy, drop {
     amount: u64,
 }
 
+public struct SetGovDelayEvent has copy, drop {
+    old_gov_delay: u64,
+    new_gov_delay: u64,
+    et: u64,
+    req_id: ID,
+}
+
 // === Structs ===
 
 public struct TransferOwnershipReq has key {
     id: UID,
     new_owner: address,
     upgrade_cap: UpgradeCap,
+    et: u64,
+}
+
+public struct SetGovDelayReq has key {
+    id: UID,
+    new_gov_delay: u64,
     et: u64,
 }
 
@@ -186,6 +199,7 @@ public struct TreasuryCapKey() has copy, drop, store;
 public struct DenyCapKey() has copy, drop, store;
 public struct MessengerCapKey() has copy, drop, store;
 public struct StateIdKey() has copy, drop, store;
+public struct GovDelayKey() has copy, drop, store;
 
 // The state of the MToken contract.
 // The type parameter T is unused here but preserved for backward compatibility.
@@ -211,29 +225,31 @@ public struct MessengerCap has key, store {
 // === Public & Entry Functions ===
 
 /*
- Ops\Roles\Delayed       | Owner | Operator | Revoker | Messenger| Delayed 
+ Ops\Roles\Delayed       | Owner | Operator | Revoker | Messenger| Delayed
 -------------------------+-------+----------+---------+----------+---------
-init_upgrade_cap_id      |   ✓   |          |         |          |         
-migrate                  |   ✓   |          |         |          |         
-update_description       |   ✓   |          |         |          |         
-update_icon_url          |   ✓   |          |         |          |         
-transfer_ownership       |   ✓   |          |         |          | ✓       
-set_operator             |   ✓   |          |         |          | ✓       
-set_revoker              |   ✓   |          |         |          | ✓       
-set_delay                |   ✓   |          |         |          | ✓       
-mint_to                  |       |   ✓      |         |          | ✓       
-redeem                   |       |   ✓      |         |          |         
-add_to_blocked_list      |       |   ✓      |         |          |         
-remove_from_blocked_list |       |   ✓      |         |          |         
-revoke_transfer_ownership|   ✓   |          |         |          |         
-revoke_set_revoker       |   ✓   |          |         |          |         
-revoke_set_operator      |       |          |   ✓     |          |         
-revoke_set_delay         |       |          |   ✓     |          |         
-revoke_mint_to           |       |          |   ✓     |          |         
-cc_new_messenger_cap     |   ✓   |          |         |          |         
-cc_send_mint_budget      |       |   ✓      |         | ✓        |         
-cc_send_token            |       |          |         | ✓        |         
-cc_receive               |       |          |         | ✓        |         
+init_upgrade_cap_id      |   ✓   |          |         |          |
+migrate                  |   ✓   |          |         |          |
+update_description       |   ✓   |          |         |          |
+update_icon_url          |   ✓   |          |         |          |
+transfer_ownership       |   ✓   |          |         |          | ✓
+set_operator             |   ✓   |          |         |          | ✓
+set_revoker              |   ✓   |          |         |          | ✓
+set_delay                |   ✓   |          |         |          | ✓
+mint_to                  |       |   ✓      |         |          | ✓
+transfer_ownership       |   ✓   |          |         |          | ✓        | gov_delay
+set_gov_delay            |   ✓   |          |         |          | ✓        | gov_delay
+redeem                   |       |   ✓      |         |          |
+add_to_blocked_list      |       |   ✓      |         |          |
+remove_from_blocked_list |       |   ✓      |         |          |
+revoke_transfer_ownership|   ✓   |          |         |          |
+revoke_set_revoker       |   ✓   |          |         |          |
+revoke_set_operator      |       |          |   ✓     |          |
+revoke_set_delay         |       |          |   ✓     |          |
+revoke_mint_to           |       |          |   ✓     |          |
+cc_new_messenger_cap     |   ✓   |          |         |          |
+cc_send_mint_budget      |       |   ✓      |         | ✓        |
+cc_send_token            |       |          |         | ✓        |
+cc_receive               |       |          |         | ✓        |
 */
 
 #[allow(lint(share_owned), deprecated_usage)]
@@ -274,6 +290,7 @@ public fun create_coin<T: drop>(
         oz_per_token_base: 0, // will be set by init_annual_fee_rate
         annual_fee_rate: 0, // will be set by init_annual_fee_rate
     };
+    df::add(&mut state.id, GovDelayKey(), init_delay);
     dof::add(&mut state.id, TreasuryCapKey(), treasury_cap);
     dof::add(&mut state.id, DenyCapKey(), deny_cap);
 
@@ -310,6 +327,9 @@ entry fun init_upgrade_cap_id<T>(state: &mut State<T>, upgrade_cap: &UpgradeCap,
 entry fun migrate<T>(state: &mut State<T>, ctx: &TxContext) {
     check_owner(state, ctx);
     assert!(state.version < VERSION, EWrongVersion);
+    if (!df::exists_(&state.id, GovDelayKey())) {
+        df::add(&mut state.id, GovDelayKey(), state.delay);
+    };
     state.version = VERSION;
 }
 
@@ -347,7 +367,7 @@ entry fun request_transfer_ownership<T>(
     assert!(state.upgrade_cap_id.contains(&object::id(&upgrade_cap)), EUpgradeCapInvalid);
 
     let old_owner = state.owner;
-    let et = get_effective_time(state, clock);
+    let et = get_gov_effective_time(state, clock);
     let id = object::new(ctx);
     let mut req = TransferOwnershipReq { id, new_owner, upgrade_cap, et };
     df::add(&mut req.id, StateIdKey(), object::id(state));
@@ -386,6 +406,58 @@ entry fun revoke_transfer_ownership<T>(
     check_req(state, &req.id);
     let TransferOwnershipReq { id, upgrade_cap, .. } = req;
     transfer::public_transfer(upgrade_cap, state.owner);
+    id.delete();
+}
+
+// gov_delay governs the timelock for ownership transfer only (1h–7d).
+// Changes to gov_delay are themselves timelocked by the current gov_delay value,
+// mirroring Ownable2StepTimeLockUpgradeable.setGovDelay and Solana set_gov_delay.
+entry fun request_set_gov_delay<T>(
+    state: &State<T>,
+    new_gov_delay: u64,
+    clock: &Clock,
+    ctx: &mut TxContext,
+) {
+    check_version(state);
+    check_owner(state, ctx);
+    assert!(new_gov_delay >= MIN_DELAY, EDelayTooShort);
+    assert!(new_gov_delay <= MAX_DELAY, EDelayTooLong);
+
+    let old_gov_delay = gov_delay(state);
+    let et = get_gov_effective_time(state, clock);
+    let mut req = SetGovDelayReq { id: object::new(ctx), new_gov_delay, et };
+    df::add(&mut req.id, StateIdKey(), object::id(state));
+    let req_id = object::id(&req);
+
+    transfer::share_object(req);
+    event::emit(SetGovDelayEvent { old_gov_delay, new_gov_delay, et, req_id });
+}
+
+entry fun execute_set_gov_delay<T>(
+    state: &mut State<T>,
+    req: SetGovDelayReq,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    check_version(state);
+    check_owner(state, ctx);
+    check_req(state, &req.id);
+    let old_gov_delay = gov_delay(state);
+    let req_id = object::id(&req);
+    let SetGovDelayReq { id, new_gov_delay, et } = req;
+    check_effective_time(clock, et);
+
+    *df::borrow_mut(&mut state.id, GovDelayKey()) = new_gov_delay;
+    id.delete();
+    event::emit(SetGovDelayEvent { old_gov_delay, new_gov_delay, et: 0, req_id });
+}
+
+// Only owner can revoke a pending gov_delay change (mirrors EVM revokeNextGovDelay onlyOwner).
+entry fun revoke_set_gov_delay<T>(state: &State<T>, req: SetGovDelayReq, ctx: &TxContext) {
+    check_version(state);
+    check_owner(state, ctx);
+    check_req(state, &req.id);
+    let SetGovDelayReq { id, .. } = req;
     id.delete();
 }
 
@@ -799,6 +871,10 @@ public fun delay<T>(state: &State<T>): u64 {
     state.delay
 }
 
+public fun gov_delay<T>(state: &State<T>): u64 {
+    *df::borrow(&state.id, GovDelayKey())
+}
+
 public fun mint_budget<T>(state: &State<T>): u64 {
     state.mint_budget
 }
@@ -843,6 +919,10 @@ public fun get_oz_amount<T>(state: &State<T>, token_amount: u64, clock: &Clock):
 
 fun get_effective_time<T>(state: &State<T>, clock: &Clock): u64 {
     clock.timestamp_ms() / 1000 + state.delay
+}
+
+fun get_gov_effective_time<T>(state: &State<T>, clock: &Clock): u64 {
+    clock.timestamp_ms() / 1000 + gov_delay(state)
 }
 
 fun check_effective_time(clock: &Clock, et: u64) {

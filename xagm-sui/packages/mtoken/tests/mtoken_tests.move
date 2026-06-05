@@ -14,10 +14,11 @@ use sui::test_scenario;
 use sui::url;
 
 // constants are not exported, so we need to redefine them here
-const VERSION: u64 = 3;
+const VERSION: u64 = 4;
 const INIT_DELAY: u64 = 5;
+const INIT_GOV_DELAY: u64 = 5;
 const MIN_DELAY: u64 = 3600;
-const MAX_DELAY: u64 = 3600 * 48;
+const MAX_DELAY: u64 = 3600 * 24 * 7;
 const REQ_TTL: u64 = 3600 * 12;
 
 // test addresses
@@ -358,6 +359,7 @@ fun init_ok() {
         assert_eq!(state.operator(), ADMIN);
         assert_eq!(state.revoker(), ADMIN);
         assert_eq!(state.delay(), INIT_DELAY);
+        assert_eq!(state.gov_delay(), INIT_GOV_DELAY);
         assert_eq!(state.mint_budget(), 0);
         test_scenario::return_shared(state);
     };
@@ -446,7 +448,7 @@ fun set_owner_exec_err_not_effective() {
 fun set_owner_exec_err_expired() {
     let (mut scenario, mut _clock) = init_xagm();
     request_set_owner(&mut scenario, &_clock, ADMIN, ALICE);
-    _clock.increment_for_testing(INIT_DELAY * 1000);
+    _clock.increment_for_testing(INIT_GOV_DELAY * 1000);
     _clock.increment_for_testing(REQ_TTL * 1000);
     execute_set_owner(&mut scenario, &_clock, ALICE);
     abort
@@ -477,18 +479,19 @@ fun set_owner_ok() {
     let (mut scenario, mut _clock) = init_xagm();
 
     request_set_owner(&mut scenario, &_clock, ADMIN, ALICE);
-    _clock.increment_for_testing(INIT_DELAY * 1000);
+    _clock.increment_for_testing(INIT_GOV_DELAY * 1000);
     execute_set_owner(&mut scenario, &_clock, ALICE);
 
     // check upgrade cap
     scenario.next_tx(ALICE);
     {
         let state = scenario.take_shared<mtoken::State<XAGM>>();
-        let upgrade_cap = scenario.take_from_sender<UpgradeCap>();
         assert_eq!(state.owner(), ALICE);
-        assert_eq!(upgrade_cap.package(), state.package_address().to_id());
+        assert!(state.upgrade_cap_id().is_some());
+        // ALICE (the new owner) now holds the UpgradeCap.
+        let cap = scenario.take_from_address<UpgradeCap>(ALICE);
+        test_scenario::return_to_address(ALICE, cap);
         test_scenario::return_shared(state);
-        scenario.return_to_sender(upgrade_cap);
     };
 
     clock::destroy_for_testing(_clock);
@@ -512,9 +515,13 @@ fun set_owner_revoke_ok() {
     // check upgrade cap
     scenario.next_tx(ADMIN);
     {
-        let _upgrade_cap = scenario.take_from_sender<UpgradeCap>();
-        // assert_eq!(object::id(&upgrade_cap), object::id_from_address(@123));
-        scenario.return_to_sender(_upgrade_cap);
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
+        assert_eq!(state.owner(), ADMIN);
+        assert!(state.upgrade_cap_id().is_some());
+        // ADMIN (still the owner) got the UpgradeCap back.
+        let cap = scenario.take_from_address<UpgradeCap>(ADMIN);
+        test_scenario::return_to_address(ADMIN, cap);
+        test_scenario::return_shared(state);
     };
 
     clock::destroy_for_testing(_clock);
@@ -1137,3 +1144,133 @@ fun transfer_ok() {
 //     clock::destroy_for_testing(_clock);
 //     scenario.end();
 // }
+
+fun request_set_gov_delay(
+    scenario: &mut test_scenario::Scenario,
+    clock: &Clock,
+    caller: address,
+    new_gov_delay: u64,
+) {
+    scenario.next_tx(caller);
+    {
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
+        mtoken::request_set_gov_delay(&state, new_gov_delay, clock, scenario.ctx());
+        assert_eq!(event::num_events(), 1);
+        test_scenario::return_shared(state);
+    };
+}
+
+fun execute_set_gov_delay(scenario: &mut test_scenario::Scenario, clock: &Clock, caller: address) {
+    scenario.next_tx(caller);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
+        let req = scenario.take_shared<mtoken::SetGovDelayReq>();
+        mtoken::execute_set_gov_delay(&mut state, req, clock, scenario.ctx());
+        assert_eq!(event::num_events(), 1);
+        test_scenario::return_shared(state);
+    };
+}
+
+fun revoke_set_gov_delay(scenario: &mut test_scenario::Scenario, caller: address) {
+    scenario.next_tx(caller);
+    {
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
+        let req = scenario.take_shared<mtoken::SetGovDelayReq>();
+        mtoken::revoke_set_gov_delay(&state, req, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+}
+
+fun check_gov_delay(scenario: &mut test_scenario::Scenario, caller: address, gov_delay: u64) {
+    scenario.next_tx(caller);
+    {
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
+        assert_eq!(state.gov_delay(), gov_delay);
+        test_scenario::return_shared(state);
+    };
+}
+
+#[test, expected_failure(abort_code = mtoken::ENotOwner)]
+fun set_gov_delay_req_err_not_owner() {
+    let (mut scenario, _clock) = init_xagm();
+    request_set_gov_delay(&mut scenario, &_clock, ALICE, MIN_DELAY);
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::EDelayTooShort)]
+fun set_gov_delay_req_err_too_short() {
+    let (mut scenario, _clock) = init_xagm();
+    request_set_gov_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY - 1);
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::EDelayTooLong)]
+fun set_gov_delay_req_err_too_long() {
+    let (mut scenario, _clock) = init_xagm();
+    request_set_gov_delay(&mut scenario, &_clock, ADMIN, MAX_DELAY + 1);
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::ENotOwner)]
+fun set_gov_delay_exec_err_not_owner() {
+    let (mut scenario, _clock) = init_xagm();
+    request_set_gov_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY + 123);
+    execute_set_gov_delay(&mut scenario, &_clock, ALICE);
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::ENotEffective)]
+fun set_gov_delay_exec_err_not_effective() {
+    let (mut scenario, _clock) = init_xagm();
+    request_set_gov_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY + 123);
+    execute_set_gov_delay(&mut scenario, &_clock, ADMIN);
+    abort
+}
+
+#[test]
+fun set_gov_delay_ok() {
+    let (mut scenario, mut _clock) = init_xagm();
+    request_set_gov_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY + 100);
+    check_gov_delay(&mut scenario, ADMIN, INIT_GOV_DELAY);
+    _clock.increment_for_testing(INIT_GOV_DELAY * 1000);
+    execute_set_gov_delay(&mut scenario, &_clock, ADMIN);
+    check_gov_delay(&mut scenario, ADMIN, MIN_DELAY + 100);
+    clock::destroy_for_testing(_clock);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = mtoken::ENotOwner)]
+fun set_gov_delay_revoke_err_not_owner() {
+    let (mut scenario, _clock) = init_xagm();
+    request_set_gov_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY);
+    revoke_set_gov_delay(&mut scenario, ALICE);
+    abort
+}
+
+#[test]
+fun set_gov_delay_revoke_ok() {
+    let (mut scenario, _clock) = init_xagm();
+    request_set_gov_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY + 1);
+    revoke_set_gov_delay(&mut scenario, ADMIN);
+    check_gov_delay(&mut scenario, ADMIN, INIT_GOV_DELAY);
+    clock::destroy_for_testing(_clock);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = mtoken::EStateIdMismatch)]
+fun set_gov_delay_exec_err_bad_req() {
+    let (mut scenario, _clock) = init_xagm();
+    request_set_gov_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY + 1);
+    create_new_state(&mut scenario, ALICE);
+    execute_set_gov_delay(&mut scenario, &_clock, ALICE);
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::EStateIdMismatch)]
+fun set_gov_delay_revoke_err_bad_req() {
+    let (mut scenario, _clock) = init_xagm();
+    request_set_gov_delay(&mut scenario, &_clock, ADMIN, MIN_DELAY + 1);
+    create_new_state(&mut scenario, ALICE);
+    revoke_set_gov_delay(&mut scenario, ALICE);
+    abort
+}
