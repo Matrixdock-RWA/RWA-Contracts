@@ -48,7 +48,7 @@ fun cc_receive_token(
         let msg_cap = scenario.take_from_sender<MessengerCap>();
         let deny_list = scenario.take_shared<DenyList>();
         let msg = message_codec::encode_cc_token_message(sender, receiver.to_bytes(), amount);
-        let (_receiver, opt) = state.cc_receive(&msg_cap, msg, &deny_list, clock, scenario.ctx());
+        let (_receiver, opt) = state.cc_receive_v2(&msg_cap, msg, &deny_list, clock, scenario.ctx());
         opt.destroy_none();
         scenario.return_to_sender(msg_cap);
         test_scenario::return_shared(state);

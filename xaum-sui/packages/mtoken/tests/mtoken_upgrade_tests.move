@@ -10,7 +10,6 @@ use sui::test_scenario;
 // constants are not exported, so we need to redefine them here
 const VERSION: u64 = 3;
 const INIT_DELAY: u64 = 5;
-const INIT_GOV_DELAY: u64 = 5;
 
 // test addresses
 const SYS: address = @0x0;

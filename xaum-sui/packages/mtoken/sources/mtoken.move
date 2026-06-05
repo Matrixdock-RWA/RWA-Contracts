@@ -34,13 +34,14 @@ const EDelayTooLong: u64 = 114;
 const EZeroValue: u64 = 115;
 const EStateIdMismatch: u64 = 116;
 const EPendingMsgsExist: u64 = 117;
+const EDeprecated: u64 = 118;
 
 // === Constants ===
 
 const VERSION: u64 = 3;
 
-const MIN_DELAY: u64 = 3600;              // 1 hour
-const MAX_DELAY: u64 = 3600 * 24 * 7;    // 7 days
+const MIN_DELAY: u64 = 3600; // 1 hour
+const MAX_DELAY: u64 = 3600 * 24 * 7; // 7 days
 const REQ_TTL: u64 = 3600 * 12; // 12 hours, time to live after effective
 
 // === Events ===
@@ -801,7 +802,18 @@ public fun msg_of_cc_send_token(sender: address, receiver: vector<u8>, amount: u
     message_codec::encode_cc_token_message(sender, receiver, amount)
 }
 
+// keep for backward compatibility
 public fun cc_receive<T>(
+    _state: &mut State<T>,
+    _msg_cap: &MessengerCap,
+    _msg: vector<u8>,
+    _deny_list: &DenyList,
+    _ctx: &mut TxContext,
+): (address, Option<Coin<T>>) {
+    abort EDeprecated // cc_receive is replaced by cc_receive_v2
+}
+
+public fun cc_receive_v2<T>(
     state: &mut State<T>,
     msg_cap: &MessengerCap,
     msg: vector<u8>,

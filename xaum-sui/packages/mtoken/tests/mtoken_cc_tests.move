@@ -12,7 +12,6 @@ use sui::test_scenario;
 
 // constants are not exported, so we need to redefine them here
 const INIT_DELAY: u64 = 5;
-const INIT_GOV_DELAY: u64 = 5;
 
 // test addresses
 const SYS: address = @0x0;
@@ -69,7 +68,7 @@ fun receive_msg(
         let msg_cap = scenario.take_from_sender<MessengerCap>();
         let _deny_list = scenario.take_shared<DenyList>();
         let _clock = clock::create_for_testing(scenario.ctx());
-        let (_receiver, _opt) = state.cc_receive(
+        let (_receiver, _opt) = state.cc_receive_v2(
             &msg_cap,
             msg,
             &_deny_list,

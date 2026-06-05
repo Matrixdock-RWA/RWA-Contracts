@@ -37,6 +37,7 @@ const EUpgradeCapInvalid: u64 = 5;
 const ENotNewOwner: u64 = 6;
 const EReceiverLen: u64 = 7;
 const EInvalidSendContext: u64 = 8;
+const EDeprecated: u64 = 9;
 
 // === Constants ===
 const VERSION: u64 = 2;
@@ -552,8 +553,20 @@ public fun confirm_send(
 
 // === Receive Functions ===
 
+// keep for backward compatibility
 // https://docs.layerzero.network/v2/developers/sui/oapp/overview#receiving-messages-validation-and-processing
 public fun lz_receive(
+    _state: &mut State,
+    _mt_state: &mut MtState<XAUM>,
+    _my_oapp: &OApp,
+    _call: Call<LzReceiveParam, Void>,
+    _deny_list: &DenyList,
+    _ctx: &mut TxContext,
+) {
+    abort EDeprecated // lz_receive is replaced by lz_receive_v2
+}
+
+public fun lz_receive_v2(
     state: &mut State,
     mt_state: &mut MtState<XAUM>,
     my_oapp: &OApp,
@@ -571,7 +584,7 @@ public fun lz_receive(
     let (src_eid, _sender, _nonce, guid, msg, _executor, _extra_data, value) = param.destroy();
     value.destroy_none(); // value must be none
 
-    let (receiver, blocked_token) = mt_state.cc_receive(
+    let (receiver, blocked_token) = mt_state.cc_receive_v2(
         state.borrow_messenger_cap(),
         msg,
         deny_list,
@@ -587,7 +600,7 @@ public fun lz_receive(
 }
 
 // This function is extracted for unit testing convenience.
-// It is placed here because it is only used by lz_receive.
+// It is placed here because it is only used by lz_receive_v2.
 fun handle_cc_receive(state: &mut State, receiver: address, blocked_token: Option<Coin<XAUM>>) {
     if (blocked_token.is_none()) {
         blocked_token.destroy_none();

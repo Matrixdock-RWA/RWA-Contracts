@@ -53,7 +53,7 @@ public fun build_lz_receive_ptb(
         move_call::create(
             msg_package(), // package_name
             b"messenger_oapp".to_ascii_string(), // module_name
-            b"lz_receive".to_ascii_string(), // function_name
+            b"lz_receive_v2".to_ascii_string(), // function_name
             vector[
                 argument::create_object(object::id_address(state)),
                 argument::create_object(object::id_address(mt_state)),
