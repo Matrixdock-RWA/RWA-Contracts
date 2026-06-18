@@ -50,7 +50,7 @@ impl BullionMinter {
 
         bump_instance(&env);
 
-        if read_et_next_upgrade(&env) != 0 {
+        if read_et_next_upgrade(&env).is_some() {
             panic_with_error!(&env, MinterError::PendingRequestExists);
         }
 
@@ -74,8 +74,9 @@ impl BullionMinter {
             panic_with_error!(&env, MinterError::InvalidWasmHash);
         }
         let now = env.ledger().timestamp();
-        if read_et_next_upgrade(&env) >= now {
-            panic_with_error!(&env, MinterError::TooEarlyToExecute);
+        match read_et_next_upgrade(&env) {
+            Some(et) if et < now => {}
+            _ => panic_with_error!(&env, MinterError::TooEarlyToExecute),
         }
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
@@ -111,7 +112,7 @@ impl BullionMinter {
         let owner = Self::require_owner(&env);
         bump_instance(&env);
 
-        if read_et_next_owner(&env) != 0 {
+        if read_et_next_owner(&env).is_some() {
             panic_with_error!(&env, MinterError::PendingRequestExists);
         }
 
@@ -135,8 +136,9 @@ impl BullionMinter {
 
         bump_instance(&env);
         let now = env.ledger().timestamp();
-        if read_et_next_owner(&env) >= now {
-            panic_with_error!(&env, MinterError::TooEarlyToExecute);
+        match read_et_next_owner(&env) {
+            Some(et) if et < now => {}
+            _ => panic_with_error!(&env, MinterError::TooEarlyToExecute),
         }
         let old_owner = read_owner(&env);
 
@@ -295,10 +297,7 @@ impl BullionMinter {
     }
 
     pub fn et_next_owner(env: Env) -> Option<u64> {
-        match read_et_next_owner(&env) {
-            0 => None,
-            val => Some(val),
-        }
+        read_et_next_owner(&env)
     }
 
     pub fn pool_account_a(env: Env) -> Address {
@@ -322,10 +321,7 @@ impl BullionMinter {
     }
 
     pub fn et_next_upgrade(env: Env) -> Option<u64> {
-        match read_et_next_upgrade(&env) {
-            0 => None,
-            val => Some(val),
-        }
+        read_et_next_upgrade(&env)
     }
 }
 

@@ -55,7 +55,7 @@ impl Token {
 
         bump_instance(&env);
 
-        if state::read_et_next_upgrade(&env) != 0 {
+        if state::read_et_next_upgrade(&env).is_some() {
             panic_with_error!(&env, TokenError::PendingRequestExists);
         }
 
@@ -81,8 +81,9 @@ impl Token {
             panic_with_error!(&env, TokenError::InvalidWasmHash);
         }
         let now = env.ledger().timestamp();
-        if state::read_et_next_upgrade(&env) >= now {
-            panic_with_error!(&env, TokenError::TooEarlyToExecute);
+        match state::read_et_next_upgrade(&env) {
+            Some(et) if et < now => {}
+            _ => panic_with_error!(&env, TokenError::TooEarlyToExecute),
         }
         env.deployer()
             .update_current_contract_wasm(new_wasm_hash.clone());
@@ -121,7 +122,7 @@ impl Token {
 
         bump_instance(&env);
 
-        if state::read_et_next_owner(&env) != 0 {
+        if state::read_et_next_owner(&env).is_some() {
             panic_with_error!(&env, TokenError::PendingRequestExists);
         }
 
@@ -146,8 +147,9 @@ impl Token {
 
         bump_instance(&env);
         let now = env.ledger().timestamp();
-        if state::read_et_next_owner(&env) >= now {
-            panic_with_error!(&env, TokenError::TooEarlyToExecute);
+        match state::read_et_next_owner(&env) {
+            Some(et) if et < now => {}
+            _ => panic_with_error!(&env, TokenError::TooEarlyToExecute),
         }
         let old_owner = state::read_owner(&env);
 
@@ -181,10 +183,9 @@ impl Token {
 
         let current_operator = state::read_operator(&env);
         let next_operator = state::read_next_operator(&env); // Option<Address>
-        let et = state::read_et_next_operator(&env); // u64, 0 = none
 
-        if et != 0 {
-            // next_operator always be Some if et != 0, no need to check
+        if let Some(et) = state::read_et_next_operator(&env) {
+            // next_operator is always Some while a request is pending, no need to check
             if next_operator.unwrap() != new_operator {
                 panic_with_error!(&env, TokenError::PendingRequestExists);
             }
@@ -226,9 +227,9 @@ impl Token {
 
         let current_revoker = state::read_revoker(&env);
         let next_revoker = state::read_next_revoker(&env); // Option<Address>
-        let et = state::read_et_next_revoker(&env); // u64, 0 = none
 
-        if et != 0 {
+        if let Some(et) = state::read_et_next_revoker(&env) {
+            // next_revoker is always Some while a request is pending, no need to check
             if next_revoker.unwrap() != new_revoker {
                 panic_with_error!(&env, TokenError::PendingRequestExists);
             }
@@ -276,9 +277,9 @@ impl Token {
 
         let current_delay = state::read_delay(&env);
         let next_delay = state::read_next_delay(&env); // Option<u64>
-        let et = state::read_et_next_delay(&env); // u64, 0 = none
 
-        if et != 0 {
+        if let Some(et) = state::read_et_next_delay(&env) {
+            // next_delay is always Some while a request is pending, no need to check
             if next_delay.unwrap() != new_delay {
                 panic_with_error!(&env, TokenError::PendingRequestExists);
             }
@@ -323,9 +324,9 @@ impl Token {
 
         let current_delay = state::read_gov_delay(&env);
         let next_delay = state::read_next_gov_delay(&env); // Option<u64>
-        let et = state::read_et_next_gov_delay(&env); // u64, 0 = none
 
-        if et != 0 {
+        if let Some(et) = state::read_et_next_gov_delay(&env) {
+            // next_gov_delay is always Some while a request is pending, no need to check
             if next_delay.unwrap() != new_delay {
                 panic_with_error!(&env, TokenError::PendingRequestExists);
             }
@@ -528,10 +529,7 @@ impl Token {
     }
 
     pub fn et_next_owner(env: Env) -> Option<u64> {
-        match state::read_et_next_owner(&env) {
-            0 => None,
-            val => Some(val),
-        }
+        state::read_et_next_owner(&env)
     }
 
     pub fn operator(env: Env) -> Address {
@@ -543,10 +541,7 @@ impl Token {
     }
 
     pub fn et_next_operator(env: Env) -> Option<u64> {
-        match state::read_et_next_operator(&env) {
-            0 => None,
-            val => Some(val),
-        }
+        state::read_et_next_operator(&env)
     }
 
     pub fn revoker(env: Env) -> Address {
@@ -558,10 +553,7 @@ impl Token {
     }
 
     pub fn et_next_revoker(env: Env) -> Option<u64> {
-        match state::read_et_next_revoker(&env) {
-            0 => None,
-            val => Some(val),
-        }
+        state::read_et_next_revoker(&env)
     }
 
     pub fn delay(env: Env) -> u64 {
@@ -573,10 +565,7 @@ impl Token {
     }
 
     pub fn et_next_delay(env: Env) -> Option<u64> {
-        match state::read_et_next_delay(&env) {
-            0 => None,
-            val => Some(val),
-        }
+        state::read_et_next_delay(&env)
     }
 
     pub fn gov_delay(env: Env) -> u64 {
@@ -588,10 +577,7 @@ impl Token {
     }
 
     pub fn et_next_gov_delay(env: Env) -> Option<u64> {
-        match state::read_et_next_gov_delay(&env) {
-            0 => None,
-            val => Some(val),
-        }
+        state::read_et_next_gov_delay(&env)
     }
 
     pub fn next_upgrade_wasm_hash(env: Env) -> Option<BytesN<32>> {
@@ -599,10 +585,7 @@ impl Token {
     }
 
     pub fn et_next_upgrade(env: Env) -> Option<u64> {
-        match state::read_et_next_upgrade(&env) {
-            0 => None,
-            val => Some(val),
-        }
+        state::read_et_next_upgrade(&env)
     }
 
     pub fn mint_budget(env: Env) -> i128 {

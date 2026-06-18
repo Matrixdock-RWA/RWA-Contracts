@@ -29,11 +29,8 @@ pub fn remove_pending_owner(env: &Env) {
     env.storage().temporary().remove(&DataKey::PendingOwner);
 }
 
-pub fn read_et_next_owner(env: &Env) -> u64 {
-    env.storage()
-        .temporary()
-        .get(&DataKey::EtNextOwner)
-        .unwrap_or(0)
+pub fn read_et_next_owner(env: &Env) -> Option<u64> {
+    env.storage().temporary().get(&DataKey::EtNextOwner)
 }
 
 pub fn write_et_next_owner(env: &Env, et: u64) {
@@ -119,11 +116,8 @@ pub fn remove_next_upgrade_wasm_hash(env: &Env) {
     env.storage().temporary().remove(&DataKey::NewWasmHash);
 }
 
-pub fn read_et_next_upgrade(env: &Env) -> u64 {
-    env.storage()
-        .temporary()
-        .get(&DataKey::EtNextUpgrade)
-        .unwrap_or(0)
+pub fn read_et_next_upgrade(env: &Env) -> Option<u64> {
+    env.storage().temporary().get(&DataKey::EtNextUpgrade)
 }
 
 pub fn write_et_next_upgrade(env: &Env, et: u64) {

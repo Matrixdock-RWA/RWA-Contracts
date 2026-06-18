@@ -52,11 +52,8 @@ pub fn remove_pending_owner(env: &Env) {
     env.storage().temporary().remove(&DataKey::PendingOwner);
 }
 
-pub fn read_et_next_owner(env: &Env) -> u64 {
-    env.storage()
-        .temporary()
-        .get(&DataKey::EtNextOwner)
-        .unwrap_or(0)
+pub fn read_et_next_owner(env: &Env) -> Option<u64> {
+    env.storage().temporary().get(&DataKey::EtNextOwner)
 }
 
 pub fn write_et_next_owner(env: &Env, et: u64) {
@@ -99,11 +96,8 @@ pub fn remove_next_operator(env: &Env) {
     env.storage().temporary().remove(&DataKey::NextOperator);
 }
 
-pub fn read_et_next_operator(env: &Env) -> u64 {
-    env.storage()
-        .temporary()
-        .get(&DataKey::EtNextOperator)
-        .unwrap_or(0)
+pub fn read_et_next_operator(env: &Env) -> Option<u64> {
+    env.storage().temporary().get(&DataKey::EtNextOperator)
 }
 
 pub fn write_et_next_operator(env: &Env, et: u64) {
@@ -146,11 +140,8 @@ pub fn remove_next_revoker(env: &Env) {
     env.storage().temporary().remove(&DataKey::NextRevoker);
 }
 
-pub fn read_et_next_revoker(env: &Env) -> u64 {
-    env.storage()
-        .temporary()
-        .get(&DataKey::EtNextRevoker)
-        .unwrap_or(0)
+pub fn read_et_next_revoker(env: &Env) -> Option<u64> {
+    env.storage().temporary().get(&DataKey::EtNextRevoker)
 }
 
 pub fn write_et_next_revoker(env: &Env, et: u64) {
@@ -191,11 +182,8 @@ pub fn remove_next_delay(env: &Env) {
     env.storage().temporary().remove(&DataKey::NextDelay);
 }
 
-pub fn read_et_next_delay(env: &Env) -> u64 {
-    env.storage()
-        .temporary()
-        .get(&DataKey::EtNextDelay)
-        .unwrap_or(0)
+pub fn read_et_next_delay(env: &Env) -> Option<u64> {
+    env.storage().temporary().get(&DataKey::EtNextDelay)
 }
 
 pub fn write_et_next_delay(env: &Env, et: u64) {
@@ -303,11 +291,8 @@ pub fn remove_next_gov_delay(env: &Env) {
     env.storage().temporary().remove(&DataKey::NextGovDelay);
 }
 
-pub fn read_et_next_gov_delay(env: &Env) -> u64 {
-    env.storage()
-        .temporary()
-        .get(&DataKey::EtNextGovDelay)
-        .unwrap_or(0)
+pub fn read_et_next_gov_delay(env: &Env) -> Option<u64> {
+    env.storage().temporary().get(&DataKey::EtNextGovDelay)
 }
 
 pub fn write_et_next_gov_delay(env: &Env, et: u64) {
@@ -340,11 +325,8 @@ pub fn remove_next_upgrade_wasm_hash(env: &Env) {
     env.storage().temporary().remove(&DataKey::NewWasmHash);
 }
 
-pub fn read_et_next_upgrade(env: &Env) -> u64 {
-    env.storage()
-        .temporary()
-        .get(&DataKey::EtNextUpgrade)
-        .unwrap_or(0)
+pub fn read_et_next_upgrade(env: &Env) -> Option<u64> {
+    env.storage().temporary().get(&DataKey::EtNextUpgrade)
 }
 
 pub fn write_et_next_upgrade(env: &Env, et: u64) {
