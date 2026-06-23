@@ -13,6 +13,7 @@ jobs:
   release-contract-xaum:
     uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@main
     with:
+      workspace: 'xaum-stellar'
       release_name: ${{ github.ref_name }}
       release_description: 'XAUm contract release'
       package: 'xaum'
@@ -22,6 +23,7 @@ jobs:
   release-contract-minter:
     uses: stellar-expert/soroban-build-workflow/.github/workflows/release.yml@main
     with:
+      workspace: 'xaum-stellar'
       release_name: ${{ github.ref_name }}
       release_description: 'Minter Contract release'
       package: 'minter'
