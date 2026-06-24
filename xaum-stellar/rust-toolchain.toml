@@ -1,0 +1,8 @@
+# Pins the exact Rust toolchain so `stellar contract build` is byte-for-byte
+# reproducible (the CI workflow runs `rustup update`, i.e. latest stable — this
+# file overrides that and makes CI + local use the identical rustc).
+# rustc 1.96.0 is the version embedded as `rsver` in the verified release WASM.
+[toolchain]
+channel = "1.96.0"
+targets = ["wasm32v1-none"]
+profile = "minimal"

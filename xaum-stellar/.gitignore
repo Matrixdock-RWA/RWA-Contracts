@@ -1,0 +1,6 @@
+# Rust build output
+/target
+
+# Note: Cargo.lock IS committed on purpose — it pins the exact dependency
+# graph so `stellar contract build` is byte-for-byte reproducible (verifiable
+# on stellar.expert). Do not ignore it.
