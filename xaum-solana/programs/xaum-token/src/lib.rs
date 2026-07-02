@@ -104,8 +104,26 @@ pub mod xaum_token {
         authority::revoke_next_gov_delay(ctx)
     }
 
-    pub fn force_transfer_tokens(ctx: Context<ForceTransferTokens>, amount: u64) -> Result<()> {
-        force_transfer::force_transfer_tokens(ctx, amount)
+    pub fn forced_transfer_tokens(
+        ctx: Context<ForcedTransferTokens>,
+        amount: u64,
+        nonce: [u8; 32],
+        data: Vec<u8>,
+        extra_data: Vec<u8>,
+    ) -> Result<()> {
+        force_transfer::forced_transfer_tokens(ctx, amount, nonce, data, extra_data)
+    }
+
+    pub fn set_forced_transfer_receiver(ctx: Context<OwnerOp>, new_receiver: Pubkey) -> Result<()> {
+        authority::set_forced_transfer_receiver(ctx, new_receiver)
+    }
+
+    pub fn revoke_next_forced_transfer_receiver(ctx: Context<RevokerOp>) -> Result<()> {
+        authority::revoke_next_forced_transfer_receiver(ctx)
+    }
+
+    pub fn revoke_forced_transfer(ctx: Context<RevokerOp>) -> Result<()> {
+        authority::revoke_forced_transfer(ctx)
     }
 
     pub fn update_metadata(ctx: Context<UpdateExtension>, uri: String) -> Result<()> {

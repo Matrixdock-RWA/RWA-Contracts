@@ -23,7 +23,7 @@ import {
     setOwner, acceptOwnership, setRevoker, setOperator, setMessager, setDelay,
     revokeNextOwner, revokeNextRevoker, revokeNextOperator, revokeNextMessager, revokeNextDelay,
     changeMintBudget, mint, redeem, revokeNextMint, addToBlockedList, removeFromBlockedList,
-    forcedTransfer,
+    setForcedTransferReceiver, revokeNextForcedTransferReceiver, revokeForcedTransfer, forcedTransfer,
     updateMetadata, updateTransferFee, pause, unpause,
     withdrawTransferFees,
 } from "./utils/mtoken";
@@ -518,22 +518,6 @@ describe("MToken", () => {
 
     describe("extensions", () => {
 
-        it("forced_transfer", async () => {
-          await checkErrorCode(forcedTransfer(user1, user2.publicKey, user1.publicKey, 100), "NotOwner");
-          const bal1a = await getTokenBalance(user1.publicKey);
-          const bal2a = await getTokenBalance(user2.publicKey);
-          // console.log('bal1a:', bal1a);
-          // console.log('bal2a:', bal2a);
-
-          await forcedTransfer(owner, user1.publicKey, user2.publicKey, 100);
-          const bal1b = await getTokenBalance(user1.publicKey);
-          const bal2b = await getTokenBalance(user2.publicKey);
-          // console.log('bal1b:', bal1b);
-          // console.log('bal2b:', bal2b);
-          assert.equal(bal1b, bal1a - 100);
-          assert.equal(bal2b, bal2a + 100);
-        });
-
         // TODO: fix me
         it("transfer_fee", async () => {
             await checkErrorCode(withdrawTransferFees(user1, user1.publicKey), "NotOperator");
@@ -556,9 +540,102 @@ describe("MToken", () => {
                 transferToken(user1, user2.publicKey, 100),
                 "Transferring, minting, and burning is paused on this mint",
             );
+            await unpause(owner);
         });
 
     });
+
+    describe("forced_transfer", async () => {
+
+        it("set_forced_transfer_receiver", async () => {
+            // only owner; receiver stored as ATA (token account address)
+            await checkErrorCode(setForcedTransferReceiver(user1, user2ATA), "NotOwner");
+
+            // request
+            await setForcedTransferReceiver(owner, user2ATA);
+            let state = await getTokenState();
+            assert.deepEqual(state.nextForcedTransferReceiver, user2ATA);
+            assert.isTrue(state.nextForcedTransferReceiverEt.toNumber() > 0);
+
+            // revoke
+            await revokeNextForcedTransferReceiver(revoker);
+            state = await getTokenState();
+            assert.equal(state.nextForcedTransferReceiverEt.toNumber(), 0);
+
+            // request again, wait, effect
+            await setForcedTransferReceiver(owner, user2ATA);
+            await increaseBlockTime(provider, initDelay);
+            await setForcedTransferReceiver(owner, user2ATA);
+            state = await getTokenState();
+            assert.deepEqual(state.forcedTransferReceiver, user2ATA);
+            assert.equal(state.nextForcedTransferReceiverEt.toNumber(), 0);
+        });
+
+        it("forced_transfer", async () => {
+            // only owner can call
+            await checkErrorCode(forcedTransfer(user1, user2.publicKey, user1.publicKey, 100), "NotOwner");
+
+            const bal1a = await getTokenBalance(user1.publicKey);
+            const bal2a = await getTokenBalance(user2.publicKey);
+
+            // sender must be blocked (user2 is not blocked)
+            await checkErrorCode(forcedTransfer(owner, user2.publicKey, user1.publicKey, 100), "NotBlocked");
+
+            // block user1; recipient must be forced_transfer_receiver (user2ATA)
+            await addToBlockedList(operator, user1.publicKey);
+            await checkErrorCode(forcedTransfer(owner, user1.publicKey, operator.publicKey, 100), "InvalidForcedTransferReceiver");
+
+            // request (call 1)
+            await forcedTransfer(owner, user1.publicKey, user2.publicKey, 100);
+            let state = await getTokenState();
+            assert.equal(state.nextForcedTransferAmount.toNumber(), 100);
+            assert.isTrue(state.nextForcedTransferEt.toNumber() > 0);
+
+            // revoke
+            await revokeForcedTransfer(revoker);
+            state = await getTokenState();
+            assert.equal(state.nextForcedTransferEt.toNumber(), 0);
+
+            // request again
+            await forcedTransfer(owner, user1.publicKey, user2.publicKey, 100);
+            // too early to execute
+            await checkErrorCode(forcedTransfer(owner, user1.publicKey, user2.publicKey, 100), "TooEarlyToForcedTransfer");
+
+            // execute (call 2) after delay
+            await increaseBlockTime(provider, initDelay);
+            await forcedTransfer(owner, user1.publicKey, user2.publicKey, 100);
+
+            const bal1b = await getTokenBalance(user1.publicKey);
+            const bal2b = await getTokenBalance(user2.publicKey);
+            assert.equal(bal1b, bal1a - 100);
+            assert.equal(bal2b, bal2a + 100);
+        });
+
+        it("forced_transfer: TransferWouldDrainAccount", async () => {
+            // user1 is still blocked from the previous test
+            const fullBal = await getTokenBalance(user1.publicKey);
+            assert.isTrue(fullBal > 0, "user1 should have tokens");
+
+            // request to drain the full balance (idx=1 to use a distinct nonce)
+            await forcedTransfer(owner, user1.publicKey, user2.publicKey, fullBal, 1);
+            let state = await getTokenState();
+            assert.equal(state.nextForcedTransferAmount.toNumber(), fullBal);
+            assert.isTrue(state.nextForcedTransferEt.toNumber() > 0);
+
+            // execute after delay — must fail because it would drain the sender to zero
+            await increaseBlockTime(provider, initDelay);
+            await checkErrorCode(
+                forcedTransfer(owner, user1.publicKey, user2.publicKey, fullBal, 1),
+                "TransferWouldDrainAccount",
+            );
+
+            // clean up: revoke the pending request
+            await revokeForcedTransfer(revoker);
+            state = await getTokenState();
+            assert.equal(state.nextForcedTransferEt.toNumber(), 0);
+        });
+
+    })
 
     // setDelay is tested last: executing it raises `delay` above initDelay, which would
     // break the fast-timing of the other delayed-op tests if run earlier. The pending

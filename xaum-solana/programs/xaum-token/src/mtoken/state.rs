@@ -1,10 +1,10 @@
 use anchor_lang::prelude::*;
 
 // UPGRADE SAFETY: This struct is Borsh-serialized in declaration order.
-// New fields (gov_delay group) are carved from the head of _reserved,
-// which was zero-initialized on existing mainnet accounts. All-zero decodes to valid
-// initial state (gov_delay=0 = no timelock until set).
-// _reserved was 256 bytes; 24 bytes were consumed; it is now 232 bytes.
+// New fields are carved from the head of _reserved, which was zero-initialized
+// on existing mainnet accounts. All-zero decodes to valid initial state.
+// _reserved was 256 bytes; 24 bytes consumed by gov_delay group; then 184 bytes
+// consumed by forced_transfer_receiver + pending forced-transfer slot = 48 remaining.
 // Total INIT_SPACE is unchanged — no account reallocation required on upgrade.
 #[account]
 #[derive(InitSpace)]
@@ -47,8 +47,23 @@ pub struct State {
     pub next_gov_delay: i64,
     pub next_gov_delay_et: i64,
 
-    // reserved for future fields (256 - 24 consumed above = 232 remaining)
-    pub _reserved: [u8; 232],
+    // forced transfer receiver: whitelisted to-address for forced transfers.
+    // Carved from _reserved head; zero → no receiver until explicitly set.
+    pub forced_transfer_receiver: Pubkey,
+    pub next_forced_transfer_receiver: Pubkey,
+    pub next_forced_transfer_receiver_et: i64,
+
+    // pending forced transfer — single-slot two-call pattern (mirrors mint).
+    pub next_forced_transfer_from: Pubkey,
+    pub next_forced_transfer_to: Pubkey,
+    pub next_forced_transfer_amount: u64,
+    pub next_forced_transfer_et: i64,
+    pub next_forced_transfer_nonce: [u8; 32],
+
+    // reserved for future fields
+    // 256 - 24 consumed by gov_delay = 232 remaining
+    // 232 - 184 consumed by forced_transfer = 48 remaining
+    pub _reserved: [u8; 48],
 
     pub bump: u8,
 }

@@ -224,15 +224,38 @@ export async function removeFromBlockedList(signer: Keypair, user: PublicKey) {
         .rpc();
 }
 
-export async function forcedTransfer(signer: Keypair, from: PublicKey, to: PublicKey, amount: number) {
+export async function setForcedTransferReceiver(signer: Keypair, newReceiver: PublicKey) {
     await program.methods
-        .forceTransferTokens(new anchor.BN(amount))
+        .setForcedTransferReceiver(newReceiver)
+        .accounts({owner: signer.publicKey})
+        .signers([signer])
+        .rpc();
+}
+
+export async function revokeNextForcedTransferReceiver(signer: Keypair) {
+    await program.methods
+        .revokeNextForcedTransferReceiver()
+        .accounts({revoker: signer.publicKey})
+        .signers([signer])
+        .rpc();
+}
+
+export async function revokeForcedTransfer(signer: Keypair) {
+    await program.methods
+        .revokeForcedTransfer()
+        .accounts({revoker: signer.publicKey})
+        .signers([signer])
+        .rpc();
+}
+
+export async function forcedTransfer(signer: Keypair, from: PublicKey, to: PublicKey, amount: number, idx = 0, data: Buffer = Buffer.alloc(0), extraData: Buffer = Buffer.alloc(0)) {
+    const nonce = new Array(32).fill(idx);
+    await program.methods
+        .forcedTransferTokens(new anchor.BN(amount), nonce, data, extraData)
         .accounts({
-          owner: signer.publicKey,
-          senderTokenAccount: getATA(from),
-          recipientTokenAccount: getATA(to),
-          // mintAccount: mintPDA,
-          // tokenProgram: TOKEN_2022_PROGRAM_ID.toBase58(),
+            owner: signer.publicKey,
+            senderTokenAccount: getATA(from),
+            recipientTokenAccount: getATA(to),
         } as any)
         .signers([signer])
         .rpc();

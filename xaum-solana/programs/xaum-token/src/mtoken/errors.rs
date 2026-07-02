@@ -49,4 +49,16 @@ pub enum ErrorCode {
 
     #[msg("NoPendingOwner")]
     NoPendingOwner,
+
+    #[msg("NotBlocked")]
+    NotBlocked,
+
+    #[msg("InvalidForcedTransferReceiver")]
+    InvalidForcedTransferReceiver,
+
+    #[msg("TooEarlyToForcedTransfer")]
+    TooEarlyToForcedTransfer,
+
+    #[msg("TransferWouldDrainAccount")]
+    TransferWouldDrainAccount,
 }

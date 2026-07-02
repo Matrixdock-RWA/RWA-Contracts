@@ -145,10 +145,43 @@ pub struct BlockReleased {
 }
 
 #[event]
+pub struct SetForcedTransferReceiverRequest {
+    pub old_receiver: Pubkey,
+    pub new_receiver: Pubkey,
+    pub et: i64,
+}
+
+#[event]
+pub struct SetForcedTransferReceiverEffected {
+    pub new_receiver: Pubkey,
+}
+
+#[event]
+pub struct RevokeNextForcedTransferReceiver {
+    pub pending_receiver: Pubkey,
+}
+
+#[event]
+pub struct ForcedTransferRequest {
+    pub from: Pubkey,
+    pub to: Pubkey,
+    pub amount: u64,
+    pub data: Vec<u8>,
+    pub extra_data: Vec<u8>,
+}
+
+#[event]
+pub struct RevokeForcedTransfer {
+    pub nonce: [u8; 32],
+}
+
+#[event]
 pub struct ForceTransfer {
     pub from: Pubkey,
     pub to: Pubkey,
     pub amount: u64,
+    pub data: Vec<u8>,
+    pub extra_data: Vec<u8>,
 }
 
 #[event]

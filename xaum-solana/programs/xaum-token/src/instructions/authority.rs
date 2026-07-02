@@ -327,3 +327,49 @@ pub fn change_mint_budget(ctx: Context<OperatorOp>, delta: i64) -> Result<()> {
 
     Ok(())
 }
+
+//================================================================================
+
+pub fn set_forced_transfer_receiver(ctx: Context<OwnerOp>, new_receiver: Pubkey) -> Result<()> {
+    let state = &mut ctx.accounts.state;
+    let clock = Clock::get()?;
+    if state.next_forced_transfer_receiver_et == 0 {
+        state.next_forced_transfer_receiver = new_receiver;
+        state.next_forced_transfer_receiver_et = clock.unix_timestamp + state.delay;
+        emit!(SetForcedTransferReceiverRequest {
+            old_receiver: state.forced_transfer_receiver,
+            new_receiver,
+            et: state.next_forced_transfer_receiver_et,
+        });
+    } else {
+        require!(
+            state.next_forced_transfer_receiver_et <= clock.unix_timestamp,
+            ErrorCode::NotEffective
+        );
+        require!(
+            state.next_forced_transfer_receiver == new_receiver,
+            ErrorCode::RequestMismatch
+        );
+        state.forced_transfer_receiver = state.next_forced_transfer_receiver;
+        state.next_forced_transfer_receiver_et = 0;
+        emit!(SetForcedTransferReceiverEffected { new_receiver });
+    }
+    Ok(())
+}
+
+pub fn revoke_next_forced_transfer_receiver(ctx: Context<RevokerOp>) -> Result<()> {
+    ctx.accounts.state.next_forced_transfer_receiver_et = 0;
+    emit!(RevokeNextForcedTransferReceiver {
+        pending_receiver: ctx.accounts.state.next_forced_transfer_receiver,
+    });
+    Ok(())
+}
+
+pub fn revoke_forced_transfer(ctx: Context<RevokerOp>) -> Result<()> {
+    let state = &mut ctx.accounts.state;
+    state.next_forced_transfer_et = 0;
+    emit!(RevokeForcedTransfer {
+        nonce: state.next_forced_transfer_nonce,
+    });
+    Ok(())
+}
