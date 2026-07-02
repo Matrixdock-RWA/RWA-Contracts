@@ -78,53 +78,50 @@ contract MTokenMain is MToken {
 
     function setReserveFeed(address addr) public onlyOwner {
         _checkZeroAddress(addr);
-        uint64 et = etNextReserveFeed;
-        if (addr == nextReserveFeed && et != 0 && et < block.timestamp) {
+        bytes32 reqId = bytes32(uint256(OP_SET_RESERVE_FEED));
+        uint64 et = ensureDelay(reqId, uint160(addr));
+        if (et == 0) {
             reserveFeed = addr;
             emit SetReserveFeedEffected(addr);
         } else {
-            nextReserveFeed = addr;
-            etNextReserveFeed = uint64(block.timestamp) + delay;
-            emit SetReserveFeedRequest(reserveFeed, addr, etNextReserveFeed);
+            emit SetReserveFeedRequest(reserveFeed, addr, et);
         }
     }
 
     function setFallbackFeed(address addr) public onlyOwner {
         _checkZeroAddress(addr);
-        uint64 et = etNextFallbackFeed;
-        if (addr == nextFallbackFeed && et != 0 && et < block.timestamp) {
+        bytes32 reqId = bytes32(uint256(OP_SET_FALLBACK_FEED));
+        uint64 et = ensureDelay(reqId, uint160(addr));
+        if (et == 0) {
             fallbackFeed = addr;
             emit SetFallbackFeedEffected(addr);
         } else {
-            nextFallbackFeed = addr;
-            etNextFallbackFeed = uint64(block.timestamp) + delay;
-            emit SetFallbackFeedRequest(fallbackFeed, addr, etNextFallbackFeed);
+            emit SetFallbackFeedRequest(fallbackFeed, addr, et);
         }
     }
 
     function setFeeCollector(address addr) public onlyOwner {
         _checkZeroAddress(addr);
-        uint64 et = etNextFeeCollector;
-        if (addr == nextFeeCollector && et != 0 && et < block.timestamp) {
+        bytes32 reqId = bytes32(uint256(OP_SET_FEE_COLLECTOR));
+        uint64 et = ensureDelay(reqId, uint160(addr));
+        if (et == 0) {
             feeCollector = addr;
             emit SetFeeCollectorEffected(addr);
         } else {
-            nextFeeCollector = addr;
-            etNextFeeCollector = uint64(block.timestamp) + delay;
-            emit SetFeeCollectorRequest(feeCollector, addr, etNextFeeCollector);
+            emit SetFeeCollectorRequest(feeCollector, addr, et);
         }
     }
 
     function revokeNextReserveFeed() public onlyRevoker {
-        etNextReserveFeed = 0;
+        revoke(bytes32(uint256(OP_SET_RESERVE_FEED)));
     }
 
     function revokeNextFallbackFeed() public onlyRevoker {
-        etNextFallbackFeed = 0;
+        revoke(bytes32(uint256(OP_SET_FALLBACK_FEED)));
     }
 
     function revokeFeeCollector() public onlyRevoker {
-        etNextFeeCollector = 0;
+        revoke(bytes32(uint256(OP_SET_FEE_COLLECTOR)));
     }
 
     function getReserve() private view returns (int256) {

@@ -183,26 +183,6 @@ describe("MTokenDilution", function () {
     expect(await mt.ozPerTokenBaseTime()).to.equal(currDayStartTS + 30 * SECONDS_PER_DAY);
   });
 
-  it("forcedTransfer: onlyOwner", async function () {
-    const {mt, alice, bob} = await loadFixture(deployTestFixture);
-    await expect(mt.connect(alice).forcedTransfer(alice.address, bob.address, 1000e9, "0x12", "0x34"))
-      .to.be.revertedWithCustomError(mt, "OwnableUnauthorizedAccount");
-  });
-
-  it("forcedTransfer: ok", async function () {
-    const {mt, owner, operator, alice, bob} = await loadFixture(deployTestFixture);
-    await mt.connect(operator).ccReceiveMintBudgetManually(1000e9);
-    await mt.connect(operator).mintTo(alice.address, 1000e9, 123, ozPerToken);
-    await mt.connect(operator).mintTo(alice.address, 1000e9, 123, ozPerToken);
-
-    await expect(mt.connect(owner).forcedTransfer(alice.address, bob.address, 200e9, "0x12", "0x34"))
-      .to.emit(mt, "ForcedTransfer")
-      .withArgs(alice.address, bob.address, 200e9, "0x12", "0x34")
-
-    await expect(mt.connect(owner).forcedTransfer(alice.address, bob.address, 500e9, "0x12", "0x34"))
-      .to.changeTokenBalances(mt, [alice, bob], [-500e9, 500e9]);
-  });
-
   describe("ccManually", function () {
 
     it("ccSendMintBudgetManually", async function () {
