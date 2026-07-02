@@ -71,7 +71,7 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
         _;
     }
 
-    function _checkBlocked(address addr) private {
+    function _checkBlocked(address addr) private view {
         if (IMToken(mtokenContract).isBlocked(addr)) {
             revert BlockedAccount(addr);
         }
@@ -144,7 +144,7 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
         }
     }
 
-    function getDelay() internal override returns (uint64) {
+    function getDelay() internal view override returns (uint64) {
         return IMToken(mtokenContract).delay();
     }
 
@@ -183,7 +183,7 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
         address _sender,
         address _recipient,
         uint256 _tokenId
-    ) private {
+    ) private view {
         if (_recipient == address(this)) {
             revert TransferToContract();
         }

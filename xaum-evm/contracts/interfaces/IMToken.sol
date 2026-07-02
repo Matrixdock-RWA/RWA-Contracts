@@ -10,8 +10,8 @@ interface IMToken {
         uint nonce
     ) external returns (bool);
     function redeem(uint amount, address customer, bytes memory data) external;
-    function operator() external returns (address);
-    function revoker() external returns (address);
-    function isBlocked(address addr) external returns (bool);
-    function delay() external returns (uint64);
+    function operator() external view returns (address);
+    function revoker() external view returns (address);
+    function isBlocked(address addr) external view returns (bool);
+    function delay() external view returns (uint64);
 }

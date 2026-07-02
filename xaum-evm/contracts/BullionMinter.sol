@@ -54,9 +54,9 @@ contract BullionMinter is DelayedUpgradeable {
     event SetAcceptedByA(address token, bool accepted);
     event SetAcceptedByB(address token, bool accepted);
     event MintRequest(address indexed transferredToken, address indexed forToken,
-               address indexed requestor, address pool, uint256 amount, uint256 preprice, uint256 slippage, bytes extraData);
+        address indexed requestor, address pool, uint256 amount, uint256 preprice, uint256 slippage, bytes extraData);
     event RedeemRequest(address indexed transferredToken, address indexed forToken,
-               address indexed requestor, address pool, uint256 amount, uint256 preprice, uint256 slippage, bytes extraData);
+        address indexed requestor, address pool, uint256 amount, uint256 preprice, uint256 slippage, bytes extraData);
     event Rescue(address indexed token, address indexed to, uint256 amount);
 
     function getDelay() internal pure override returns (uint64) {
