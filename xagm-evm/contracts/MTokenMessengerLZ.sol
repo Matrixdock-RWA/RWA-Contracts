@@ -129,7 +129,7 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
         uint112 value,
         bytes calldata _options
     ) external payable onlyLZNotPaused returns (bytes32 messageId) {
-        bytes memory _data = ICCClient(ccClient).ccSendMintBudget(value);
+        bytes memory _data = ICCClient(ccClient).ccSendMintBudget(value, msg.sender);
         messageId = sendThroughLZ(_dstEid, _data, _options, msg.value);
         emit CCSendMintBudgetLZ(messageId, _data);
     }

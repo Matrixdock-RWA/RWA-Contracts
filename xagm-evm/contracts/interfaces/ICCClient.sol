@@ -21,6 +21,7 @@ interface ICCClient {
     ) external view returns (bytes memory message);
 
     function ccSendMintBudget(
-        uint112 value
+        uint112 value,
+        address caller
     ) external returns (bytes memory message);
 }
