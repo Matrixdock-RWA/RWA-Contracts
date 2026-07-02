@@ -6,34 +6,36 @@ import {ERC20PermitUpgradeable} from "@openzeppelin/contracts-upgradeable/token/
 import {DelayedUpgradeable} from "./DelayedUpgradeable.sol";
 import {ICCClient} from "./interfaces/ICCClient.sol";
 import {IMTokenRateLimiter} from "./interfaces/IMTokenRateLimiter.sol";
+import {DelayedRequests} from "./libraries/DelayedRequests.sol";
 // import "hardhat/console.sol";
 
 abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
+
     // every chain has its own mintBudget, operator can move mintBudget from one chain to another
     uint112 public mintBudget;
 
     // sensitive operation must be delayed before taking effect
     uint64 public delay;
-    uint64 public nextDelay;
-    uint64 public etNextDelay; //effective time
+    uint64 private __nextDelay; // dead slot — preserved for upgradeable storage layout
+    uint64 private __etNextDelay; // dead slot — preserved for upgradeable storage layout
 
     // the operator takes care of everyday operations
     address public operator;
-    address public nextOperator;
-    uint64 public etNextOperator; //effective time
+    address private __nextOperator; // dead slot — preserved for upgradeable storage layout
+    uint64 private __etNextOperator; // dead slot — preserved for upgradeable storage layout
 
     // a revoker can delete delayed operations before they taking effect
     address public revoker;
-    address public nextRevoker;
-    uint64 public etNextRevoker; //effective time
+    address private __nextRevoker; // dead slot — preserved for upgradeable storage layout
+    uint64 private __etNextRevoker; // dead slot — preserved for upgradeable storage layout
 
     // the messenger contract takes care of cross-chain task
     address public messenger;
-    address public nextMessenger;
-    uint64 public etNextMessenger; //effective time
+    address private __nextMessenger; // dead slot — preserved for upgradeable storage layout
+    uint64 private __etNextMessenger; // dead slot — preserved for upgradeable storage layout
 
     // the delayed minting requests are stored in requestMap
-    mapping(bytes32 requestHash => uint256 effectiveTime) public requestMap;
+    mapping(bytes32 requestHash => DelayedRequests.RequestInfo requestInfo) public requestMap;
 
     // the gold NFT contract for bullions
     address public nftContract;
@@ -43,27 +45,27 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
 
     bool public disableCcSend;
 
-    /* Main Chain */
-
     // usedReserve = Sum of each chain's totalSupply and mintBudget
     // usedReserve <= Chainlink's PoR
     uint112 public usedReserve;
 
     // ChainLink PoR
     address public reserveFeed;
-    address public nextReserveFeed;
-    uint64 public etNextReserveFeed; //effective time
+    address private __nextReserveFeed; // dead slot — preserved for upgradeable storage layout
+    uint64 private __etNextReserveFeed; // dead slot — preserved for upgradeable storage layout
     address public fallbackFeed;
-    address public nextFallbackFeed;
-    uint64 public etNextFallbackFeed; //effective time
+    address private __nextFallbackFeed; // dead slot — preserved for upgradeable storage layout
+    uint64 private __etNextFallbackFeed; // dead slot — preserved for upgradeable storage layout
 
     // RateLimiter
     address public rateLimiter;
-    address public nextRateLimiter;
-    uint64 public etNextRateLimiter; //effective time
 
     // Global pause flag
     bool public paused;
+
+    // the designated receiver for forced transfers of blocked accounts
+    address public forcedTransferReceiver;
+
 }
 
 // this contract will be deployed on EVM-compatible chains other than Ethereum
@@ -78,6 +80,18 @@ contract MToken is MTokenBase, ICCClient {
     uint256 constant DECIMALS_SCALE_FACTOR =
         10 ** (LOCAL_DECIMALS - SHARED_DECIMALS);
 
+    // delayed operation tags
+    uint8 constant OP_SET_DELAY = 1;
+    uint8 constant OP_SET_OPERATOR = 2;
+    uint8 constant OP_SET_REVOKER = 3;
+    uint8 constant OP_SET_MESSENGER = 4;
+    uint8 constant OP_SET_RESERVE_FEED = 5;
+    uint8 constant OP_SET_FALLBACK_FEED = 6;
+    uint8 constant OP_SET_RATE_LIMITER = 7;
+    uint8 constant OP_SET_FORCED_TRANSFER_RECEIVER = 8;
+    uint8 constant OP_FORCED_TRANSFER = 9;
+    uint8 constant OP_MINT = 10;
+
     event SetDelayRequest(uint64 oldDelay, uint64 newDelay, uint64 et);
     event SetDelayEffected(uint64 newDelay);
     event SetOperatorRequest(address oldAddr, address newAddr, uint64 et);
@@ -88,6 +102,8 @@ contract MToken is MTokenBase, ICCClient {
     event SetMessengerEffected(address newAddr);
     event SetRateLimiterRequest(address oldAddr, address newAddr, uint64 et);
     event SetRateLimiterEffected(address newAddr);
+    event SetForcedTransferReceiverRequest(address oldAddr, address newAddr, uint64 et);
+    event SetForcedTransferReceiverEffected(address newAddr);
     event BlockPlaced(address indexed _user);
     event BlockReleased(address indexed _user);
     event CCSendToken(address indexed sender, bytes receiver, uint256 value);
@@ -103,12 +119,8 @@ contract MToken is MTokenBase, ICCClient {
     event Unpaused(address indexed _userAddress);
     event DisableCcSend(bool disabled);
     event SetNFTContract(address nft);
-    event NextDelayRevoked(uint64 nextDelay);
-    event NextOperatorRevoked(address nextOperator);
-    event NextRevokerRevoked(address nextRevoker);
-    event NextMessengerRevoked(address nextMessenger);
-    event NextRateLimiterRevoked(address nextRateLimiter);
     event NextUpgradeRevoked(bytes32 dataHash);
+    event ForcedTransferRequest(address indexed _from, address indexed _to, uint256 _value, bytes _data, bytes _operatorData);
     event ForcedTransfer(
         address indexed _from,
         address indexed _to,
@@ -118,6 +130,7 @@ contract MToken is MTokenBase, ICCClient {
     );
 
     error BlockedAccount(address);
+    error NotBlocked(address);
     error NotOperator(address);
     error NotRevoker(address);
     error NotNftContract(address);
@@ -127,13 +140,14 @@ contract MToken is MTokenBase, ICCClient {
     error TransferToContract();
     error ZeroValue();
     error ArgsMismatch();
-    error TooEarlyToExecute(address receiver, uint256 amount, uint256 nonce);
     error CcSendDisabled();
     error InvalidMsg(uint256 tag);
     error InvalidReceiver(uint256 length);
     error PrecisionLost();
     error GlobalPaused();
     error PendingRateLimitedMsgsExist();
+    error InvalidForcedTransferReceiver(address);
+    error OwnerOnlyRequest(bytes32 req);
 
     modifier whenNotPaused() {
         if (paused) {
@@ -233,6 +247,15 @@ contract MToken is MTokenBase, ICCClient {
         emit Unpaused(msg.sender);
     }
 
+    function ensureDelay(bytes32 reqHash, uint160 newVal) internal returns (uint64 et) {
+        return DelayedRequests.ensureDelay(requestMap, reqHash, newVal, delay);
+    }
+
+    function revoke(bytes32 req) internal {
+        delete requestMap[req];
+        emit RequestRevoked(req);
+    }
+
     function setDelay(uint64 _delay) public onlyOwner {
         if (_delay < MIN_DELAY) {
             revert DelayTooSmall();
@@ -241,38 +264,34 @@ contract MToken is MTokenBase, ICCClient {
             revert DelayTooLarge();
         }
 
-        uint64 et = etNextDelay;
-        if (_delay == nextDelay && et != 0 && et < block.timestamp) {
+        bytes32 reqId = bytes32(uint256(OP_SET_DELAY));
+        uint64 et = ensureDelay(reqId, _delay);
+        if (et == 0) {
             delay = _delay;
             emit SetDelayEffected(_delay);
         } else {
-            uint64 _currDelay = delay;
-            uint64 _etNextDelay = uint64(block.timestamp) + _currDelay;
-            nextDelay = _delay;
-            etNextDelay = _etNextDelay;
-            emit SetDelayRequest(_currDelay, _delay, _etNextDelay);
+            emit SetDelayRequest(delay, _delay, et);
         }
     }
 
     function setMessenger(address _messenger) public onlyOwner {
         _checkZeroAddress(_messenger);
-        uint64 et = etNextMessenger;
-        if (_messenger == nextMessenger && et != 0 && et < block.timestamp) {
+        bytes32 reqId = bytes32(uint256(OP_SET_MESSENGER));
+        uint64 et = ensureDelay(reqId, uint160(_messenger));
+        if (et == 0) {
             messenger = _messenger;
             emit SetMessengerEffected(_messenger);
         } else {
-            nextMessenger = _messenger;
-            uint64 _etNextMessenger = uint64(block.timestamp) + delay;
-            etNextMessenger = _etNextMessenger;
-            emit SetMessengerRequest(messenger, _messenger, _etNextMessenger);
+            emit SetMessengerRequest(messenger, _messenger, et);
         }
     }
 
     // note: allows setting rateLimiter to zero address by design
     function setRateLimiter(address _rateLimiter) public onlyOwner {
         // _checkZeroAddress(_rateLimiter);
-        uint64 et = etNextRateLimiter;
-        if (_rateLimiter == nextRateLimiter && et != 0 && et < block.timestamp) {
+        bytes32 reqId = bytes32(uint256(OP_SET_RATE_LIMITER));
+        uint64 et = ensureDelay(reqId, uint160(_rateLimiter));
+        if (et == 0) {
             // The old rate limiter's queue can only be drained through this MToken
             // (removeRateLimitedMsg is onlyMToken). Refuse to detach/replace it while
             // messages are still queued, otherwise those tokens would be orphaned.
@@ -284,10 +303,7 @@ contract MToken is MTokenBase, ICCClient {
             rateLimiter = _rateLimiter;
             emit SetRateLimiterEffected(_rateLimiter);
         } else {
-            nextRateLimiter = _rateLimiter;
-            uint64 _etNextRateLimiter = uint64(block.timestamp) + delay;
-            etNextRateLimiter = _etNextRateLimiter;
-            emit SetRateLimiterRequest(rateLimiter, _rateLimiter, _etNextRateLimiter);
+            emit SetRateLimiterRequest(rateLimiter, _rateLimiter, et);
         }
     }
 
@@ -302,29 +318,37 @@ contract MToken is MTokenBase, ICCClient {
 
     function setRevoker(address _revoker) public onlyOwner {
         _checkZeroAddress(_revoker);
-        uint64 et = etNextRevoker;
-        if (_revoker == nextRevoker && et != 0 && et < block.timestamp) {
+        bytes32 reqId = bytes32(uint256(OP_SET_REVOKER));
+        uint64 et = ensureDelay(reqId, uint160(_revoker));
+        if (et == 0) {
             revoker = _revoker;
             emit SetRevokerEffected(_revoker);
         } else {
-            nextRevoker = _revoker;
-            uint64 _etNextRevoker = uint64(block.timestamp) + delay;
-            etNextRevoker = _etNextRevoker;
-            emit SetRevokerRequest(revoker, _revoker, _etNextRevoker);
+            emit SetRevokerRequest(revoker, _revoker, et);
         }
     }
 
     function setOperator(address _operator) public onlyOwner {
         _checkZeroAddress(_operator);
-        uint64 et = etNextOperator;
-        if (_operator == nextOperator && et != 0 && et < block.timestamp) {
+        bytes32 reqId = bytes32(uint256(OP_SET_OPERATOR));
+        uint64 et = ensureDelay(reqId, uint160(_operator));
+        if (et == 0) {
             operator = _operator;
             emit SetOperatorEffected(_operator);
         } else {
-            nextOperator = _operator;
-            uint64 _etNextOperator = uint64(block.timestamp) + delay;
-            etNextOperator = _etNextOperator;
-            emit SetOperatorRequest(operator, _operator, _etNextOperator);
+            emit SetOperatorRequest(operator, _operator, et);
+        }
+    }
+
+    function setForcedTransferReceiver(address _receiver) public onlyOwner {
+        _checkZeroAddress(_receiver);
+        bytes32 reqId = bytes32(uint256(OP_SET_FORCED_TRANSFER_RECEIVER));
+        uint64 et = ensureDelay(reqId, uint160(_receiver));
+        if (et == 0) {
+            forcedTransferReceiver = _receiver;
+            emit SetForcedTransferReceiverEffected(_receiver);
+        } else {
+            emit SetForcedTransferReceiverRequest(forcedTransferReceiver, _receiver, et);
         }
     }
 
@@ -332,34 +356,37 @@ contract MToken is MTokenBase, ICCClient {
         return delay;
     }
 
+    // revoke a pending mintTo or forcedTransfer request; 
+    // revoker cannot revoke the revoker rotation (owner-only)
     function revokeRequest(bytes32 req) public onlyRevoker {
-        delete requestMap[req];
-        emit RequestRevoked(req);
+        if (req == bytes32(uint256(OP_SET_REVOKER))) {
+            revert OwnerOnlyRequest(req);
+        }
+        revoke(req);
     }
 
     function revokeNextDelay() public onlyRevoker {
-        etNextDelay = 0;
-        emit NextDelayRevoked(nextDelay);
+        revoke(bytes32(uint256(OP_SET_DELAY)));
     }
 
     function revokeNextOperator() public onlyRevoker {
-        etNextOperator = 0;
-        emit NextOperatorRevoked(nextOperator);
+        revoke(bytes32(uint256(OP_SET_OPERATOR)));
     }
 
     function revokeNextMessenger() public onlyRevoker {
-        etNextMessenger = 0;
-        emit NextMessengerRevoked(nextMessenger);
+        revoke(bytes32(uint256(OP_SET_MESSENGER)));
     }
 
     function revokeNextRateLimiter() public onlyRevoker {
-        etNextRateLimiter = 0;
-        emit NextRateLimiterRevoked(nextRateLimiter);
+        revoke(bytes32(uint256(OP_SET_RATE_LIMITER)));
     }
 
     function revokeNextRevoker() public onlyOwner {
-        etNextRevoker = 0;
-        emit NextRevokerRevoked(nextRevoker);
+        revoke(bytes32(uint256(OP_SET_REVOKER)));
+    }
+
+    function revokeNextForcedTransferReceiver() public onlyRevoker {
+        revoke(bytes32(uint256(OP_SET_FORCED_TRANSFER_RECEIVER)));
     }
 
     function revokeNextUpgrade() public onlyRevoker {
@@ -397,24 +424,17 @@ contract MToken is MTokenBase, ICCClient {
         uint256 amount,
         uint256 nonce
     ) public onlyOperatorAndNft whenNotPaused returns (bool) {
-        bytes32 req = keccak256(abi.encode(receiver, amount, nonce));
-        uint256 et = requestMap[req];
+        bytes32 reqHash = keccak256(abi.encode(OP_MINT, receiver, amount, nonce));
+        uint64 et = ensureDelay(reqHash, 0);
         if (et == 0) {
-            // add a record for this mint-request and exit
-            requestMap[req] = block.timestamp + delay;
+            _checkMintBudget(amount);
+            mintBudget = (mintBudget - amount).toUint112();
+            _mint(receiver, amount);
+            return true;
+        } else {
             emit MintRequest(receiver, amount, nonce);
             return false;
-        } else {
-            if (et < block.timestamp) {
-                delete requestMap[req]; // clear the record
-            } else {
-                revert TooEarlyToExecute(receiver, amount, nonce);
-            }
         }
-        _checkMintBudget(amount);
-        mintBudget = (mintBudget - amount).toUint112();
-        _mint(receiver, amount);
-        return true;
     }
 
     // redeem tokens owned by operator
@@ -466,16 +486,30 @@ contract MToken is MTokenBase, ICCClient {
         }
     }
 
-    // forced transfer by owner
+    // forced transfer by owner; two-call delayed pattern (same as mintTo)
     function forcedTransfer(
-        address _from,
-        address _to,
+        address _from, // must be blocked
+        address _to,   // must be forcedTransferReceiver
         uint256 _value,
+        uint256 _nonce,
         bytes calldata _data,
         bytes calldata _extraData
     ) external onlyOwner {
-        _transfer(_from, _to, _value);
-        emit ForcedTransfer(_from, _to, _value, _data, _extraData);
+        if (!isBlocked[_from]) {
+            revert NotBlocked(_from);
+        }
+        if (_to != forcedTransferReceiver) {
+            revert InvalidForcedTransferReceiver(_to);
+        }
+
+        bytes32 reqHash = keccak256(abi.encode(OP_FORCED_TRANSFER, _from, _to, _value, _data, _extraData, _nonce));
+        uint64 et = ensureDelay(reqHash, 0);
+        if (et == 0) {
+            _transfer(_from, _to, _value);
+            emit ForcedTransfer(_from, _to, _value, _data, _extraData);
+        } else {
+            emit ForcedTransferRequest(_from, _to, _value, _data, _extraData);
+        }
     }
 
     //-------------

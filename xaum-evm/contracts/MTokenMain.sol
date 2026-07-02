@@ -41,36 +41,34 @@ contract MTokenMain is MToken {
 
     function setReserveFeed(address addr) public onlyOwner {
         _checkZeroAddress(addr);
-        uint64 et = etNextReserveFeed;
-        if (addr == nextReserveFeed && et != 0 && et < block.timestamp) {
+        bytes32 reqId = bytes32(uint256(OP_SET_RESERVE_FEED));
+        uint64 et = ensureDelay(reqId, uint160(addr));
+        if (et == 0) {
             reserveFeed = addr;
             emit SetReserveFeedEffected(addr);
         } else {
-            nextReserveFeed = addr;
-            etNextReserveFeed = uint64(block.timestamp) + delay;
-            emit SetReserveFeedRequest(reserveFeed, addr, etNextReserveFeed);
+            emit SetReserveFeedRequest(reserveFeed, addr, et);
         }
     }
 
     function setFallbackFeed(address addr) public onlyOwner {
         _checkZeroAddress(addr);
-        uint64 et = etNextFallbackFeed;
-        if (addr == nextFallbackFeed && et != 0 && et < block.timestamp) {
+        bytes32 reqId = bytes32(uint256(OP_SET_FALLBACK_FEED));
+        uint64 et = ensureDelay(reqId, uint160(addr));
+        if (et == 0) {
             fallbackFeed = addr;
             emit SetFallbackFeedEffected(addr);
         } else {
-            nextFallbackFeed = addr;
-            etNextFallbackFeed = uint64(block.timestamp) + delay;
-            emit SetFallbackFeedRequest(fallbackFeed, addr, etNextFallbackFeed);
+            emit SetFallbackFeedRequest(fallbackFeed, addr, et);
         }
     }
 
     function revokeNextReserveFeed() public onlyRevoker {
-        etNextReserveFeed = 0;
+        revoke(bytes32(uint256(OP_SET_RESERVE_FEED)));
     }
 
     function revokeNextFallbackFeed() public onlyRevoker {
-        etNextFallbackFeed = 0;
+        revoke(bytes32(uint256(OP_SET_FALLBACK_FEED)));
     }
 
     function increaseMintBudget(uint112 mintBudgetDelta) public onlyOperator {
