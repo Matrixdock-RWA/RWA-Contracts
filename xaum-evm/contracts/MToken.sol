@@ -537,12 +537,13 @@ contract MToken is MTokenBase, ICCClient {
     }
 
     // called by the messenger contract to initialize a cross-chain mint-budget transfer
+    // caller is passed explicitly by the messenger (its own msg.sender) so the operator
+    // check avoids tx.origin, which breaks account-abstraction and is phishing-prone
     function ccSendMintBudget(
-        uint112 value
+        uint112 value,
+        address caller
     ) public onlyMessenger whenNotPaused returns (bytes memory message) {
-        // note: we are very careful with any third-party contracts the operator calls
-        // to avoid unintended shuffling of cross-chain mint budgets
-        _checkOperator(tx.origin);
+        _checkOperator(caller);
         _checkZeroValue(value);
         message = msgOfCcSendMintBudget(value);
         mintBudget -= value;
