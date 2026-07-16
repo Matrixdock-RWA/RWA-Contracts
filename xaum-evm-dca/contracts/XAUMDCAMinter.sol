@@ -36,6 +36,7 @@ contract XAUMDCAMinter is DelayedUpgradeable, IXAUMMinter {
     error NotPriceOperator(address);
     error NotFundOperator(address);
     error NotDCA(address);
+    error DelayTooSmall();
     error InvalidPriceLimit(uint256 minPrice, uint256 maxPrice);
     error NoSystemFundRecipient();
     error SignatureExpired(uint256);
@@ -110,14 +111,17 @@ contract XAUMDCAMinter is DelayedUpgradeable, IXAUMMinter {
         _;
     }
 
+    // constants
+    uint64 constant MIN_DELAY = 1 hours;
+
     // state variables
     // et = effective time
 
     // the XAUm contract
-    address public xaum;
+    address public xaum; 
 
     // the stable token like USDT, USDC, etc.
-    address public usdToken;
+    address public usdToken; 
     uint8 usdDecimals;
 
     uint64 public delay;

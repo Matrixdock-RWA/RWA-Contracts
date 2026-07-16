@@ -1227,8 +1227,8 @@ describe("XAUMDCA", function () {
                 await time.increase(delay);
                 await _c.setRevoker(bob.address);
 
-                const NFTv2 = await ethers.getContractFactory("BullionEnumerableNFT_UT2");
-                const nft2impl = await NFTv2.deploy();
+                const DCAv2 = await ethers.getContractFactory("DCA2");
+                const nft2impl = await DCAv2.deploy();
                 await _c.connect(owner).requestUpgradeToAndCall(nft2impl.target, "0x");
 
                 await expect(_c.connect(owner).upgradeToAndCall(bob.address, "0x"))
