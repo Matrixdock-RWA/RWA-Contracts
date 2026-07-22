@@ -6,7 +6,6 @@ import {ERC20PermitUpgradeable} from "@openzeppelin/contracts-upgradeable/token/
 import {DelayedUpgradeable} from "./DelayedUpgradeable.sol";
 import {ICCClient} from "./interfaces/ICCClient.sol";
 import {IMTokenRateLimiter} from "./interfaces/IMTokenRateLimiter.sol";
-import {DelayedRequests} from "./libraries/DelayedRequests.sol";
 // import "hardhat/console.sol";
 
 abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
@@ -34,13 +33,13 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
     address private __nextMessenger; // dead slot — preserved for upgradeable storage layout
     uint64 private __etNextMessenger; // dead slot — preserved for upgradeable storage layout
 
-    // the delayed minting requests are stored in requestMap
-    mapping(bytes32 requestHash => DelayedRequests.RequestInfo requestInfo) public requestMap;
+    // dead slot — preserved for upgradeable storage layout
+    mapping(bytes32 requestHash => uint256 requestInfo) private __requestMap;
 
     // suspicious accounts can be blocked
     mapping(address account => bool blocked) public isBlocked;
 
-    bool public disableCcSend;
+    bool public ccSendDisabled;
 
     // totalTokenObligation = Sum of each chain's totalSupply and mintBudget
     // totalTokenObligation * ozPerToken <= Chainlink's PoR
@@ -75,6 +74,33 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
 
 }
 
+/*
+ Operation                | Initiator  | Timelock | Revoker        | Executor
+--------------------------+------------+----------+----------------+----------
+transferOwnership         | Owner      | govDelay | Owner/Revoker  | NewOwner
+setGovDelay               | Owner      | govDelay | Owner/Revoker  | Initiator
+upgrade                   | Owner      | govDelay | Owner/Revoker  | Initiator
+setDelay                  | Owner      | govDelay | Owner/Revoker  | Initiator
+setMessenger              | Owner      | govDelay | Owner/Revoker  | Initiator
+setReserveFeed            | Owner      | govDelay | Owner/Revoker  | Initiator
+setFallbackFeed           | Owner      | govDelay | Owner/Revoker  | Initiator
+setRateLimiter            | Owner      | govDelay | Owner/Revoker  | Initiator
+setForcedTransferReceiver | Owner      | govDelay | Owner/Revoker  | Initiator
+setFeeCollector           | Owner      | govDelay | Owner/Revoker  | Initiator
+setRevoker                | Owner      | govDelay | Owner/Operator | NewRevoker
+setOperator               | Owner      | delay    | Owner/Revoker  | Initiator
+unpause                   | Owner      | delay    | Owner/Revoker  | Initiator
+enableCcSend              | Owner      | delay    | Owner/Revoker  | Initiator
+forcedTransfer            | Owner      | delay    | Owner/Revoker  | Initiator
+mintTo                    | Operator   | delay    | Owner/Revoker  | Initiator
+pause                     | Operator   | no       | no             | no
+disableCcSend             | Operator   | no       | no             | no
+addToBlockedList          | Operator   | no       | no             | no
+removeFromBlockedList     | Operator   | no       | no             | no
+ccProcessRateLimitedMsg   | Operator   | no       | no             | no
+ccDiscardRateLimitedMsg   | Operator   | no       | no             | no
+ */
+
 // this contract will be deployed on EVM-compatible chains other than Ethereum
 contract MToken is MTokenBase, ICCClient {
     using SafeCast for uint256;
@@ -88,31 +114,25 @@ contract MToken is MTokenBase, ICCClient {
     uint64 constant OZ_RATIO_BASE = 10 ** 9; // ozPerToken is 9 decimals
     uint64 constant MAX_ANNUAL_FEE_RATE = FEE_RATE_BASE / 10; // 10%
 
-    // delayed operation tags
-    uint8 constant OP_SET_DELAY = 1;
-    uint8 constant OP_SET_OPERATOR = 2;
-    uint8 constant OP_SET_REVOKER = 3;
-    uint8 constant OP_SET_MESSENGER = 4;
-    uint8 constant OP_SET_RESERVE_FEED = 5;
-    uint8 constant OP_SET_FALLBACK_FEED = 6;
-    uint8 constant OP_SET_RATE_LIMITER = 7;
-    uint8 constant OP_SET_FORCED_TRANSFER_RECEIVER = 8;
-    uint8 constant OP_FORCED_TRANSFER = 9;
-    uint8 constant OP_MINT = 10;
-    uint8 constant OP_SET_FEE_COLLECTOR = 11;
+    // delayed operations
+    bytes32 constant OP_SET_MESSENGER                = keccak256("OP_SET_MESSENGER");                // 0x6191f37f4e4baceabac34d155232d1c835c833250f9177d97031ad1d289b72c2
+    bytes32 constant OP_SET_RESERVE_FEED             = keccak256("OP_SET_RESERVE_FEED");             // 0x63d9e7208cc39149a1247370958483d5782afd0034985f3a1875e4d4d996a1e3
+    bytes32 constant OP_SET_FALLBACK_FEED            = keccak256("OP_SET_FALLBACK_FEED");            // 0x833af6d22eb8d2c5cf1ffbc6fc7167919d127fcfcb1200cc8d10a71b91c52212
+    bytes32 constant OP_SET_RATE_LIMITER             = keccak256("OP_SET_RATE_LIMITER");             // 0xed798457379d2f20a4c7977521ad2c86cb7507c8854b8ed957ce4eefdb54d695
+    bytes32 constant OP_SET_FORCED_TRANSFER_RECEIVER = keccak256("OP_SET_FORCED_TRANSFER_RECEIVER"); // 0x85fa3f3a2a8a9e215053c0fa81064c17bba62c8bc75114f1c6efebbc809b9395
+    bytes32 constant OP_SET_FEE_COLLECTOR            = keccak256("OP_SET_FEE_COLLECTOR");            // 0x5fce929af8ba9add31f60f79948e01faec04215045e21ffe8284dc2340bb0717
+    bytes32 constant OP_ENABLE_CC_SEND               = keccak256("OP_ENABLE_CC_SEND");               // 0x55c10731fa798db7b348dc2a315fbefd2f566460cff39a69411ef19b2c82a5e7
+    bytes32 constant OP_UNPAUSE                      = keccak256("OP_UNPAUSE");                      // 0x19aebff3bbcef323e5c760a3ed420922e4d158f9d2c6e69bda4f540960d86e97
 
-    event SetDelayRequest(uint64 oldDelay, uint64 newDelay, uint64 et);
-    event SetDelayEffected(uint64 newDelay);
-    event SetOperatorRequest(address oldAddr, address newAddr, uint64 et);
-    event SetOperatorEffected(address newAddr);
-    event SetRevokerRequest(address oldAddr, address newAddr, uint64 et);
-    event SetRevokerEffected(address newAddr);
     event SetMessengerRequest(address oldAddr, address newAddr, uint64 et);
     event SetMessengerEffected(address newAddr);
     event SetRateLimiterRequest(address oldAddr, address newAddr, uint64 et);
     event SetRateLimiterEffected(address newAddr);
     event SetForcedTransferReceiverRequest(address oldAddr, address newAddr, uint64 et);
     event SetForcedTransferReceiverEffected(address newAddr);
+    event EnableCCSendRequest(uint64 et);
+    event EnableCCSendEffected();
+    event UnpauseRequest(uint64 et);
     event BlockPlaced(address indexed _user);
     event BlockReleased(address indexed _user);
     event CCSendToken(address indexed sender, bytes receiver, uint256 value);
@@ -123,18 +143,17 @@ contract MToken is MTokenBase, ICCClient {
     event CCReceiveMintBudgetManually(uint112 value);
     event Redeem(address indexed customer, uint256 amount, bytes data);
     event MintRequest(address indexed receiver, uint256 amount, uint256 nonce);
-    event RequestRevoked(bytes32 indexed req);
     event RateLimitedMsgProcessed(uint256 index);
     event RateLimitedMsgDiscarded(uint256 index);
     event Paused(address indexed _userAddress);
-    event Unpaused(address indexed _userAddress);
-    event DisableCcSend(bool disabled);
-    event NextUpgradeRevoked(bytes32 dataHash);
-    event ForcedTransferRequest(address indexed _from, address indexed _to, uint256 _value, bytes _data, bytes _operatorData);
-    event UpdateAnnualFeeRate(
-        uint64 newAnnualFeeRate,
-        uint64 newOzPerTokenBase,
-        uint64 roundedUpdateTime
+    event Unpaused(address indexed _userAddress); // intentionally named Unpaused (not UnpauseEffected) to match ERC3643
+    event DisableCcSend();
+    event ForcedTransferRequest(
+        address indexed _from, 
+        address indexed _to, 
+        uint256 _value, 
+        bytes _data, 
+        bytes _operatorData
     );
     event ForcedTransfer(
         address indexed _from,
@@ -143,26 +162,30 @@ contract MToken is MTokenBase, ICCClient {
         bytes _data,
         bytes _operatorData
     );
+    event UpdateAnnualFeeRate(
+        uint64 newAnnualFeeRate,
+        uint64 newOzPerTokenBase,
+        uint64 roundedUpdateTime
+    );
 
     error BlockedAccount(address);
     error NotBlocked(address);
-    error NotOperator(address);
-    error NotRevoker(address);
     error NotMessenger(address);
     error MintBudgetNotEnough(uint256 budget, uint256 amount);
     error TransferToContract();
     error ZeroValue();
     error ArgsMismatch();
     error CcSendDisabled();
+    error CcSendNotDisabled();
     error InvalidMsg(uint256 tag);
     error InvalidReceiver(uint256 length);
     error AnnualFeeRateTooLarge();
     error OzPerTokenBaseTooLarge();
     error UnexpectedOzPerToken(uint64 expectedOzPerToken, uint64 actualOzPerToken);
     error GlobalPaused();
+    error NotPaused();
     error PendingRateLimitedMsgsExist();
     error InvalidForcedTransferReceiver(address);
-    error OwnerOnlyRequest(bytes32 req);
 
     modifier whenNotPaused() {
         if (paused) {
@@ -181,9 +204,16 @@ contract MToken is MTokenBase, ICCClient {
         _;
     }
 
-    modifier onlyRevoker() {
-        if (msg.sender != revoker) {
-            revert NotRevoker(msg.sender);
+    modifier onlyOwnerOrRevoker() {
+        if (msg.sender != revoker && msg.sender != owner()) {
+            revert NotOwnerOrRevoker(msg.sender);
+        }
+        _;
+    }
+
+    modifier onlyOwnerOrOperator() {
+        if (msg.sender != operator && msg.sender != owner()) {
+            revert NotOwnerOrOperator(msg.sender);
         }
         _;
     }
@@ -226,6 +256,10 @@ contract MToken is MTokenBase, ICCClient {
         }
     }
 
+    /*
+    Note: govDelay/delay are deliberately initialized to 0 (delayed ops execute immediately)
+    so the deployer can complete wiring and ownership handover without waiting.
+    */
     function __MTOKEN_init(
         string memory name,
         string memory symbol,
@@ -237,7 +271,7 @@ contract MToken is MTokenBase, ICCClient {
         __ERC20_init(name, symbol);
         __ERC20Permit_init(symbol);
         __Ownable_init(_owner);
-        __Ownable2StepTimeLock_init_unchained();
+        __TimeLockerUpgradeable_init_unchained();
         __MTOKEN_init_unchained(_operator, _annualFeeRate, _ozPerTokenBase);
     }
 
@@ -298,40 +332,62 @@ contract MToken is MTokenBase, ICCClient {
         emit UpdateAnnualFeeRate(_annualFeeRate, _ozPerTokenBase, _ozPerTokenBaseTime);
     }
 
-    function setDisableCcSend(bool b) public onlyOwner {
-        disableCcSend = b;
-        emit DisableCcSend(b);
+    function disableCcSend() public onlyOperator {
+        // clear any pending enableCcSend request so it cannot outlive this
+        // disable: a request pre-planted (or matured during a previous disable)
+        // must not be executable right after a new emergency disable, which
+        // would bypass the enable delay window entirely
+        revoke(OP_ENABLE_CC_SEND);
+        ccSendDisabled = true;
+        emit DisableCcSend();
+    }
+
+    function enableCcSend() public onlyOwner {
+        // an enable request may only be created (and executed) while cc-send is
+        // actually disabled — otherwise the owner could pre-plant a matured
+        // request during normal operation and instantly defeat a future
+        // emergency disable
+        if (!ccSendDisabled) {
+            revert CcSendNotDisabled();
+        }
+        uint64 et = ensureDelay(OP_ENABLE_CC_SEND, 0, delay);
+        if (et == 0) {
+            ccSendDisabled = false;
+            emit EnableCCSendEffected();
+        } else {
+            emit EnableCCSendRequest(et);
+        }
     }
 
     function pause() external onlyOperator {
+        // clear any pending unpause request so it cannot outlive this pause:
+        // a request pre-planted (or matured during a previous pause) must not
+        // be executable right after a new emergency pause, which would bypass
+        // the unpause delay window entirely
+        revoke(OP_UNPAUSE);
         paused = true;
         emit Paused(msg.sender);
     }
 
     function unpause() external onlyOwner {
-        paused = false;
-        emit Unpaused(msg.sender);
-    }
-
-    function ensureDelay(bytes32 reqHash, uint160 newVal) internal returns (uint64 et) {
-        return DelayedRequests.ensureDelay(requestMap, reqHash, newVal, delay);
-    }
-
-    function revoke(bytes32 req) internal {
-        delete requestMap[req];
-        emit RequestRevoked(req);
+        // an unpause request may only be created (and executed) while actually
+        // paused — otherwise the owner could pre-plant a matured request during
+        // normal operation and instantly defeat a future emergency pause
+        if (!paused) {
+            revert NotPaused();
+        }
+        uint64 et = ensureDelay(OP_UNPAUSE, 0, delay);
+        if (et == 0) {
+            paused = false;
+            emit Unpaused(msg.sender);
+        } else {
+            emit UnpauseRequest(et);
+        }
     }
 
     function setDelay(uint64 _delay) public onlyOwner {
-        if (_delay < MIN_DELAY) {
-            revert DelayTooSmall();
-        }
-        if (_delay > MAX_DELAY) {
-            revert DelayTooLarge();
-        }
-
-        bytes32 reqId = bytes32(uint256(OP_SET_DELAY));
-        uint64 et = ensureDelay(reqId, _delay);
+        checkDelay(_delay);
+        uint64 et = ensureGovDelay(OP_SET_DELAY, _delay);
         if (et == 0) {
             delay = _delay;
             emit SetDelayEffected(_delay);
@@ -342,8 +398,7 @@ contract MToken is MTokenBase, ICCClient {
 
     function setMessenger(address _messenger) public onlyOwner {
         _checkZeroAddress(_messenger);
-        bytes32 reqId = bytes32(uint256(OP_SET_MESSENGER));
-        uint64 et = ensureDelay(reqId, uint160(_messenger));
+        uint64 et = ensureGovDelay(OP_SET_MESSENGER, uint160(_messenger));
         if (et == 0) {
             messenger = _messenger;
             emit SetMessengerEffected(_messenger);
@@ -355,8 +410,7 @@ contract MToken is MTokenBase, ICCClient {
     // note: allows setting rateLimiter to zero address by design
     function setRateLimiter(address _rateLimiter) public onlyOwner {
         // _checkZeroAddress(_rateLimiter);
-        bytes32 reqId = bytes32(uint256(OP_SET_RATE_LIMITER));
-        uint64 et = ensureDelay(reqId, uint160(_rateLimiter));
+        uint64 et = ensureGovDelay(OP_SET_RATE_LIMITER, uint160(_rateLimiter));
         if (et == 0) {
             // The old rate limiter's queue can only be drained through this MToken
             // (removeRateLimitedMsg is onlyMToken). Refuse to detach/replace it while
@@ -375,20 +429,26 @@ contract MToken is MTokenBase, ICCClient {
 
     function setRevoker(address _revoker) public onlyOwner {
         _checkZeroAddress(_revoker);
-        bytes32 reqId = bytes32(uint256(OP_SET_REVOKER));
-        uint64 et = ensureDelay(reqId, uint160(_revoker));
+        uint64 et = ensureGovDelay(OP_SET_REVOKER, uint160(_revoker));
         if (et == 0) {
-            revoker = _revoker;
-            emit SetRevokerEffected(_revoker);
-        } else {
-            emit SetRevokerRequest(revoker, _revoker, et);
+            revert NotNewRevoker(msg.sender);
         }
+        emit SetRevokerRequest(revoker, _revoker, et);
+    }
+
+    function acceptRevoker() public {
+        address newRevoker = msg.sender;
+        uint64 et = ensureGovDelay(OP_SET_REVOKER, uint160(newRevoker));
+        if (et > 0) {
+            revert NoPendingRequest(OP_SET_REVOKER);
+        }
+        revoker = newRevoker;
+        emit SetRevokerEffected(newRevoker);
     }
 
     function setOperator(address _operator) public onlyOwner {
         _checkZeroAddress(_operator);
-        bytes32 reqId = bytes32(uint256(OP_SET_OPERATOR));
-        uint64 et = ensureDelay(reqId, uint160(_operator));
+        uint64 et = ensureDelay(OP_SET_OPERATOR, uint160(_operator), delay);
         if (et == 0) {
             operator = _operator;
             emit SetOperatorEffected(_operator);
@@ -399,8 +459,7 @@ contract MToken is MTokenBase, ICCClient {
 
     function setForcedTransferReceiver(address _receiver) public onlyOwner {
         _checkZeroAddress(_receiver);
-        bytes32 reqId = bytes32(uint256(OP_SET_FORCED_TRANSFER_RECEIVER));
-        uint64 et = ensureDelay(reqId, uint160(_receiver));
+        uint64 et = ensureGovDelay(OP_SET_FORCED_TRANSFER_RECEIVER, uint160(_receiver));
         if (et == 0) {
             forcedTransferReceiver = _receiver;
             emit SetForcedTransferReceiverEffected(_receiver);
@@ -413,42 +472,31 @@ contract MToken is MTokenBase, ICCClient {
         return delay;
     }
 
-    // revoke a pending mintTo or forcedTransfer request; 
-    // revoker cannot revoke the revoker rotation (owner-only)
-    function revokeRequest(bytes32 req) public onlyRevoker {
-        if (req == bytes32(uint256(OP_SET_REVOKER))) {
-            revert OwnerOnlyRequest(req);
+    function revokeNextGovDelay() public override onlyOwnerOrRevoker {
+        _revokeNextGovDelay();
+    }
+
+    function revokeOwnershipTransfer() public override onlyOwnerOrRevoker {
+        _revokeOwnershipTransfer();
+    }
+
+    // Unified revoke entry point — replaces the individual revokeNext* functions that were
+    // removed to stay within the contract size limit. Pass any delayed-op key (OP_* constant
+    // or a per-request hash) to cancel it. OP_SET_REVOKER is explicitly excluded: use the
+    // dedicated revokeNextRevoker() instead (it requires onlyOwnerOrOperator, not onlyOwnerOrRevoker).
+    function revokeRequest(bytes32 req) public onlyOwnerOrRevoker {
+        if (req == OP_SET_REVOKER) {
+            revert NotOwnerOrOperator(msg.sender);
         }
         revoke(req);
     }
 
-    function revokeNextDelay() public onlyRevoker {
-        revoke(bytes32(uint256(OP_SET_DELAY)));
+    function revokeNextRevoker() public onlyOwnerOrOperator {
+        revoke(OP_SET_REVOKER);
     }
 
-    function revokeNextOperator() public onlyRevoker {
-        revoke(bytes32(uint256(OP_SET_OPERATOR)));
-    }
-
-    function revokeNextMessenger() public onlyRevoker {
-        revoke(bytes32(uint256(OP_SET_MESSENGER)));
-    }
-
-    function revokeNextRateLimiter() public onlyRevoker {
-        revoke(bytes32(uint256(OP_SET_RATE_LIMITER)));
-    }
-
-    function revokeNextRevoker() public onlyOwner {
-        revoke(bytes32(uint256(OP_SET_REVOKER)));
-    }
-
-    function revokeNextForcedTransferReceiver() public onlyRevoker {
-        revoke(bytes32(uint256(OP_SET_FORCED_TRANSFER_RECEIVER)));
-    }
-
-    function revokeNextUpgrade() public onlyRevoker {
-        etNextUpgradeToAndCall = 0;
-        emit NextUpgradeRevoked(nextUpgradeToAndCallDataHash);
+    function revokeNextUpgrade() public override onlyOwnerOrRevoker {
+        _revokeNextUpgrade();
     }
 
     function addToBlockedList(address _user) public onlyOperator {
@@ -472,8 +520,8 @@ contract MToken is MTokenBase, ICCClient {
     ) public onlyOperator whenNotPaused returns (bool) {
         _checkOzPerToken(expectedOzPerToken);
 
-        bytes32 reqHash = keccak256(abi.encode(OP_MINT, receiver, amount, nonce));
-        uint64 et = ensureDelay(reqHash, 0);
+        bytes32 reqHash = keccak256(abi.encode(receiver, amount, nonce));
+        uint64 et = ensureDelay(reqHash, 0, delay);
         if (et == 0) {
             _checkMintBudget(amount);
             mintBudget = (mintBudget - amount).toUint112();
@@ -552,8 +600,8 @@ contract MToken is MTokenBase, ICCClient {
             revert InvalidForcedTransferReceiver(_to);
         }
 
-        bytes32 reqHash = keccak256(abi.encode(OP_FORCED_TRANSFER, _from, _to, _value, _data, _extraData, _nonce));
-        uint64 et = ensureDelay(reqHash, 0);
+        bytes32 reqHash = keccak256(abi.encode(_from, _to, _value, _data, _extraData, _nonce));
+        uint64 et = ensureDelay(reqHash, 0, delay);
         if (et == 0) {
             _transfer(_from, _to, _value);
             emit ForcedTransfer(_from, _to, _value, _data, _extraData);
@@ -587,7 +635,7 @@ contract MToken is MTokenBase, ICCClient {
         bytes calldata receiver,
         uint256 value
     ) public onlyMessenger whenNotPaused returns (bytes memory message) {
-        if (disableCcSend) {
+        if (ccSendDisabled) {
             revert CcSendDisabled();
         }
         _checkZeroValue(value);
@@ -684,7 +732,7 @@ contract MToken is MTokenBase, ICCClient {
 
     // manually deliver a queued rate-limited cross-chain token message
     // note: allows minting to blocked receiver by design (same as ccReceiveToken)
-    function ccProcessRateLimitedMsg(uint256 index) public onlyOperator {
+    function ccProcessRateLimitedMsg(uint256 index) public onlyOperator whenNotPaused {
         (address receiver, uint256 value, bytes memory sender) = IMTokenRateLimiter(rateLimiter).removeRateLimitedMsg(index);
         _mint(receiver, value);
         emit CCReceiveToken(sender, receiver, value);

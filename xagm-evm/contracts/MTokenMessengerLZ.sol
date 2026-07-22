@@ -6,7 +6,7 @@ import {OAppUpgradeable, Origin, MessagingFee} from "@layerzerolabs/oapp-evm-upg
 import {MessagingReceipt} from "@layerzerolabs/lz-evm-protocol-v2/contracts/interfaces/ILayerZeroEndpointV2.sol";
 import {MTokenMessengerBaseUpgradeable} from "./MTokenMessengerBaseUpgradeable.sol";
 import {ICCClient} from "./interfaces/ICCClient.sol";
-import {Ownable2StepTimeLockUpgradeable} from "./Ownable2StepTimeLockUpgradeable.sol";
+import {TimeLockerUpgradeable} from "./TimeLockerUpgradeable.sol";
 
 /// @custom:oz-upgrades-unsafe-allow constructor
 /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
@@ -15,6 +15,8 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
         bool lzPaused;
         mapping(uint64 eid => uint8 addrLen) eidToAddrLen;
     }
+
+    bytes32 constant OP_LZ_UNPAUSE = keccak256("OP_LZ_UNPAUSE");
 
     // namespace="mtokenmessengerlz.storage.eidtoaddrlen"
     // keccak256(abi.encode(uint256(keccak256(abi.encodePacked(namespace))) - 1)) & ~bytes32(uint256(0xff))
@@ -30,9 +32,12 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
     event CCReceiveLZ(bytes32 indexed messageID, bytes messageData);
     event CCSendTokenLZ(bytes32 indexed messageID, bytes messageData);
     event CCSendMintBudgetLZ(bytes32 indexed messageID, bytes messageData);
-    event LZPaused(bool isPaused);
+    event LZPaused();
+    event LZUnpauseRequest(uint64 et);
+    event LZUnpauseEffected();
 
     error InvalidRecipientLength(uint8 expected, uint8 actual);
+    error LZNotPaused();
 
     modifier onlyLZNotPaused() {
         MsgLzStorage storage $ = _getMsgLzStorage();
@@ -60,12 +65,12 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
         __MTokenMessengerBase_init(_ccClient, _initialOwner);
     }
 
-    function transferOwnership(address newOwner) public override(OwnableUpgradeable, Ownable2StepTimeLockUpgradeable) {
-        Ownable2StepTimeLockUpgradeable.transferOwnership(newOwner);
+    function transferOwnership(address newOwner) public override(OwnableUpgradeable, TimeLockerUpgradeable) {
+        TimeLockerUpgradeable.transferOwnership(newOwner);
     }
 
-    function renounceOwnership() public override(OwnableUpgradeable, Ownable2StepTimeLockUpgradeable) {
-        Ownable2StepTimeLockUpgradeable.renounceOwnership();
+    function renounceOwnership() public override(OwnableUpgradeable, TimeLockerUpgradeable) {
+        TimeLockerUpgradeable.renounceOwnership();
     }
 
     function lzPaused() public view returns (bool) {
@@ -73,10 +78,36 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
         return $.lzPaused;
     }
 
-    function setLZPaused(bool isPaused) public onlyOwner {
+    function lzPause() public onlyOwner {
+        // clear any pending lzUnpause request so it cannot outlive this pause:
+        // a request pre-planted (or matured during a previous pause) must not
+        // be executable right after a new emergency pause, which would bypass
+        // the unpause delay window entirely
+        revoke(OP_LZ_UNPAUSE);
         MsgLzStorage storage $ = _getMsgLzStorage();
-        $.lzPaused = isPaused;
-        emit LZPaused(isPaused);
+        $.lzPaused = true;
+        emit LZPaused();
+    }
+
+    function lzUnpause() public onlyOwner {
+        MsgLzStorage storage $ = _getMsgLzStorage();
+        // an unpause request may only be created (and executed) while actually
+        // paused — otherwise the owner could pre-plant a matured request during
+        // normal operation and instantly defeat a future emergency pause
+        if (!$.lzPaused) {
+            revert LZNotPaused();
+        }
+        uint64 et = ensureDelay(OP_LZ_UNPAUSE, 0, delay);
+        if (et == 0) {
+            $.lzPaused = false;
+            emit LZUnpauseEffected();
+        } else {
+            emit LZUnpauseRequest(et);
+        }
+    }
+
+    function revokeLzUnpause() public onlyOwner {
+        revoke(OP_LZ_UNPAUSE);
     }
 
     // to differentiate from setAllowedPeer in MTokenMessenger

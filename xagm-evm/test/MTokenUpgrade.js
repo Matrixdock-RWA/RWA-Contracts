@@ -19,10 +19,10 @@ describe("MTokenUpgrade", function () {
         const _c = fixture[cName];
         for (const _mt of [mt, mtSide]) {
           await _mt.setRevoker(bob.address);
-          await _mt.setRevoker(bob.address);
-          await _mt.setDelay(100000);
-          await _mt.setDelay(100000);
+          await _mt.connect(bob).acceptRevoker();
         }
+        await _c.setGovDelay(100000);
+        await _c.setGovDelay(100000);
         if (cName.startsWith("mtMsg")) {
           await _c.setDelay(100000);
           await _c.setDelay(100000);
@@ -32,7 +32,7 @@ describe("MTokenUpgrade", function () {
           .to.be.revertedWithCustomError(_c, "OwnableUnauthorizedAccount")
           .withArgs(alice.address);
 
-        const revokeErr = cName.startsWith("mtMsg") ? "OwnableUnauthorizedAccount" : "NotRevoker";
+        const revokeErr = cName.startsWith("mtMsg") ? "OwnableUnauthorizedAccount" : "NotOwnerOrRevoker";
         await expect(_c.connect(alice).revokeNextUpgrade())
           .to.be.revertedWithCustomError(_c, revokeErr)
           .withArgs(alice.address);
@@ -61,11 +61,10 @@ describe("MTokenUpgrade", function () {
         const _c = fixture[cName];
         for (const _mt of [mt, mtSide]) {
           await _mt.setRevoker(bob.address);
-          await _mt.setRevoker(bob.address);
-          await _mt.setDelay(100000);
-          await _mt.setDelay(100000);
+          await _mt.connect(bob).acceptRevoker();
         }
-
+        await _c.setGovDelay(100000);
+        await _c.setGovDelay(100000);
         if (cName.startsWith("mtMsg")) {
           await _c.setDelay(100000);
           await _c.setDelay(100000);
@@ -104,6 +103,13 @@ describe("MTokenUpgrade", function () {
         expect(await upgrades.erc1967.getImplementationAddress(_c.target))
           .to.equal(impl2.target);
         expect(await MTokenMain2.attach(_c.target).version()).to.equal(2);
+
+        // the authorization is consumed: same request cannot be executed twice
+        expect(await _c.nextImplementation()).to.equal(zeroAddr);
+        expect(await _c.nextUpgradeToAndCallDataHash()).to.equal(ethers.ZeroHash);
+        expect(await _c.etNextUpgradeToAndCall()).to.equal(0);
+        await expect(_c.connect(owner).upgradeToAndCall(impl2.target, "0x"))
+          .to.be.revertedWithCustomError(_c, "InvalidUpgradeToAndCallImpl");
       });
 
     });

@@ -5,24 +5,26 @@ const {
 const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 const { expect } = require("chai");
 const {
-  deployTestFixture, getTS,
+  deployTestFixture, getTS, setupDelay,
   addrTo32Bytes,
   zeroAddr, fakeSolanaAddr, fakeSolanaAddr2,
   INITIAL_OZ_PER_TOKEN,
 } = require("./MTokenTestUtils.js");
 
+const DAY = 24 * 3600;
+
 const ozPerToken = INITIAL_OZ_PER_TOKEN;
 
 function calcMintToReqId(receiverAddr, amt, nonce) {
   const req = ethers.AbiCoder.defaultAbiCoder().encode(
-    ["uint8", "address", "uint256", "uint256"], [10, receiverAddr, amt, nonce]);
+    ["address", "uint256", "uint256"], [receiverAddr, amt, nonce]);
   return ethers.keccak256(req);
 }
 
 function calcForcedTransferReqId(from, to, value, data, extraData, nonce) {
   const req = ethers.AbiCoder.defaultAbiCoder().encode(
-    ["uint8", "address", "address", "uint256", "bytes", "bytes", "uint256"],
-    [9, from, to, value, data, extraData, nonce]
+    ["address", "address", "uint256", "bytes", "bytes", "uint256"],
+    [from, to, value, data, extraData, nonce]
   );
   return ethers.keccak256(req);
 }
@@ -30,113 +32,186 @@ function calcForcedTransferReqId(from, to, value, data, extraData, nonce) {
 describe("MTokenFT", function () {
 
   describe("delayedSet", function () {
-    const testCases = [ 
-      {c: "mt",  field: "delay",                  zeroVal: 0,        initVal: 0,        newVal: 12345},
-      {c: "mt",  field: "messenger",              zeroVal: zeroAddr, initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000001"},
-      {c: "mt",  field: "revoker",                zeroVal: zeroAddr, initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000002"},
-      {c: "mt",  field: "operator",               zeroVal: zeroAddr, initVal: "opAddr", newVal: "0x0000000000000000000000000000000000000003"},
-      {c: "mt",  field: "reserveFeed",            zeroVal: zeroAddr, initVal: "rfAddr", newVal: "0x0000000000000000000000000000000000000004"},
-      {c: "mt",  field: "fallbackFeed",           zeroVal: zeroAddr, initVal: "fbAddr", newVal: "0x0000000000000000000000000000000000000005"},
-      {c: "mt",  field: "rateLimiter",            zeroVal: zeroAddr, initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000006"},
-      {c: "mt",  field: "forcedTransferReceiver", zeroVal: zeroAddr, initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000007"},
+    // delay/operator/revoker/govDelay are covered by MTokenRoles.js
+    const testCases = [
+      {field: "messenger",              initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000001"},
+      {field: "reserveFeed",            initVal: "rfAddr", newVal: "0x0000000000000000000000000000000000000004"},
+      {field: "fallbackFeed",           initVal: "fbAddr", newVal: "0x0000000000000000000000000000000000000005"},
+      {field: "rateLimiter",            initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000006"},
+      {field: "forcedTransferReceiver", initVal: zeroAddr, newVal: "0x0000000000000000000000000000000000000007"},
+      {field: "feeCollector",           initVal: "fcAddr", newVal: "0x0000000000000000000000000000000000000008"},
     ];
 
-    it("setDelay: MIN_DELAY", async function () {
-        const { mt } = await loadFixture(deployTestFixture);
-
-        for (const delay of [0, 1, 43, 888, 3599]) {
-          await expect(mt.setDelay(delay)).to.be.revertedWithCustomError(mt, "DelayTooSmall");
-        }
-        await expect(mt.setDelay(7 * 24 * 3600 + 1)).to.be.revertedWithCustomError(mt, "DelayTooLarge");
-
-        await mt.setDelay(3600); // ok
-    });
-
-    // MToken stores pending delayed-set info in requestMap (keyed by OP constant).
-    // OP values mirror the constants in MToken.sol.
+    // MToken stores pending delayed-set info in requestMap (keyed by keccak256 of OP name).
+    // Keys mirror the bytes32 constants in MToken.sol / TimeLockerUpgradeable.sol.
     const mtFieldToReqId = {
-      delay:                  ethers.zeroPadValue("0x01", 32),
-      operator:               ethers.zeroPadValue("0x02", 32),
-      revoker:                ethers.zeroPadValue("0x03", 32),
-      messenger:              ethers.zeroPadValue("0x04", 32),
-      reserveFeed:            ethers.zeroPadValue("0x05", 32),
-      fallbackFeed:           ethers.zeroPadValue("0x06", 32),
-      rateLimiter:            ethers.zeroPadValue("0x07", 32),
-      forcedTransferReceiver: ethers.zeroPadValue("0x08", 32),
+      messenger:              ethers.keccak256(ethers.toUtf8Bytes("OP_SET_MESSENGER")),
+      reserveFeed:            ethers.keccak256(ethers.toUtf8Bytes("OP_SET_RESERVE_FEED")),
+      fallbackFeed:           ethers.keccak256(ethers.toUtf8Bytes("OP_SET_FALLBACK_FEED")),
+      rateLimiter:            ethers.keccak256(ethers.toUtf8Bytes("OP_SET_RATE_LIMITER")),
+      forcedTransferReceiver: ethers.keccak256(ethers.toUtf8Bytes("OP_SET_FORCED_TRANSFER_RECEIVER")),
+      feeCollector:           ethers.keccak256(ethers.toUtf8Bytes("OP_SET_FEE_COLLECTOR")),
     };
 
-    for (const {c, field, zeroVal, initVal, newVal} of testCases) {
+    for (const {field, initVal, newVal} of testCases) {
       const _Field = field[0].toUpperCase() + field.substring(1);
       const setter = 'set' + _Field;
-      const revokeFunc = 'revokeNext' + _Field;
       const reqEvent = 'Set' + _Field + 'Request';
       const eftEvent = 'Set' + _Field + 'Effected';
 
-      it(c + "." + setter, async function () {
-        const { mt, reserveFeed, operator, owner, alice, bob } = await loadFixture(deployTestFixture);
+      it("mt." + setter, async function () {
+        const { mt, reserveFeed, feeCollector, alice, bob } = await loadFixture(deployTestFixture);
 
-        const _c = mt;
         let _initVal = initVal;
-        if (initVal == "opAddr") { _initVal = operator.address; }
         if (initVal == "rfAddr") { _initVal = reserveFeed.target; }
         if (initVal == "fbAddr") { _initVal = zeroAddr; }
+        if (initVal == "fcAddr") { _initVal = feeCollector.address; }
 
-        expect(await _c[field]()).to.equal(_initVal);
+        expect(await mt[field]()).to.equal(_initVal);
 
-        const delay = 10000;
-        await mt.setDelay(delay);
-        await mt.setDelay(delay);
+        // one day satisfies both bounds: delay [1h, 48h] and govDelay [1d, 7d]
+        const delay = DAY;
+        await setupDelay(mt, delay, delay);
         expect(await mt.delay()).to.equal(delay);
-        if (field == "delay") { _initVal = delay; }
 
         // MToken uses requestMap: pending info lives in requestMap[reqId].
-        // A second call while a request is pending reverts; requestMap is cleared after execution.
+        // A second call while pending reverts with TooEarlyToExecute;
+        // requestMap is cleared after execution.
         const reqId = mtFieldToReqId[field];
 
         // initial: no pending request
         expect((await mt.requestMap(reqId)).effectiveTime).to.equal(0n);
 
         // first call: queues, emits Request event
-        const tx1 = await _c[setter](newVal);
+        const tx1 = await mt[setter](newVal);
         const ts1 = await getTS(tx1);
-        await expect(tx1).to.emit(_c, reqEvent).withArgs(_initVal, newVal, anyValue);
-        expect(await _c[field]()).to.equal(_initVal);
+        await expect(tx1).to.emit(mt, reqEvent).withArgs(_initVal, newVal, anyValue);
+        expect(await mt[field]()).to.equal(_initVal);
         expect((await mt.requestMap(reqId)).effectiveTime).to.equal(BigInt(ts1 + delay));
 
         // second call while pending: TooEarlyToExecute
-        await expect(_c[setter](newVal))
+        await expect(mt[setter](newVal))
           .to.be.revertedWithCustomError(mt, "TooEarlyToExecute")
           .withArgs(reqId);
 
         // execute after delay, requestMap entry is cleared
         await time.increase(delay + 1);
-        await expect(_c[setter](newVal)).to.emit(_c, eftEvent).withArgs(newVal);
-        expect(await _c[field]()).to.equal(newVal);
+        await expect(mt[setter](newVal)).to.emit(mt, eftEvent).withArgs(newVal);
+        expect(await mt[field]()).to.equal(newVal);
         expect((await mt.requestMap(reqId)).effectiveTime).to.equal(0n);
 
         // make alice the revoker
         await mt.setRevoker(alice.address);
         await time.increase(delay * 3);
-        await mt.setRevoker(alice.address);
+        await mt.connect(alice).acceptRevoker();
 
         // re-queue so there is something to revoke
-        await _c[setter](newVal);
-        const revokerSigner = revokeFunc == "revokeNextRevoker" ? owner : alice;
-        await _c.connect(revokerSigner)[revokeFunc]();
+        await mt[setter](newVal);
+        await mt.connect(alice).revokeRequest(reqId);
         expect((await mt.requestMap(reqId)).effectiveTime).to.equal(0n);
 
-        // non-revoker/non-owner can't revoke (bob is neither revoker nor owner)
-        await expect(_c.connect(bob)[revokeFunc]())
-          .to.be.revertedWithCustomError(_c, revokeFunc == "revokeNextRevoker" ? "OwnableUnauthorizedAccount" : "NotRevoker")
+        // non-revoker/non-owner can't revoke
+        await expect(mt.connect(bob).revokeRequest(reqId))
+          .to.be.revertedWithCustomError(mt, "NotOwnerOrRevoker")
           .withArgs(bob.address);
+
+        // re-queue and verify owner (in addition to revoker) can also revoke (onlyOwnerOrRevoker)
+        await mt[setter](newVal);
+        await mt.revokeRequest(reqId); // owner
+        expect((await mt.requestMap(reqId)).effectiveTime).to.equal(0n);
 
         // non-owner can't set
-        await expect(_c.connect(bob)[setter](newVal))
-          .to.be.revertedWithCustomError(_c, "OwnableUnauthorizedAccount")
+        await expect(mt.connect(bob)[setter](newVal))
+          .to.be.revertedWithCustomError(mt, "OwnableUnauthorizedAccount")
           .withArgs(bob.address);
-
       });
 
+    }
+  });
+
+  describe("delayedOps", function () {
+
+    const testCases = [
+      {
+        name: "enableCcSend",
+        setupFunc: "disableCcSend",
+        actionFunc: "enableCcSend",
+        reqId: ethers.keccak256(ethers.toUtf8Bytes("OP_ENABLE_CC_SEND")),
+        reqEvent: "EnableCCSendRequest",
+        eftEvent: "EnableCCSendEffected",
+        stateGetter: "ccSendDisabled",
+      },
+      {
+        name: "unpause",
+        setupFunc: "pause",
+        actionFunc: "unpause",
+        reqId: ethers.keccak256(ethers.toUtf8Bytes("OP_UNPAUSE")),
+        reqEvent: "UnpauseRequest",
+        eftEvent: "Unpaused",
+        stateGetter: "paused",
+      },
+    ];
+    for (const { name, setupFunc, actionFunc, reqId, reqEvent, eftEvent, stateGetter } of testCases) {
+      it(name, async function () {
+        const { mt, operator, alice, bob } = await loadFixture(deployTestFixture);
+
+        const delay = 10000;
+        await setupDelay(mt, delay, DAY);
+
+        // initial state
+        expect(await mt[stateGetter]()).to.equal(false);
+        expect((await mt.requestMap(reqId)).effectiveTime).to.equal(0n);
+
+        await mt.connect(operator)[setupFunc]();
+        expect(await mt[stateGetter]()).to.equal(true);
+
+        // first call: queues, emits Request event
+        const tx1 = await mt[actionFunc]();
+        const ts1 = await getTS(tx1);
+        await expect(tx1).to.emit(mt, reqEvent).withArgs(anyValue);
+        expect(await mt[stateGetter]()).to.equal(true);
+        expect((await mt.requestMap(reqId)).effectiveTime).to.equal(BigInt(ts1 + delay));
+
+        // second call while pending: TooEarlyToExecute
+        await expect(mt[actionFunc]())
+          .to.be.revertedWithCustomError(mt, "TooEarlyToExecute")
+          .withArgs(reqId);
+
+        // execute after delay
+        await time.increase(delay + 1);
+        await expect(mt[actionFunc]()).to.emit(mt, eftEvent);
+        expect(await mt[stateGetter]()).to.equal(false);
+        expect((await mt.requestMap(reqId)).effectiveTime).to.equal(0n);
+
+        // set alice as revoker (revoker rotation is gated by govDelay)
+        await mt.setRevoker(alice.address);
+        await time.increase(DAY + 1);
+        await mt.connect(alice).acceptRevoker();
+
+        // re-setup and re-queue so there is something to revoke
+        await mt.connect(operator)[setupFunc]();
+        await mt[actionFunc]();
+        await mt.connect(alice).revokeRequest(reqId); // revoker can revoke
+        expect((await mt.requestMap(reqId)).effectiveTime).to.equal(0n);
+        expect(await mt[stateGetter]()).to.equal(true); // still disabled/paused
+
+        // owner can also revoke (onlyOwnerOrRevoker)
+        await mt[actionFunc](); // re-queue (still disabled/paused)
+        await mt.revokeRequest(reqId); // owner
+        expect((await mt.requestMap(reqId)).effectiveTime).to.equal(0n);
+        expect(await mt[stateGetter]()).to.equal(true); // still disabled/paused
+
+        // non-revoker can't revoke
+        await mt[actionFunc](); // re-queue
+        await expect(mt.connect(bob).revokeRequest(reqId))
+          .to.be.revertedWithCustomError(mt, "NotOwnerOrRevoker")
+          .withArgs(bob.address);
+
+        // non-owner can't call action
+        await expect(mt.connect(alice)[actionFunc]())
+          .to.be.revertedWithCustomError(mt, "OwnableUnauthorizedAccount")
+          .withArgs(alice.address);
+      });
     }
 
   });
@@ -151,6 +226,7 @@ describe("MTokenFT", function () {
         mt.connect(owner).setOperator(zeroAddr),
         mt.connect(owner).setReserveFeed(zeroAddr),
         mt.connect(owner).setForcedTransferReceiver(zeroAddr),
+        mt.connect(owner).setFeeCollector(zeroAddr),
       ];
 
       for (const testCase of testCases) {
@@ -172,8 +248,8 @@ describe("MTokenFT", function () {
         ["OwnableUnauthorizedAccount", mt.connect(alice).setRevoker(alice.address)],
         ["OwnableUnauthorizedAccount", mt.connect(alice).setRateLimiter(alice.address)],
         ["OwnableUnauthorizedAccount", mt.connect(alice).setForcedTransferReceiver(alice.address)],
-        ["OwnableUnauthorizedAccount", mt.connect(alice).setDisableCcSend(true)],
-        ["OwnableUnauthorizedAccount", mt.connect(alice).revokeNextRevoker()],
+        ["OwnableUnauthorizedAccount", mt.connect(alice).enableCcSend()],
+        ["NotOwnerOrOperator", mt.connect(alice).revokeNextRevoker()],
         ["OwnableUnauthorizedAccount", mt.connect(alice).unpause()],
         ["OwnableUnauthorizedAccount", mt.connect(alice).forcedTransfer(alice.address, bob.address, 123, 111, "0x123456", "0x12345678")],
         // onlyOperator
@@ -184,20 +260,15 @@ describe("MTokenFT", function () {
         ["NotOperator", mt.connect(alice).ccDiscardRateLimitedMsg(456)],
         ["NotOperator", mt.connect(alice).ccBatchProcessRateLimitedMsgs([123, 456])],
         ["NotOperator", mt.connect(alice).ccBatchDiscardRateLimitedMsgs([123, 456])],
-        // onlyOperator
+        ["NotOperator", mt.connect(alice).disableCcSend()],
         ["NotOperator", mt.connect(alice).mintTo(alice.address, 1, 2, ozPerToken)],
         ["NotOperator", mt.connect(alice).redeem(123, alice.address, ozPerToken, "0x")],
         // onlyMessenger
         ["NotMessenger", mt.connect(alice).ccSendToken(alice.address, bob.address, 123)],
         ["NotMessenger", mt.connect(alice).ccSendMintBudget(123, alice.address)],
         ["NotMessenger", mt.connect(alice).ccReceive("0x1234")],
-        // onlyRevoker
-        ["NotRevoker", mt.connect(alice).revokeRequest(ethers.keccak256("0x1234"))],
-        ["NotRevoker", mt.connect(alice).revokeNextDelay()],
-        ["NotRevoker", mt.connect(alice).revokeNextOperator()],
-        ["NotRevoker", mt.connect(alice).revokeNextMessenger()],
-        ["NotRevoker", mt.connect(alice).revokeNextForcedTransferReceiver()],
-        ["NotRevoker", mt.connect(alice).revokeRequest(ethers.keccak256("0x1234"))],
+        // onlyOwnerOrRevoker
+        ["NotOwnerOrRevoker", mt.connect(alice).revokeRequest(ethers.keccak256("0x1234"))],
       ];
 
       for (const [errType, testCase] of testCases) {
@@ -251,64 +322,138 @@ describe("MTokenFT", function () {
         .to.emit(mt, "Paused").withArgs(operator.address);
       expect(await mt.paused()).to.equal(true);
 
-      await expect(mt.unpause())
-        .to.emit(mt, "Unpaused").withArgs(owner.address);
+      // delay=0: first call queues, second call executes
+      await expect(mt.unpause()).to.emit(mt, "UnpauseRequest").withArgs(anyValue);
+      expect(await mt.paused()).to.equal(true);
+      await expect(mt.unpause()).to.emit(mt, "Unpaused");
       expect(await mt.paused()).to.equal(false);
+    });
+
+    it("unpause request cannot be pre-planted to bypass pause delay", async function () {
+      const { mt, operator } = await loadFixture(deployTestFixture);
+      const reqId = ethers.keccak256(ethers.toUtf8Bytes("OP_UNPAUSE"));
+
+      const delay = 10000;
+      await setupDelay(mt, delay, DAY);
+
+      // defense 1: cannot create an unpause request while not paused
+      expect(await mt.paused()).to.equal(false);
+      await expect(mt.unpause()).to.be.revertedWithCustomError(mt, "NotPaused");
+      expect((await mt.requestMap(reqId)).effectiveTime).to.equal(0n);
+
+      // defense 2: a new pause revokes any pending unpause request
+      await mt.connect(operator).pause();
+      await expect(mt.unpause()).to.emit(mt, "UnpauseRequest").withArgs(anyValue);
+      await time.increase(delay + 1); // request matures but is not executed
+
+      // operator pauses again (new incident) — the matured request must not survive
+      await expect(mt.connect(operator).pause())
+        .to.emit(mt, "RequestRevoked").withArgs(reqId);
+      expect((await mt.requestMap(reqId)).effectiveTime).to.equal(0n);
+
+      // owner must go through the full delay again
+      await expect(mt.unpause()).to.emit(mt, "UnpauseRequest").withArgs(anyValue);
+      expect(await mt.paused()).to.equal(true);
+      await expect(mt.unpause())
+        .to.be.revertedWithCustomError(mt, "TooEarlyToExecute")
+        .withArgs(reqId);
+
+      await time.increase(delay + 1);
+      await expect(mt.unpause()).to.emit(mt, "Unpaused");
+      expect(await mt.paused()).to.equal(false);
+    });
+
+    it("enableCcSend request cannot be pre-planted to bypass disable delay", async function () {
+      const { mt, operator } = await loadFixture(deployTestFixture);
+      const reqId = ethers.keccak256(ethers.toUtf8Bytes("OP_ENABLE_CC_SEND"));
+
+      const delay = 10000;
+      await setupDelay(mt, delay, DAY);
+
+      // defense 1: cannot create an enable request while cc-send is not disabled
+      expect(await mt.ccSendDisabled()).to.equal(false);
+      await expect(mt.enableCcSend()).to.be.revertedWithCustomError(mt, "CcSendNotDisabled");
+      expect((await mt.requestMap(reqId)).effectiveTime).to.equal(0n);
+
+      // defense 2: a new disable revokes any pending enable request
+      await mt.connect(operator).disableCcSend();
+      await expect(mt.enableCcSend()).to.emit(mt, "EnableCCSendRequest").withArgs(anyValue);
+      await time.increase(delay + 1); // request matures but is not executed
+
+      // operator disables again (new incident) — the matured request must not survive
+      await expect(mt.connect(operator).disableCcSend())
+        .to.emit(mt, "RequestRevoked").withArgs(reqId);
+      expect((await mt.requestMap(reqId)).effectiveTime).to.equal(0n);
+
+      // owner must go through the full delay again
+      await expect(mt.enableCcSend()).to.emit(mt, "EnableCCSendRequest").withArgs(anyValue);
+      expect(await mt.ccSendDisabled()).to.equal(true);
+      await expect(mt.enableCcSend())
+        .to.be.revertedWithCustomError(mt, "TooEarlyToExecute")
+        .withArgs(reqId);
+
+      await time.increase(delay + 1);
+      await expect(mt.enableCcSend()).to.emit(mt, "EnableCCSendEffected");
+      expect(await mt.ccSendDisabled()).to.equal(false);
     });
 
     describe("mintTo/redeem", function () {
       for (const op of ["operator"]) {
         it(op, async function () {
           const { mt, operator, alice } = await loadFixture(deployTestFixture);
-          await mt.setDelay(10000);
-          await mt.setDelay(10000);
+          await setupDelay(mt, 10000, DAY);
           await mt.connect(operator).increaseMintBudget(50000);
           const _op = operator;
 
+          // setupDelay advanced the chain a day, so ozPerToken has decayed
+          // below INITIAL_OZ_PER_TOKEN — read the live value instead
+          let oz = await mt.ozPerToken();
+
           // prepare to mint1
-          await expect(mt.connect(_op).mintTo(alice.address, 10001, 1, ozPerToken))
+          await expect(mt.connect(_op).mintTo(alice.address, 10001, 1, oz))
             .to.emit(mt, "MintRequest")
             .withArgs(alice.address, 10001, 1);
 
           // prepare to mint2
-          await expect(mt.connect(_op).mintTo(alice.address, 10002, 2, ozPerToken))
+          await expect(mt.connect(_op).mintTo(alice.address, 10002, 2, oz))
             .to.emit(mt, "MintRequest")
             .withArgs(alice.address, 10002, 2);
 
           // prepare to mint3
-          await mt.connect(_op).mintTo(alice.address, 50001, 3, ozPerToken);
+          await mt.connect(_op).mintTo(alice.address, 50001, 3, oz);
 
           // not enough delay
           const reqHash2 = calcMintToReqId(alice.address, 10002, 2);
-          await expect(mt.connect(_op).mintTo(alice.address, 10002, 2, ozPerToken))
+          await expect(mt.connect(_op).mintTo(alice.address, 10002, 2, oz))
             .to.be.revertedWithCustomError(mt, "TooEarlyToExecute")
             .withArgs(reqHash2);
 
           // not enough bugdet
           await time.increase(10000);
-          await expect(mt.connect(_op).mintTo(alice.address, 50001, 3, ozPerToken))
+          oz = await mt.ozPerToken();
+          await expect(mt.connect(_op).mintTo(alice.address, 50001, 3, oz))
             .to.be.revertedWithCustomError(mt, "MintBudgetNotEnough")
             .withArgs(50000, 50001);
 
           // finish mint1
-          await expect(mt.connect(_op).mintTo(alice.address, 10001, 1, ozPerToken))
+          await expect(mt.connect(_op).mintTo(alice.address, 10001, 1, oz))
             .to.changeTokenBalances(mt, [zeroAddr, alice.address], [0, 10001]);
           expect(await mt.mintBudget()).to.equal(39999);
 
           // finish mint2
-          await expect(mt.connect(_op).mintTo(alice.address, 10002, 2, ozPerToken))
+          await expect(mt.connect(_op).mintTo(alice.address, 10002, 2, oz))
             .to.changeTokenBalances(mt, [zeroAddr, alice.address], [0, 10002]);
           expect(await mt.mintBudget()).to.equal(29997);
 
           // redeem1
           await mt.connect(alice).transfer(operator.address, 4321);
-          await expect(mt.connect(_op).redeem(4321, alice.address, ozPerToken, "0xc001"))
+          await expect(mt.connect(_op).redeem(4321, alice.address, oz, "0xc001"))
             .to.changeTokenBalances(mt, [operator.address, zeroAddr], [-4321, 0])
           expect(await mt.mintBudget()).to.equal(29997 + 4321);
 
           // redeem2
           await mt.connect(alice).transfer(operator.address, 1357);
-          await expect(mt.connect(_op).redeem(1357, alice.address, ozPerToken, "0xc002"))
+          await expect(mt.connect(_op).redeem(1357, alice.address, oz, "0xc002"))
             .to.emit(mt, "Redeem").withArgs(alice.address, 1357, "0xc002");
           expect(await mt.mintBudget()).to.equal(29997 + 4321 + 1357);
         });
@@ -317,8 +462,7 @@ describe("MTokenFT", function () {
 
     it("mintTo: blocked", async function () {
       const { mt, operator, alice } = await loadFixture(deployTestFixture);
-      await mt.setDelay(10000);
-      await mt.setDelay(10000);
+      await setupDelay(mt, 10000, DAY);
       await mt.connect(operator).increaseMintBudget(50000);
       const _op = operator;
 
@@ -326,15 +470,15 @@ describe("MTokenFT", function () {
       await mt.connect(operator).addToBlockedList(alice.address);
       expect(await mt.isBlocked(alice.address)).to.equal(true);
 
-      // mintTo
-      await mt.connect(_op).mintTo(alice.address, 10001, 1, ozPerToken)
+      // mintTo (read the live ozPerToken — setupDelay advanced the chain a day)
+      await mt.connect(_op).mintTo(alice.address, 10001, 1, await mt.ozPerToken())
       await time.increase(10000);
-      await expect(mt.connect(_op).mintTo(alice.address, 10001, 1, ozPerToken))
+      await expect(mt.connect(_op).mintTo(alice.address, 10001, 1, await mt.ozPerToken()))
         .to.changeTokenBalances(mt, [zeroAddr, alice.address], [0, 10001]);
     });
 
     it("globalPause", async function () {
-      const { mt, reserveFeed, owner, operator, fakeNft, alice, bob } = await loadFixture(deployTestFixture);
+      const { mt, reserveFeed, owner, operator, alice, bob } = await loadFixture(deployTestFixture);
       await reserveFeed.setReserve(100000);
       await mt.connect(operator).increaseMintBudget(50000);
       // mint tokens to alice (stage + execute, delay=0)
@@ -355,6 +499,8 @@ describe("MTokenFT", function () {
         .to.be.revertedWithCustomError(mt, "GlobalPaused");
       await expect(mt.connect(bob).transferFrom(alice.address, bob.address, 100))
         .to.be.revertedWithCustomError(mt, "GlobalPaused");
+      await expect(mt.connect(operator).ccProcessRateLimitedMsg(0))
+        .to.be.revertedWithCustomError(mt, "GlobalPaused");
 
       // set messenger to owner for ccSendToken (setMessenger is not paused)
       await mt.setMessenger(owner);
@@ -368,7 +514,8 @@ describe("MTokenFT", function () {
       await expect(mt.connect(operator).ccSendMintBudget(1000, operator.address))
         .to.be.revertedWithCustomError(mt, "GlobalPaused");
 
-      // unpause — all operations resume
+      // unpause — all operations resume (delay=0: two calls needed)
+      await mt.unpause();
       await mt.unpause();
       await expect(mt.connect(alice).transfer(bob.address, 100))
         .to.emit(mt, "Transfer").withArgs(alice.address, bob.address, 100);
@@ -377,11 +524,11 @@ describe("MTokenFT", function () {
     it("revokeRequest", async function() {
       const { mt, operator, alice, bob } = await loadFixture(deployTestFixture);
       await mt.setRevoker(bob.address);
-      await mt.setRevoker(bob.address);
+      await mt.connect(bob).acceptRevoker();
 
       const reqId = calcMintToReqId(alice.address, 12345, 1);
       await expect(mt.connect(alice).revokeRequest(reqId))
-            .to.be.revertedWithCustomError(mt, "NotRevoker")
+            .to.be.revertedWithCustomError(mt, "NotOwnerOrRevoker")
             .withArgs(alice.address);
 
       const tx1 = await mt.connect(operator).mintTo(alice.address, 10001, 1, ozPerToken);
@@ -393,6 +540,15 @@ describe("MTokenFT", function () {
         .to.emit(mt, "RequestRevoked")
         .withArgs(reqId1);
       expect((await mt.requestMap(reqId1)).effectiveTime).to.equal(0);
+
+      // owner can also revoke (onlyOwnerOrRevoker)
+      const tx2 = await mt.connect(operator).mintTo(alice.address, 10001, 2, ozPerToken);
+      const reqId2 = calcMintToReqId(alice.address, 10001, 2);
+      expect((await mt.requestMap(reqId2)).effectiveTime).to.not.equal(0);
+      await expect(await mt.revokeRequest(reqId2)) // owner
+        .to.emit(mt, "RequestRevoked")
+        .withArgs(reqId2);
+      expect((await mt.requestMap(reqId2)).effectiveTime).to.equal(0);
     });
 
     it("transfer", async function () {
@@ -456,12 +612,12 @@ describe("MTokenFT", function () {
     it("forcedTransfer", async function () {
       const { mt, owner, operator, alice, bob } = await loadFixture(deployTestFixture);
       const delay = 10000;
-      await mt.setDelay(delay);
-      await mt.setDelay(delay);
+      await setupDelay(mt, delay, DAY);
       await mt.connect(operator).increaseMintBudget(50000);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
+      // read the live ozPerToken — setupDelay advanced the chain a day
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, await mt.ozPerToken());
       await time.increase(delay);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
+      await mt.connect(operator).mintTo(alice.address, 20000, 0, await mt.ozPerToken());
 
       // non-owner
       await expect(mt.connect(alice).forcedTransfer(alice.address, bob.address, 123, 1, "0x123456", "0x12345678"))
@@ -480,9 +636,9 @@ describe("MTokenFT", function () {
         .to.be.revertedWithCustomError(mt, "InvalidForcedTransferReceiver")
         .withArgs(bob.address);
 
-      // configure forcedTransferReceiver
+      // configure forcedTransferReceiver (gated by govDelay)
       await mt.setForcedTransferReceiver(bob.address);
-      await time.increase(delay);
+      await time.increase(DAY + 1);
       await mt.setForcedTransferReceiver(bob.address);
       expect(await mt.forcedTransferReceiver()).to.equal(bob.address);
 
@@ -502,10 +658,10 @@ describe("MTokenFT", function () {
         .to.be.revertedWithCustomError(mt, "TooEarlyToExecute")
         .withArgs(reqHash5);
 
-      // revoke
+      // revoke (revoker rotation is gated by govDelay)
       await mt.setRevoker(bob.address);
-      await time.increase(delay);
-      await mt.setRevoker(bob.address);
+      await time.increase(DAY + 1);
+      await mt.connect(bob).acceptRevoker();
       await expect(mt.connect(bob).revokeRequest(reqHash5))
         .to.emit(mt, "RequestRevoked")
         .withArgs(reqHash5);
@@ -583,11 +739,12 @@ describe("MTokenFT", function () {
       await mt.setMessenger(owner);
       await mt.setMessenger(owner);
 
-      await mt.setDisableCcSend(true);
+      await mt.connect(operator).disableCcSend();
       await expect(mt.ccSendToken(alice.address, bob.address, 0))
         .to.be.revertedWithCustomError(mt, "CcSendDisabled");
 
-      await mt.setDisableCcSend(false);
+      await mt.enableCcSend();
+      await mt.enableCcSend(); // execute (delay=0, two-call pattern)
       await expect(mt.ccSendToken(alice.address, bob.address, 0))
         .to.be.revertedWithCustomError(mt, "ZeroValue");
 

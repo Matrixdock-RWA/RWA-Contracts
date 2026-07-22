@@ -28,7 +28,7 @@ contract MTokenMinter is DelayedUpgradeable {
         address[] calldata _tokensAcceptedByB
     ) internal onlyInitializing {
         __Ownable_init_unchained(_owner);
-        __Ownable2StepTimeLock_init_unchained();
+        __TimeLockerUpgradeable_init_unchained();
         poolAccountA = _poolAccountA;
         poolAccountB = _poolAccountB;
         for (uint256 i; i < _tokensAcceptedByA.length; i++) {
@@ -58,10 +58,6 @@ contract MTokenMinter is DelayedUpgradeable {
     event RedeemRequest(address indexed transferredToken, address indexed forToken,
         address indexed requestor, address pool, uint256 amount, uint256 preprice, uint256 slippage, bytes extraData);
     event Rescue(address indexed token, address indexed to, uint256 amount);
-
-    function getDelay() internal pure override returns (uint64) {
-        return 3600 * 12; //upgrade must be delayed by 12 hours
-    }
 
     function setPoolAccountA(address _poolAccountA) onlyOwner() external {
         _checkZeroAddress(_poolAccountA);
@@ -116,5 +112,10 @@ contract MTokenMinter is DelayedUpgradeable {
         IERC20(token).safeTransfer(receiver, amount);
         emit Rescue(token, receiver, amount);
     }
+
+    function getDelay() internal pure override returns (uint64) {
+        return 0;
+    }
+
 }
 

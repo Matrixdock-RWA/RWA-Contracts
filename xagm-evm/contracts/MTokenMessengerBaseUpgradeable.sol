@@ -7,19 +7,15 @@ abstract contract MTokenMessengerBaseUpgradeable is DelayedUpgradeable {
     address public ccClient;
 
     uint64 public delay;
-    uint64 public nextDelay;
-    uint64 public etNextDelay; // effective time
-
-    event SetDelayRequest(uint64 oldDelay, uint64 newDelay, uint64 et);
-    event SetDelayEffected(uint64 newDelay);
-    event NextUpgradeRevoked(bytes32 nextUpgradeToAndCallDataHash);
+    uint64 private __nextDelay;   // dead slot — preserved for upgradeable storage layout
+    uint64 private __etNextDelay; // dead slot — preserved for upgradeable storage layout
 
     function __MTokenMessengerBase_init(
         address _ccClient,
         address _initialOwner
     ) internal onlyInitializing {
         __Ownable_init(_initialOwner);
-        __Ownable2StepTimeLock_init();
+        __TimeLockerUpgradeable_init();
         ccClient = _ccClient;
     }
 
@@ -28,28 +24,14 @@ abstract contract MTokenMessengerBaseUpgradeable is DelayedUpgradeable {
     }
 
     function setDelay(uint64 _delay) public onlyOwner {
-        if (_delay < MIN_DELAY) {
-            revert DelayTooSmall();
-        }
-        if (_delay > MAX_DELAY) {
-            revert DelayTooLarge();
-        }
-
-        uint64 et = etNextDelay;
-        if (_delay == nextDelay && et != 0 && et < block.timestamp) {
+        checkDelay(_delay);
+        uint64 et = ensureDelay(OP_SET_DELAY, _delay, delay);
+        if (et == 0) {
             delay = _delay;
             emit SetDelayEffected(_delay);
         } else {
-            uint64 _currDelay = delay;
-            uint64 _etNextDelay = uint64(block.timestamp) + _currDelay;
-            nextDelay = _delay;
-            etNextDelay = _etNextDelay;
-            emit SetDelayRequest(_currDelay, _delay, _etNextDelay);
+            emit SetDelayRequest(delay, _delay, et);
         }
     }
 
-    function revokeNextUpgrade() public onlyOwner {
-        etNextUpgradeToAndCall = 0;
-        emit NextUpgradeRevoked(nextUpgradeToAndCallDataHash);
-    }
 }

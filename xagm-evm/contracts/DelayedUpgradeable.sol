@@ -2,22 +2,21 @@
 pragma solidity ^0.8.24;
 
 import {UUPSUpgradeable} from "@openzeppelin/contracts/proxy/utils/UUPSUpgradeable.sol";
-import {Ownable2StepTimeLockUpgradeable} from "./Ownable2StepTimeLockUpgradeable.sol";
+import {TimeLockerUpgradeable} from "./TimeLockerUpgradeable.sol";
 
-abstract contract DelayedUpgradeable is Ownable2StepTimeLockUpgradeable, UUPSUpgradeable {
+abstract contract DelayedUpgradeable is TimeLockerUpgradeable, UUPSUpgradeable {
     // upgradeToAndCall() is delayed
     address public nextImplementation;
     bytes32 public nextUpgradeToAndCallDataHash;
     uint64 public etNextUpgradeToAndCall; //effective time
 
     event UpgradeToAndCallRequest(address newImplementation, bytes data);
+    event NextUpgradeRevoked(bytes32 nextDataHash);
 
     error InvalidUpgradeToAndCallImpl();
     error InvalidUpgradeToAndCallData();
     error TooEarlyToUpgradeToAndCall();
     error ZeroAddress();
-
-    function getDelay() internal virtual returns (uint64);
 
     function requestUpgradeToAndCall(
         address _newImplementation,
@@ -26,7 +25,7 @@ abstract contract DelayedUpgradeable is Ownable2StepTimeLockUpgradeable, UUPSUpg
         _checkZeroAddress(_newImplementation);
         nextImplementation = _newImplementation;
         nextUpgradeToAndCallDataHash = keccak256(_data);
-        etNextUpgradeToAndCall = uint64(block.timestamp) + getDelay();
+        etNextUpgradeToAndCall = uint64(block.timestamp) + getGovDelay();
         emit UpgradeToAndCallRequest(_newImplementation, _data);
     }
 
@@ -46,6 +45,12 @@ abstract contract DelayedUpgradeable is Ownable2StepTimeLockUpgradeable, UUPSUpg
             revert TooEarlyToUpgradeToAndCall();
         }
 
+        // consume the authorization before upgrading, so a request
+        // can be executed only once
+        delete nextImplementation;
+        delete nextUpgradeToAndCallDataHash;
+        delete etNextUpgradeToAndCall;
+
         // _authorizeUpgrade(newImplementation);
         // _upgradeToAndCallUUPS(newImplementation, data);
         super.upgradeToAndCall(_newImplementation, _data);
@@ -54,6 +59,16 @@ abstract contract DelayedUpgradeable is Ownable2StepTimeLockUpgradeable, UUPSUpg
     function _authorizeUpgrade(
         address newImplementation
     ) internal override onlyOwner {}
+
+    // default implementation
+    function revokeNextUpgrade() public virtual onlyOwner {
+        _revokeNextUpgrade();
+    }
+
+    function _revokeNextUpgrade() internal {
+        etNextUpgradeToAndCall = 0;
+        emit NextUpgradeRevoked(nextUpgradeToAndCallDataHash);
+    }
 
     function _checkZeroAddress(address _addr) internal pure {
         if (_addr == address(0)) {
