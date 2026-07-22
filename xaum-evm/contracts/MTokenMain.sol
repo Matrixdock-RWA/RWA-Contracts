@@ -41,8 +41,7 @@ contract MTokenMain is MToken {
 
     function setReserveFeed(address addr) public onlyOwner {
         _checkZeroAddress(addr);
-        bytes32 reqId = bytes32(uint256(OP_SET_RESERVE_FEED));
-        uint64 et = ensureDelay(reqId, uint160(addr));
+        uint64 et = ensureGovDelay(OP_SET_RESERVE_FEED, uint160(addr));
         if (et == 0) {
             reserveFeed = addr;
             emit SetReserveFeedEffected(addr);
@@ -53,22 +52,13 @@ contract MTokenMain is MToken {
 
     function setFallbackFeed(address addr) public onlyOwner {
         _checkZeroAddress(addr);
-        bytes32 reqId = bytes32(uint256(OP_SET_FALLBACK_FEED));
-        uint64 et = ensureDelay(reqId, uint160(addr));
+        uint64 et = ensureGovDelay(OP_SET_FALLBACK_FEED, uint160(addr));
         if (et == 0) {
             fallbackFeed = addr;
             emit SetFallbackFeedEffected(addr);
         } else {
             emit SetFallbackFeedRequest(fallbackFeed, addr, et);
         }
-    }
-
-    function revokeNextReserveFeed() public onlyRevoker {
-        revoke(bytes32(uint256(OP_SET_RESERVE_FEED)));
-    }
-
-    function revokeNextFallbackFeed() public onlyRevoker {
-        revoke(bytes32(uint256(OP_SET_FALLBACK_FEED)));
     }
 
     function increaseMintBudget(uint112 mintBudgetDelta) public onlyOperator {

@@ -6,12 +6,12 @@ import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import "./Delayable.sol";
+import "./DelayedRolesUpgradeable.sol";
 import "./interfaces/ICustomerManager.sol";
 import "./interfaces/IBullionMinter.sol";
 import "./interfaces/IUniswapV3PoolState.sol";
 
-contract XAUMSwapPool is Delayable {
+contract XAUMSwapPool is DelayedRolesUpgradeable {
 
     using SafeERC20 for IERC20;
 
@@ -31,9 +31,11 @@ contract XAUMSwapPool is Delayable {
     uint public priceDeviationRatio; // price = getPrice() must follow: (1 - priceDeviationRatio / PRICE_FACTOR_BASE) * dex swap price <= price.
     bool public priceCheck;
 
+    bytes32 constant OP_SET_TOKEN_HOLDER = keccak256("OP_SET_TOKEN_HOLDER");
+
     address public tokenHolder;
-    address public nextTokenHolder;
-    uint64 public etNextTokenHolder;
+    address private __nextTokenHolder;   // dead slot — preserved for upgradeable storage layout
+    uint64 private __etNextTokenHolder;  // dead slot — preserved for upgradeable storage layout
 
     mapping(address => bool) public tokenWhiteList;
 
@@ -79,7 +81,7 @@ contract XAUMSwapPool is Delayable {
         address _tokenHolder,
         address _dexPool
     ) internal onlyInitializing {
-        __Delayable_init(_owner, _operator, _revoker);
+        __DelayedRolesUpgradeable_init(_owner, _operator, _revoker);
         customerManager = _customerManager;
         xaum = _xaum;
         xaumPriceOracle = _xaumPriceOracle;
@@ -89,19 +91,17 @@ contract XAUMSwapPool is Delayable {
 
     function setTokenHolder(address newHolder) public onlyOwner {
         _checkZeroAddress(newHolder);
-        uint64 et = etNextTokenHolder;
-        if (newHolder == nextTokenHolder && et != 0 && et < block.timestamp) {
+        uint64 et = ensureDelay(OP_SET_TOKEN_HOLDER, uint160(newHolder), delay);
+        if (et == 0) {
             tokenHolder = newHolder;
             emit SetTokenHolderEffected(newHolder);
         } else {
-            nextTokenHolder = newHolder;
-            etNextTokenHolder = uint64(block.timestamp) + delay;
-            emit SetTokenHolderRequest(tokenHolder, newHolder, etNextTokenHolder);
+            emit SetTokenHolderRequest(tokenHolder, newHolder, et);
         }
     }
 
     function revokeNextTokenHolder() public onlyRevoker {
-        etNextTokenHolder = 0;
+        revoke(OP_SET_TOKEN_HOLDER);
     }
 
     function setPriceDeviationRatio(uint _priceDeviationRatio) public onlyOwner {

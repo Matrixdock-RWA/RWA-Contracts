@@ -1,6 +1,8 @@
 const {
+  time,
   loadFixture,
 } = require("@nomicfoundation/hardhat-toolbox/network-helpers");
+const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 const { expect } = require("chai");
 const { 
   deployTestFixture, getTS,
@@ -9,6 +11,19 @@ const {
 } = require("./MTokenTestUtils.js");
 
 const zeroBytes32 = '0x0000000000000000000000000000000000000000000000000000000000000000';
+
+const HOUR = 3600;
+const DAY = 24 * 3600;
+const OP_LZ_UNPAUSE = ethers.keccak256(ethers.toUtf8Bytes("OP_LZ_UNPAUSE"));
+
+// arm the messenger's timelocks: govDelay = 1d, delay = 4h
+// (both start at 0, so the first call requests and the second executes immediately)
+async function armDelays(mtMsg) {
+  await mtMsg.setGovDelay(DAY);
+  await mtMsg.setGovDelay(DAY);
+  await mtMsg.setDelay(4 * HOUR);
+  await mtMsg.setDelay(4 * HOUR);
+}
 
 // pad zeros to left
 function addrToBytes32(addr) {
@@ -39,7 +54,11 @@ describe("MTokenMessenger", function () {
     it("setDelay", async function () {
       const {mtMsg} = await loadFixture(deployTestFixture);
       await expect(mtMsg.setDelay(3599)).to.be.revertedWithCustomError(mtMsg, "DelayTooSmall");
-      await expect(mtMsg.setDelay(7 * 24 * 3600 + 1)).to.be.revertedWithCustomError(mtMsg, "DelayTooLarge");
+      await expect(mtMsg.setDelay(48 * 3600 + 1)).to.be.revertedWithCustomError(mtMsg, "DelayTooLarge");
+      // cross-check: delay may not exceed govDelay (still 0)
+      await expect(mtMsg.setDelay(3600 * 2)).to.be.revertedWithCustomError(mtMsg, "DelayTooLarge");
+      await mtMsg.setGovDelay(24 * 3600);
+      await mtMsg.setGovDelay(24 * 3600);
       await mtMsg.setDelay(3600 * 2); // ok
     });
 
@@ -519,11 +538,11 @@ describe("MTokenMessenger", function () {
       const {mtMsg, owner, operator, alice, bob} = await loadFixture(deployTestFixture);
 
       expect(await mtMsg.lzPaused()).to.equal(false);
-      await expect(mtMsg.connect(alice).setLZPaused(true))
+      await expect(mtMsg.connect(alice).lzPause())
         .to.be.revertedWithCustomError(mtMsg, "OwnableUnauthorizedAccount")
         .withArgs(alice);
 
-      await mtMsg.connect(owner).setLZPaused(true); // ok
+      await mtMsg.connect(owner).lzPause(); // ok
       expect(await mtMsg.lzPaused()).to.equal(true);
 
       await expect(
@@ -541,6 +560,132 @@ describe("MTokenMessenger", function () {
       ).to.be.revertedWith("LZ_PAUSED");
     });
 
+    it("lzUnpause", async function () {
+      const {mtMsg, owner, alice} = await loadFixture(deployTestFixture);
+
+      // only owner
+      await expect(mtMsg.connect(alice).lzUnpause())
+        .to.be.revertedWithCustomError(mtMsg, "OwnableUnauthorizedAccount")
+        .withArgs(alice.address);
+
+      await armDelays(mtMsg);
+      await mtMsg.connect(owner).lzPause();
+      expect(await mtMsg.lzPaused()).to.equal(true);
+
+      // first call only requests; the channel stays paused
+      const tx1 = await mtMsg.connect(owner).lzUnpause();
+      const ts1 = await getTS(tx1);
+      await expect(tx1).to.emit(mtMsg, "LZUnpauseRequest").withArgs(ts1 + 4 * HOUR);
+      expect(await mtMsg.lzPaused()).to.equal(true);
+      // gated by the operational delay (4h), not govDelay (1d)
+      expect((await mtMsg.requestMap(OP_LZ_UNPAUSE)).effectiveTime).to.equal(BigInt(ts1 + 4 * HOUR));
+
+      // second call before the delay matures reverts
+      await expect(mtMsg.connect(owner).lzUnpause())
+        .to.be.revertedWithCustomError(mtMsg, "TooEarlyToExecute")
+        .withArgs(OP_LZ_UNPAUSE);
+      expect(await mtMsg.lzPaused()).to.equal(true);
+
+      // executes after the delay
+      await time.increase(4 * HOUR + 1);
+      await expect(mtMsg.connect(owner).lzUnpause())
+        .to.emit(mtMsg, "LZUnpauseEffected");
+      expect(await mtMsg.lzPaused()).to.equal(false);
+      expect((await mtMsg.requestMap(OP_LZ_UNPAUSE)).effectiveTime).to.equal(0n);
+    });
+
+    it("revokeLzUnpause", async function () {
+      const {mtMsg, owner, alice} = await loadFixture(deployTestFixture);
+
+      await armDelays(mtMsg);
+      await mtMsg.connect(owner).lzPause();
+      await expect(mtMsg.connect(owner).lzUnpause())
+        .to.emit(mtMsg, "LZUnpauseRequest").withArgs(anyValue);
+
+      // only owner
+      await expect(mtMsg.connect(alice).revokeLzUnpause())
+        .to.be.revertedWithCustomError(mtMsg, "OwnableUnauthorizedAccount")
+        .withArgs(alice.address);
+
+      // revoke removes the pending request; the channel stays paused
+      await expect(mtMsg.connect(owner).revokeLzUnpause())
+        .to.emit(mtMsg, "RequestRevoked").withArgs(OP_LZ_UNPAUSE);
+      expect((await mtMsg.requestMap(OP_LZ_UNPAUSE)).effectiveTime).to.equal(0n);
+      expect(await mtMsg.lzPaused()).to.equal(true);
+
+      // idempotent: revoking again with nothing pending succeeds silently
+      await expect(mtMsg.connect(owner).revokeLzUnpause())
+        .to.not.emit(mtMsg, "RequestRevoked");
+
+      // even after the original delay would have matured, lzUnpause starts
+      // a fresh request instead of executing the revoked one
+      await time.increase(4 * HOUR + 1);
+      await expect(mtMsg.connect(owner).lzUnpause())
+        .to.emit(mtMsg, "LZUnpauseRequest").withArgs(anyValue);
+      expect(await mtMsg.lzPaused()).to.equal(true);
+
+      // and the fresh request still completes normally
+      await time.increase(4 * HOUR + 1);
+      await expect(mtMsg.connect(owner).lzUnpause())
+        .to.emit(mtMsg, "LZUnpauseEffected");
+      expect(await mtMsg.lzPaused()).to.equal(false);
+    });
+
+    it("lzUnpause request cannot be pre-planted to bypass pause delay", async function () {
+      const {mtMsg, owner} = await loadFixture(deployTestFixture);
+
+      await armDelays(mtMsg);
+
+      // defense 1: cannot create an unpause request while not paused
+      expect(await mtMsg.lzPaused()).to.equal(false);
+      await expect(mtMsg.connect(owner).lzUnpause())
+        .to.be.revertedWithCustomError(mtMsg, "LZNotPaused");
+      expect((await mtMsg.requestMap(OP_LZ_UNPAUSE)).effectiveTime).to.equal(0n);
+
+      // defense 2: a new pause revokes any pending unpause request
+      await mtMsg.connect(owner).lzPause();
+      await expect(mtMsg.connect(owner).lzUnpause())
+        .to.emit(mtMsg, "LZUnpauseRequest").withArgs(anyValue);
+      await time.increase(4 * HOUR + 1); // request matures but is not executed
+
+      // owner pauses again (new incident) — the matured request must not survive
+      await expect(mtMsg.connect(owner).lzPause())
+        .to.emit(mtMsg, "RequestRevoked").withArgs(OP_LZ_UNPAUSE);
+      expect((await mtMsg.requestMap(OP_LZ_UNPAUSE)).effectiveTime).to.equal(0n);
+
+      // owner must go through the full delay again
+      await expect(mtMsg.connect(owner).lzUnpause())
+        .to.emit(mtMsg, "LZUnpauseRequest").withArgs(anyValue);
+      expect(await mtMsg.lzPaused()).to.equal(true);
+      await expect(mtMsg.connect(owner).lzUnpause())
+        .to.be.revertedWithCustomError(mtMsg, "TooEarlyToExecute")
+        .withArgs(OP_LZ_UNPAUSE);
+
+      await time.increase(4 * HOUR + 1);
+      await expect(mtMsg.connect(owner).lzUnpause())
+        .to.emit(mtMsg, "LZUnpauseEffected");
+      expect(await mtMsg.lzPaused()).to.equal(false);
+    });
+
+  });
+
+  describe("MTokenMessenger (CCIP only)", function () {
+    it("init", async function () {
+      const [owner, ccipClient, ccipRouter] = await ethers.getSigners();
+
+      const LZEndpointV2Placeholder = await ethers.getContractFactory("LZEndpointV2Placeholder");
+      const lzEndpoint = await LZEndpointV2Placeholder.deploy();
+
+      const MTokenMessenger = await ethers.getContractFactory("MTokenMessenger");
+      const mtMsg = await upgrades.deployProxy(MTokenMessenger,
+        [ccipClient.address, owner.address], // init args
+        {
+          kind: "uups",
+          constructorArgs: [ccipRouter.address, lzEndpoint.target],
+          unsafeAllow: ['constructor', 'state-variable-immutable']
+        },
+      );
+    });
   });
 
 });

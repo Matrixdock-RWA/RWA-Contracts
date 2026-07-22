@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.24;
 
-import "./Delayable.sol";
+import "./DelayedRolesUpgradeable.sol";
 
-contract CustomerManager is Delayable {
+contract CustomerManager is DelayedRolesUpgradeable {
 
     event WhiteListUpdated(address[] addresses, bool status);
 
@@ -34,7 +34,7 @@ contract CustomerManager is Delayable {
         address _operator,
         address _revoker
     ) internal onlyInitializing {
-        __Delayable_init(_owner, _operator, _revoker);
+        __DelayedRolesUpgradeable_init(_owner, _operator, _revoker);
         delay = _delay;
     }
 

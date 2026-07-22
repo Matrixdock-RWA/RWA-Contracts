@@ -1,9 +1,11 @@
 const {
+  time,
   loadFixture,
 } = require("@nomicfoundation/hardhat-toolbox/network-helpers");
+const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 const { expect } = require("chai");
 const {
-  deployTestFixture, zeroAddr,
+  deployTestFixture, getTS, setupDelay, zeroAddr,
 } = require("./MTokenTestUtils.js");
 
 async function sign712Pack(signer, nftAddr, ownerAddr, amt, bullionId, deadline) {
@@ -69,6 +71,67 @@ function verify712Pack(nftAddr, ownerAddr, amt, bullionId, deadline, sig, extraA
 }
 
 describe("BullionNFT", function () {
+
+  const OP_SET_PACK_SIGNER = ethers.keccak256(ethers.toUtf8Bytes("OP_SET_PACK_SIGNER"));
+
+  describe("delayedOps", function () {
+
+    it("setPackSigner", async function () {
+      const { mt, nft, operator, packSigner, alice } = await loadFixture(deployTestFixture);
+      const _c = nft.connect(operator);
+
+      const delay = 10000;
+      await setupDelay(mt, delay, 24 * 3600);
+
+      const initVal = packSigner.address;
+      const newVal = "0x0000000000000000000000000000000000000011";
+      const getEt = async () => (await nft.requestMap(OP_SET_PACK_SIGNER)).effectiveTime;
+
+      // initial state: no pending request
+      expect(await nft.packSigner()).to.equal(initVal);
+      expect(await getEt()).to.equal(0n);
+
+      // first call: queues, emits SetPackSignerRequest
+      const tx1 = await _c.setPackSigner(newVal);
+      const ts1 = await getTS(tx1);
+      await expect(tx1).to.emit(nft, "SetPackSignerRequest").withArgs(initVal, newVal, anyValue);
+      expect(await nft.packSigner()).to.equal(initVal);
+      expect(await getEt()).to.equal(ts1 + delay);
+
+      // second call while pending: TooEarlyToExecute
+      await expect(_c.setPackSigner(newVal))
+        .to.be.revertedWithCustomError(nft, "TooEarlyToExecute")
+        .withArgs(OP_SET_PACK_SIGNER);
+
+      // execute after delay — entry deleted after execution
+      await time.increase(delay + 1);
+      await expect(_c.setPackSigner(newVal)).to.emit(nft, "SetPackSignerEffected").withArgs(newVal);
+      expect(await nft.packSigner()).to.equal(newVal);
+      expect(await getEt()).to.equal(0n);
+
+      // make alice the revoker on MToken (NFT reads revoker from MToken;
+      // revoker rotation is gated by govDelay)
+      await mt.setRevoker(alice.address);
+      await time.increase(24 * 3600 + 1);
+      await mt.connect(alice).acceptRevoker();
+
+      // re-queue so there is something to revoke
+      await _c.setPackSigner(newVal);
+      await nft.connect(alice).revokeNextPackSigner();
+      expect(await getEt()).to.equal(0n);
+
+      // non-revoker can't revoke
+      await expect(nft.connect(packSigner).revokeNextPackSigner())
+        .to.be.revertedWithCustomError(nft, "NotRevoker")
+        .withArgs(packSigner.address);
+
+      // non-operator can't set
+      await expect(nft.connect(alice).setPackSigner(newVal))
+        .to.be.revertedWithCustomError(nft, "NotOperator")
+        .withArgs(alice.address);
+    });
+
+  });
 
   it("init", async function () {
     const {mt, nft, owner, packSigner} = await loadFixture(deployTestFixture);

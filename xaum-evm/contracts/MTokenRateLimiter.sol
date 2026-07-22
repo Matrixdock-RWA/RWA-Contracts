@@ -3,10 +3,19 @@ pragma solidity ^0.8.24;
 
 import {RateLimiter} from "@layerzerolabs/oapp-evm/contracts/oapp/utils/RateLimiter.sol";
 import {IMTokenRateLimiter} from "./interfaces/IMTokenRateLimiter.sol";
+import {DelayedRolesUpgradeable} from "./DelayedRolesUpgradeable.sol";
 import {MToken} from "./MToken.sol";
 
-// MTokenRateLimiter is non-upgradable
-contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter {
+/**
+ Operation           | Initiator  | Timelock | Revoker
+---------------------+------------+----------+---------------
+addToWhitelist       | Owner      | govDelay | Owner/Revoker
+removeFromWhitelist  | Owner      | no       | no
+setRateLimit         | Owner      | delay    | Owner/Revoker
+setSingleMsgLimit    | Owner      | delay    | Owner/Revoker
+ */
+
+contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter, DelayedRolesUpgradeable {
     struct RateLimitedMsg {
         address receiver;
         uint256 amount;
@@ -16,7 +25,12 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter {
     // We use a fake dstEID to achieve global rate limiting.
     uint32 constant GLOBAL_DST_EID = 1;
 
+    // delayed operation tags
+    bytes32 constant OP_SET_RATE_LIMIT = keccak256("OP_SET_RATE_LIMIT");
+    bytes32 constant OP_SET_SINGLE_MSG_LIMIT = keccak256("OP_SET_SINGLE_MSG_LIMIT");
+
     // mToken address
+    /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
     MToken public immutable mToken;
 
     // state variables
@@ -26,8 +40,13 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter {
     uint256 public pendingMsgCount;
 
     // events
-    event SingleMsgLimitUpdated(uint256 indexed newLimit);
-    event WhitelistUpdated(bytes sender, address indexed receiver, bool flag);
+    event SetRateLimitRequest(uint256 limit, uint256 window, uint64 et);
+    event SetRateLimitEffected(uint256 limit, uint256 window);
+    event SetSingleMsgLimitRequest(uint256 limit, uint64 et);
+    event SetSingleMsgLimitEffected(uint256 indexed newLimit);
+    event AddToWhitelistRequest(bytes sender, address indexed receiver, uint64 et);
+    event AddToWhitelistEffected(bytes sender, address indexed receiver);
+    event RemovedFromWhitelist(bytes sender, address indexed receiver);
     event RateLimitedMsgRemoved(uint256 indexed index);
     event RateLimitedMsgAdded(
         uint256 indexed index,
@@ -38,7 +57,6 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter {
 
     // errors
     error NotMToken(address sender);
-    error NotMTokenOwner(address sender);
     error RateLimitedMsgInvalid(uint256 index);
 
     modifier onlyMToken() {
@@ -48,15 +66,29 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter {
         _;
     }
 
-    modifier onlyOwner() {
-        if (msg.sender != mToken.owner()) {
-            revert NotMTokenOwner(msg.sender);
+    modifier onlyOwnerOrRevoker() {
+        if (msg.sender != owner() && msg.sender != revoker) {
+            revert NotOwnerOrRevoker(msg.sender);
         }
         _;
     }
 
-    constructor(address _mToken, uint256 limit, uint256 window) {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor(address _mToken) {
         mToken = MToken(_mToken);
+        _disableInitializers();
+    }
+
+    // Note: govDelay and delay are intentionally initialized to 0 (delayed ops execute immediately).
+    // Call setGovDelay / setDelay twice after deployment to activate the time-locks.
+    function initialize(
+        address _owner,
+        address _operator,
+        address _revoker,
+        uint256 limit,
+        uint256 window
+    ) public initializer {
+        __DelayedRolesUpgradeable_init(_owner, _operator, _revoker);
         _setRateLimit(limit, window);
     }
 
@@ -68,7 +100,18 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter {
     //   window=0 — LZ's _amountCanBeSent uses (_window > 0 ? _window : 1), so no division-by-zero.
     //              Effectively means instant full decay each block (unlimited throughput), not "disabled".
     function setRateLimit(uint256 limit, uint256 window) public onlyOwner {
-        _setRateLimit(limit, window);
+        // Packs (window, limit) into uint160: upper 32 bits = window, lower 128 bits = limit.
+        // Assumes window < 2^32 (~136 years) and limit < 2^128. Both hold for any realistic
+        // rate-limit config, but values outside these ranges silently truncate and two distinct
+        // (limit, window) pairs could produce the same newVal, weakening the second-call check.
+        uint160 _newVal = uint160(window << 128 | limit);
+        uint64 et = ensureDelay(OP_SET_RATE_LIMIT, _newVal, delay);
+        if (et == 0) {
+            _setRateLimit(limit, window);
+            emit SetRateLimitEffected(limit, window);
+        } else {
+            emit SetRateLimitRequest(limit, window, et);
+        }
     }
 
     function _setRateLimit(uint256 limit, uint256 window) private {
@@ -80,6 +123,10 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter {
             window: window
         });
         _setRateLimits(configs);
+    }
+
+    function revokeSetRateLimit() public onlyOwnerOrRevoker {
+        revoke(OP_SET_RATE_LIMIT);
     }
 
     // Return the configured rate limit parameters.
@@ -94,19 +141,52 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter {
 
     // Configure the single message limit for incoming cross-chain token transfers.
     function setSingleMsgLimit(uint256 limit) public onlyOwner {
-        singleMsgLimit = limit;
-        emit SingleMsgLimitUpdated(limit);
+        // Assumes limit < 2^160. Holds for any realistic token amount (18 decimals, 2^160 ≈ 1.46e30
+        // tokens), but values outside this range silently truncate and weaken the second-call check.
+        uint64 et = ensureDelay(OP_SET_SINGLE_MSG_LIMIT, uint160(limit), delay);
+        if (et == 0) {
+            singleMsgLimit = limit;
+            emit SetSingleMsgLimitEffected(limit);
+        } else {
+            emit SetSingleMsgLimitRequest(limit, et);
+        }
     }
 
-    // Configure the whitelist for incoming cross-chain token transfers.
-    function updateWhitelist(
+    function revokeSetSingleMsgLimit() public onlyOwnerOrRevoker {
+        revoke(OP_SET_SINGLE_MSG_LIMIT);
+    }
+
+    // Add a (sender, receiver) pair to the whitelist for incoming cross-chain token transfers.
+    function addToWhitelist(
         bytes calldata sender,
-        address receiver,
-        bool flag
+        address receiver
     ) public onlyOwner {
-        bytes32 key = getWhitelistKey(sender, receiver);
-        whitelist[key] = flag;
-        emit WhitelistUpdated(sender, receiver, flag);
+        bytes32 reqHash = keccak256(abi.encode(sender, receiver));
+        uint64 et = ensureGovDelay(reqHash, 0);
+        if (et == 0) {
+            whitelist[getWhitelistKey(sender, receiver)] = true;
+            emit AddToWhitelistEffected(sender, receiver);
+        } else {
+            emit AddToWhitelistRequest(sender, receiver, et);
+        }
+    }
+
+    function revokeAddToWhitelist(
+        bytes calldata sender,
+        address receiver
+    ) public onlyOwnerOrRevoker {
+        revoke(keccak256(abi.encode(sender, receiver)));
+    }
+
+    // Remove a (sender, receiver) pair from the whitelist immediately.
+    // Note: if an addToWhitelist request is still pending for the same pair, it will re-add the
+    // entry when executed. Call revokeAddToWhitelist first to cancel it if that is not desired.
+    function removeFromWhitelist(
+        bytes calldata sender,
+        address receiver
+    ) public onlyOwner {
+        whitelist[getWhitelistKey(sender, receiver)] = false;
+        emit RemovedFromWhitelist(sender, receiver);
     }
 
     // Check whether an incoming cross-chain token transfer is in the whitelist.
@@ -114,8 +194,7 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter {
         bytes calldata sender,
         address receiver
     ) public view returns (bool) {
-        bytes32 key = getWhitelistKey(sender, receiver);
-        return whitelist[key];
+        return whitelist[getWhitelistKey(sender, receiver)];
     }
 
     // Get the key for the whitelist.
@@ -149,7 +228,7 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter {
     function removeRateLimitedMsg(
         uint256 index
     )
-        public
+        external
         onlyMToken
         returns (address receiver, uint256 amount, bytes memory sender)
     {
@@ -202,7 +281,7 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter {
     function _outflow2(
         uint32 _dstEid,
         uint256 _amount
-    ) internal returns (bool) {
+    ) private returns (bool) {
         // @dev By default dstEid that have not been explicitly set will return amountCanBeSent == 0.
         RateLimit storage rl = rateLimits[_dstEid];
 
@@ -239,4 +318,5 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter {
             );
         return (currentAmountInFlight, _amountCanBeReceived);
     }
+
 }

@@ -25,11 +25,13 @@ abstract contract BullionEnumerableNFTBase is
 
     // a packSigner endorse the information of a bullion
     address public packSigner;
-    address public nextPackSigner;
-    uint64 public etNextPackSigner; //effective time
+    address private __nextPackSigner;   // dead slot — preserved for upgradeable storage layout
+    uint64 private __etNextPackSigner;  // dead slot — preserved for upgradeable storage layout
 }
 
 contract BullionEnumerableNFT is BullionEnumerableNFTBase {
+    bytes32 constant OP_SET_PACK_SIGNER = keccak256("OP_SET_PACK_SIGNER");
+
     bytes32 private constant PACK_TYPEHASH =
         keccak256(
             "Pack(address owner,uint256 amount,uint256 bullion,uint256 deadline)"
@@ -40,8 +42,6 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
     event LockPlaced(uint indexed _user, bytes reason);
     event LockReleased(uint indexed _user);
 
-    error NotOperator(address);
-    error NotRevoker(address);
     error BlockedAccount(address);
     error TokenLocked(uint);
     error TransferToContract();
@@ -117,7 +117,7 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
         __ERC721_init(name_, symbol_);
         __EIP712_init_unchained(symbol_, "1");
         __Ownable_init(_owner);
-        __Ownable2StepTimeLock_init_unchained();
+        __TimeLockerUpgradeable_init_unchained();
         mtokenContract = _mtokenContract; // cannot change after init
         packSigner = _packSigner;
     }
@@ -132,15 +132,13 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
 
     function setPackSigner(address addr) public onlyOperator {
         _checkZeroAddress(addr);
-        uint64 et = etNextPackSigner;
         uint64 delay = IMToken(mtokenContract).delay();
-        if (addr == nextPackSigner && et != 0 && et < block.timestamp) {
+        uint64 et = ensureDelay(OP_SET_PACK_SIGNER, uint160(addr), delay);
+        if (et == 0) {
             packSigner = addr;
             emit SetPackSignerEffected(addr);
         } else {
-            nextPackSigner = addr;
-            etNextPackSigner = uint64(block.timestamp) + delay;
-            emit SetPackSignerRequest(packSigner, addr, etNextPackSigner);
+            emit SetPackSignerRequest(packSigner, addr, et);
         }
     }
 
@@ -149,11 +147,11 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
     }
 
     function revokeNextPackSigner() public onlyRevoker {
-        etNextPackSigner = 0;
+        revoke(OP_SET_PACK_SIGNER);
     }
 
-    function revokeNextUpgrade() public onlyRevoker {
-        etNextUpgradeToAndCall = 0;
+    function revokeNextUpgrade() public override onlyRevoker {
+        _revokeNextUpgrade();
     }
 
     function addToLockedList(
@@ -364,6 +362,7 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
             unpack(bullions[i]);
         }
     }
+
 }
 
 contract BullionEnumerableNFT_UT is BullionEnumerableNFT {

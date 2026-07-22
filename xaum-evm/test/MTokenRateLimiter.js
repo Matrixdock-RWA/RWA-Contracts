@@ -46,52 +46,150 @@ describe("MTokenRateLimiter", function () {
 
   it("setRateLimit", async function () {
     const { rateLimiter, alice } = await loadFixture(deployTestFixture);
-    expect(await rateLimiter.getRateLimit()).to.deep.equal([0, 0]);
+    expect(await rateLimiter.getRateLimit()).to.deep.equal([0n, 0n]);
 
     await expect(rateLimiter.connect(alice).setRateLimit(10000, 3600))
-      .to.be.revertedWithCustomError(rateLimiter, "NotMTokenOwner")
+      .to.be.revertedWithCustomError(rateLimiter, "OwnableUnauthorizedAccount")
       .withArgs(alice.address);
 
+    // first call: request (rate limit unchanged)
     await expect(rateLimiter.setRateLimit(10000, 3600))
-      .to.emit(rateLimiter, "RateLimitsChanged")
-      .withArgs([[FAKE_DST_EID, 10000, 3600]]);
-    expect(await rateLimiter.getRateLimit()).to.deep.equal([10000, 3600]);
+      .to.emit(rateLimiter, "SetRateLimitRequest")
+      .withArgs(10000, 3600, anyArg => anyArg > 0n);
+    expect(await rateLimiter.getRateLimit()).to.deep.equal([0n, 0n]);
 
-    await expect(rateLimiter.setRateLimit(20000, 4800))
-      .to.emit(rateLimiter, "RateLimitsChanged")
-      .withArgs([[FAKE_DST_EID, 20000, 4800]]);
-    expect(await rateLimiter.getRateLimit()).to.deep.equal([20000, 4800]);
+    // second call: execute
+    await expect(rateLimiter.setRateLimit(10000, 3600))
+      .to.emit(rateLimiter, "SetRateLimitEffected").withArgs(10000, 3600)
+      .to.emit(rateLimiter, "RateLimitsChanged").withArgs([[FAKE_DST_EID, 10000, 3600]]);
+    expect(await rateLimiter.getRateLimit()).to.deep.equal([10000n, 3600n]);
+  });
+
+  it("revokeSetRateLimit", async function () {
+    const { rateLimiter, alice } = await loadFixture(deployTestFixture);
+
+    await rateLimiter.setRateLimit(10000, 3600); // request
+    expect(await rateLimiter.getRateLimit()).to.deep.equal([0n, 0n]);
+
+    await expect(rateLimiter.connect(alice).revokeSetRateLimit())
+      .to.be.revertedWithCustomError(rateLimiter, "NotOwnerOrRevoker");
+
+    await expect(rateLimiter.revokeSetRateLimit())
+      .to.emit(rateLimiter, "RequestRevoked");
+
+    // revoke is idempotent: revoking again with no pending request
+    // succeeds silently (no event)
+    await expect(rateLimiter.revokeSetRateLimit())
+      .to.not.emit(rateLimiter, "RequestRevoked");
+
+    // after revoke, can issue a new request with different params
+    await rateLimiter.setRateLimit(20000, 7200);
+    await rateLimiter.setRateLimit(20000, 7200);
+    expect(await rateLimiter.getRateLimit()).to.deep.equal([20000n, 7200n]);
   });
 
   it("setSingleMsgLimit", async function () {
     const { rateLimiter, alice } = await loadFixture(deployTestFixture);
     await expect(rateLimiter.connect(alice).setSingleMsgLimit(1000))
-      .to.be.revertedWithCustomError(rateLimiter, "NotMTokenOwner")
+      .to.be.revertedWithCustomError(rateLimiter, "OwnableUnauthorizedAccount")
       .withArgs(alice.address);
 
+    // first call: request (limit unchanged)
     await expect(rateLimiter.setSingleMsgLimit(1000))
-      .to.emit(rateLimiter, "SingleMsgLimitUpdated")
-      .withArgs(1000);
+      .to.emit(rateLimiter, "SetSingleMsgLimitRequest");
+    expect(await rateLimiter.singleMsgLimit()).to.equal(0);
+
+    // second call: execute
+    await expect(rateLimiter.setSingleMsgLimit(1000))
+      .to.emit(rateLimiter, "SetSingleMsgLimitEffected").withArgs(1000);
     expect(await rateLimiter.singleMsgLimit()).to.equal(1000);
   });
 
-  it("updateWhitelist", async function () {
+  it("revokeSetSingleMsgLimit", async function () {
+    const { rateLimiter, alice } = await loadFixture(deployTestFixture);
+
+    await rateLimiter.setSingleMsgLimit(1000); // request
+
+    await expect(rateLimiter.connect(alice).revokeSetSingleMsgLimit())
+      .to.be.revertedWithCustomError(rateLimiter, "NotOwnerOrRevoker");
+
+    await expect(rateLimiter.revokeSetSingleMsgLimit())
+      .to.emit(rateLimiter, "RequestRevoked");
+    expect(await rateLimiter.singleMsgLimit()).to.equal(0);
+
+    // revoke is idempotent: revoking again with no pending request
+    // succeeds silently (no event)
+    await expect(rateLimiter.revokeSetSingleMsgLimit())
+      .to.not.emit(rateLimiter, "RequestRevoked");
+
+    // after revoke, can issue a new request with different params
+    await rateLimiter.setSingleMsgLimit(2000);
+    await rateLimiter.setSingleMsgLimit(2000);
+    expect(await rateLimiter.singleMsgLimit()).to.equal(2000);
+  });
+
+  it("addToWhitelist", async function () {
     const { rateLimiter, alice, bob } = await loadFixture(deployTestFixture);
     const aliceBytes = alice.address.toLowerCase();
 
-    await expect(rateLimiter.connect(alice).updateWhitelist(aliceBytes, bob.address, true))
-      .to.be.revertedWithCustomError(rateLimiter, "NotMTokenOwner")
+    await expect(rateLimiter.connect(alice).addToWhitelist(aliceBytes, bob.address))
+      .to.be.revertedWithCustomError(rateLimiter, "OwnableUnauthorizedAccount")
       .withArgs(alice.address);
 
-    await expect(rateLimiter.updateWhitelist(aliceBytes, bob.address, true))
-      .to.emit(rateLimiter, "WhitelistUpdated")
-      .withArgs(aliceBytes, bob.address, true);
+    // first call: request (whitelist unchanged)
+    await expect(rateLimiter.addToWhitelist(aliceBytes, bob.address))
+      .to.emit(rateLimiter, "AddToWhitelistRequest");
+    expect(await rateLimiter.isInWhitelist(aliceBytes, bob.address)).to.equal(false);
+
+    // second call: execute
+    await expect(rateLimiter.addToWhitelist(aliceBytes, bob.address))
+      .to.emit(rateLimiter, "AddToWhitelistEffected")
+      .withArgs(aliceBytes, bob.address);
+    expect(await rateLimiter.isInWhitelist(aliceBytes, bob.address)).to.equal(true);
+  });
+
+  it("removeFromWhitelist", async function () {
+    const { rateLimiter, alice, bob } = await loadFixture(deployTestFixture);
+    const aliceBytes = alice.address.toLowerCase();
+
+    // add first
+    await rateLimiter.addToWhitelist(aliceBytes, bob.address);
+    await rateLimiter.addToWhitelist(aliceBytes, bob.address);
     expect(await rateLimiter.isInWhitelist(aliceBytes, bob.address)).to.equal(true);
 
-    await expect(rateLimiter.updateWhitelist(aliceBytes, bob.address, false))
-      .to.emit(rateLimiter, "WhitelistUpdated")
-      .withArgs(aliceBytes, bob.address, false);
+    await expect(rateLimiter.connect(alice).removeFromWhitelist(aliceBytes, bob.address))
+      .to.be.revertedWithCustomError(rateLimiter, "OwnableUnauthorizedAccount")
+      .withArgs(alice.address);
+
+    // immediate removal, no second call needed
+    await expect(rateLimiter.removeFromWhitelist(aliceBytes, bob.address))
+      .to.emit(rateLimiter, "RemovedFromWhitelist")
+      .withArgs(aliceBytes, bob.address);
     expect(await rateLimiter.isInWhitelist(aliceBytes, bob.address)).to.equal(false);
+  });
+
+  it("revokeAddToWhitelist", async function () {
+    const { rateLimiter, alice, bob } = await loadFixture(deployTestFixture);
+    const aliceBytes = alice.address.toLowerCase();
+
+    await rateLimiter.addToWhitelist(aliceBytes, bob.address); // request
+
+    await expect(rateLimiter.connect(alice).revokeAddToWhitelist(aliceBytes, bob.address))
+      .to.be.revertedWithCustomError(rateLimiter, "NotOwnerOrRevoker");
+
+    await expect(rateLimiter.revokeAddToWhitelist(aliceBytes, bob.address))
+      .to.emit(rateLimiter, "RequestRevoked");
+    expect(await rateLimiter.isInWhitelist(aliceBytes, bob.address)).to.equal(false);
+
+    // revoke is idempotent: revoking again with no pending request
+    // succeeds silently (no event)
+    await expect(rateLimiter.revokeAddToWhitelist(aliceBytes, bob.address))
+      .to.not.emit(rateLimiter, "RequestRevoked");
+
+    // after revoke, can issue a new request
+    await rateLimiter.addToWhitelist(aliceBytes, bob.address);
+    await rateLimiter.addToWhitelist(aliceBytes, bob.address);
+    expect(await rateLimiter.isInWhitelist(aliceBytes, bob.address)).to.equal(true);
   });
 
   it("checkAndUpdateRateLimit: notMToken", async function () {
@@ -104,6 +202,7 @@ describe("MTokenRateLimiter", function () {
   it("checkAndUpdateRateLimit: consume", async function () {
     const { mt, rateLimiter, operator, alice, bob } = await loadFixture(deployTestFixture);
     await setupRateLimiter(mt, rateLimiter, operator);
+    await rateLimiter.setRateLimit(scaleUp(10000), 3600);
     await rateLimiter.setRateLimit(scaleUp(10000), 3600);
 
     await mt.ccReceiveToken(alice.address, bob.address, 1000);
@@ -128,6 +227,7 @@ describe("MTokenRateLimiter", function () {
   it("checkAndUpdateRateLimit: recover", async function () {
     const { mt, rateLimiter, operator, alice, bob } = await loadFixture(deployTestFixture);
     await setupRateLimiter(mt, rateLimiter, operator);
+    await rateLimiter.setRateLimit(scaleUp(10000), 3600);
     await rateLimiter.setRateLimit(scaleUp(10000), 3600);
 
     await mt.ccReceiveToken(alice.address, bob.address, 8000);
@@ -159,6 +259,7 @@ describe("MTokenRateLimiter", function () {
     const { mt, rateLimiter, operator, alice, bob } = await loadFixture(deployTestFixture);
     await setupRateLimiter(mt, rateLimiter, operator);
     await rateLimiter.setRateLimit(scaleUp(10000), 3600);
+    await rateLimiter.setRateLimit(scaleUp(10000), 3600);
     await mt.ccReceiveToken(alice.address, bob.address, 8000);
 
     // check events
@@ -182,7 +283,9 @@ describe("MTokenRateLimiter", function () {
     const { mt, rateLimiter, operator, alice, bob } = await loadFixture(deployTestFixture);
     await setupRateLimiter(mt, rateLimiter, operator);
     await rateLimiter.setRateLimit(scaleUp(10000), 3600);
-    await rateLimiter.updateWhitelist(alice.address, bob.address, true);
+    await rateLimiter.setRateLimit(scaleUp(10000), 3600);
+    await rateLimiter.addToWhitelist(alice.address, bob.address);
+    await rateLimiter.addToWhitelist(alice.address, bob.address);
 
     // whitelisted, not consume rate limit
     await expect(mt.ccReceiveToken(alice.address, bob.address, 4000))
@@ -197,8 +300,11 @@ describe("MTokenRateLimiter", function () {
     const { mt, rateLimiter, operator, alice, bob } = await loadFixture(deployTestFixture);
     await setupRateLimiter(mt, rateLimiter, operator);
     await rateLimiter.setSingleMsgLimit(scaleUp(1000));
+    await rateLimiter.setSingleMsgLimit(scaleUp(1000));
     await rateLimiter.setRateLimit(scaleUp(10000), 3600);
-    await rateLimiter.updateWhitelist(alice.address, bob.address, true);
+    await rateLimiter.setRateLimit(scaleUp(10000), 3600);
+    await rateLimiter.addToWhitelist(alice.address, bob.address);
+    await rateLimiter.addToWhitelist(alice.address, bob.address);
 
     // test cases
     const testCases = [
@@ -227,6 +333,7 @@ describe("MTokenRateLimiter", function () {
     const { mt, rateLimiter, operator, alice, bob } = await loadFixture(deployTestFixture);
     await setupRateLimiter(mt, rateLimiter, operator);
     await rateLimiter.setRateLimit(scaleUp(10000), 3600);
+    await rateLimiter.setRateLimit(scaleUp(10000), 3600);
     await mt.ccReceiveToken(alice.address, bob.address, 8000);
     await mt.ccReceiveToken(alice.address, bob.address, 3000); // #0
     await mt.ccReceiveToken(bob.address, alice.address, 4000); // #1
@@ -243,15 +350,31 @@ describe("MTokenRateLimiter", function () {
     await expect(mt.connect(operator).ccProcessRateLimitedMsg(1))
       .to.be.revertedWithCustomError(rateLimiter, "RateLimitedMsgInvalid")
       .withArgs(1);
+
+    // paused: processing is blocked
+    await mt.connect(operator).pause();
+    await expect(mt.connect(operator).ccProcessRateLimitedMsg(0))
+      .to.be.revertedWithCustomError(mt, "GlobalPaused");
+
+    // unpause (delay=0: two calls) and processing resumes
+    await mt.unpause();
+    await mt.unpause();
+    await expect(mt.connect(operator).ccProcessRateLimitedMsg(0))
+      .to.emit(mt, "RateLimitedMsgProcessed").withArgs(0);
   });
 
   it("ccDiscardRateLimitedMsg", async function () {
     const { mt, rateLimiter, operator, alice, bob } = await loadFixture(deployTestFixture);
     await setupRateLimiter(mt, rateLimiter, operator);
     await rateLimiter.setRateLimit(scaleUp(10000), 3600);
+    await rateLimiter.setRateLimit(scaleUp(10000), 3600);
     await mt.ccReceiveToken(alice.address, bob.address, 8000);
     await mt.ccReceiveToken(alice.address, bob.address, 3000);
     await mt.ccReceiveToken(bob.address, alice.address, 4000);
+
+    // discard has no whenNotPaused by design: malicious queued messages
+    // must be removable even while the token is paused
+    await mt.connect(operator).pause();
 
     const tx = mt.connect(operator).ccDiscardRateLimitedMsg(1);
     await expect(tx).to.emit(mt, "RateLimitedMsgDiscarded").withArgs(1);
@@ -268,6 +391,7 @@ describe("MTokenRateLimiter", function () {
   it("batch", async function () {
     const { mt, rateLimiter, operator, alice, bob } = await loadFixture(deployTestFixture);
     await setupRateLimiter(mt, rateLimiter, operator);
+    await rateLimiter.setRateLimit(scaleUp(10000), 3600);
     await rateLimiter.setRateLimit(scaleUp(10000), 3600);
     await mt.ccReceiveToken(alice.address, bob.address, 8000);
     await mt.ccReceiveToken(alice.address, bob.address, 3000); // #0
@@ -286,6 +410,7 @@ describe("MTokenRateLimiter", function () {
   it("pendingMsgs", async function () {
     const { mt, rateLimiter, operator, alice, bob } = await loadFixture(deployTestFixture);
     await setupRateLimiter(mt, rateLimiter, operator);
+    await rateLimiter.setRateLimit(scaleUp(10000), 3600);
     await rateLimiter.setRateLimit(scaleUp(10000), 3600);
 
     expect(await rateLimiter.pendingMsgCount()).to.equal(0);

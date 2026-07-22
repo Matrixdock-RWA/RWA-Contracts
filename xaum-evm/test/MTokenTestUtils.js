@@ -15,6 +15,18 @@ export async function getTS(tx) {
   return block.timestamp;
 }
 
+// activate the two time-locks on a freshly deployed contract (delay = govDelay = 0):
+// govDelay goes first — delay can never exceed govDelay — and once govDelay is set,
+// setDelay itself is time-locked (MToken: by govDelay; others: by the delay itself)
+export async function setupDelay(c, delay, govDelay) {
+  await c.setGovDelay(govDelay);
+  await c.setGovDelay(govDelay);
+  await c.setDelay(delay);
+  await ethers.provider.send("evm_increaseTime", [govDelay]);
+  await ethers.provider.send("evm_mine", []);
+  await c.setDelay(delay);
+}
+
 export async function deployTestFixture() {
   const [owner, operator, packSigner, fakeNft, alice, bob] = await ethers.getSigners();
 
@@ -65,7 +77,14 @@ export async function deployTestFixture() {
   );
 
   const MTokenRateLimiter = await ethers.getContractFactory("MTokenRateLimiter");
-  const rateLimiter = await MTokenRateLimiter.deploy(mt.target, 0, 0);
+  const rateLimiter = await upgrades.deployProxy(MTokenRateLimiter,
+    [owner.address, owner.address, owner.address, 0, 0],
+    {
+      kind: "uups",
+      constructorArgs: [mt.target],
+      unsafeAllow: ['constructor', 'state-variable-immutable'],
+    }
+  );
 
   return {
     reserveFeed, ccipRouter, lzEndpoint, // fake
