@@ -14,7 +14,13 @@ const ENotOwner: u64 = 101;
 const EUpgradeCapIdNotNone: u64 = 102;
 const ENoOwnerTransferRequest: u64 = 103;
 const EOwnerTransferNotReady: u64 = 104;
+const ENotNewOwner: u64 = 105;
+const EPendingOwnerExist: u64 = 106;
 const EUpgradeCapInvalid: u64 = 108;
+const EGovDelayTooShort: u64 = 109;
+const EGovDelayTooLong: u64 = 110;
+const EGovDelayNotReady: u64 = 111;
+const EGovDelayArgsMismatch: u64 = 112;
 
 const EInvalidTokenForMint: u64 = 200;
 const EInvalidTokenForRedeem: u64 = 201;
@@ -23,12 +29,18 @@ const EInvalidTimestamp: u64 = 203;
 const EZeroValue: u64 = 204;
 
 // === Constants ===
-const VERSION: u64 = 3;
+const VERSION: u64 = 1;
 
 // const PREPRICE_DECIMAL: u8 = 6; // 6 decimal places for preprice
 // const SLIPPAGE_DECIMAL: u8 = 6; // 6 decimal places for slippage
 const DELAY_MAX: u64 = 59; // 59 seconds, max delay for requests
-const OWNER_TRANSFER_DELAY: u64 = 12 * 60 * 60; // 12 hours
+
+// Governance-level timelock bounds (see PRD §3). gov_delay guards control-plane
+// operations (transfer_ownership, set_gov_delay). It is deliberately initialized to 0
+// on a fresh deploy (timelock disarmed) so the deployer can finish wiring and hand over
+// ownership without waiting; once armed via set_gov_delay it is bounded to [24h, 7d].
+const MIN_GOV_DELAY: u64 = 3600 * 24; // 1 day
+const MAX_GOV_DELAY: u64 = 3600 * 24 * 7; // 7 days
 
 // === Events ===
 
@@ -45,6 +57,20 @@ public struct TransferOwnershipEffected has copy, drop {
 
 public struct TransferOwnershipRevoked has copy, drop {
     owner: address,
+}
+
+public struct SetGovDelayRequest has copy, drop {
+    old_gov_delay: u64,
+    new_gov_delay: u64,
+    et: u64,
+}
+
+public struct SetGovDelayEffected has copy, drop {
+    new_gov_delay: u64,
+}
+
+public struct NextGovDelayRevoked has copy, drop {
+    pending_gov_delay: u64,
 }
 
 public struct SetPoolAccountA has copy, drop {
@@ -96,6 +122,11 @@ public struct State has key {
     owner: address,
     next_owner: Option<address>,
     next_owner_et: u64,
+    // UpgradeCap escrowed by a pending ownership transfer, released on accept/revoke.
+    pending_upgrade_cap: Option<UpgradeCap>,
+    gov_delay: u64,
+    next_gov_delay: Option<u64>,
+    next_gov_delay_et: u64,
     pool_account_a: address, //stable coin pool
     pool_account_b: address, //rwa pool
     accepted_by_a: table::Table<TypeName, bool>,
@@ -112,6 +143,12 @@ fun init(ctx: &mut TxContext) {
         owner,
         next_owner: option::none(),
         next_owner_et: 0,
+        pending_upgrade_cap: option::none(),
+        // gov_delay starts disarmed (0) so the deployer can complete wiring and ownership
+        // handover without waiting (PRD §3, invariant 3).
+        gov_delay: 0,
+        next_gov_delay: option::none(),
+        next_gov_delay_et: 0,
         pool_account_a: owner,
         pool_account_b: owner,
         accepted_by_a: table::new<TypeName, bool>(ctx),
@@ -129,34 +166,67 @@ entry fun init_upgrade_cap_id(state: &mut State, upgrade_cap: &UpgradeCap, ctx: 
     state.upgrade_cap_id = option::some(object::id(upgrade_cap));
 }
 
+entry fun set_gov_delay(state: &mut State, new_gov_delay: u64, clock: &Clock, ctx: &TxContext) {
+    check_version(state);
+    check_owner(state, ctx);
+    assert!(new_gov_delay >= MIN_GOV_DELAY, EGovDelayTooShort);
+    assert!(new_gov_delay <= MAX_GOV_DELAY, EGovDelayTooLong);
+
+    let now = clock.timestamp_ms() / 1000;
+    if (state.next_gov_delay_et == 0) {
+        let curr_gov_delay = state.gov_delay;
+        let et = now + curr_gov_delay;
+        state.next_gov_delay = option::some(new_gov_delay);
+        state.next_gov_delay_et = et;
+        event::emit(SetGovDelayRequest { old_gov_delay: curr_gov_delay, new_gov_delay, et });
+    } else {
+        assert!(state.next_gov_delay.contains(&new_gov_delay), EGovDelayArgsMismatch);
+        assert!(now >= state.next_gov_delay_et, EGovDelayNotReady);
+        state.gov_delay = new_gov_delay;
+        clear_next_gov_delay(state);
+        event::emit(SetGovDelayEffected { new_gov_delay });
+    }
+}
+
+// Cancel a pending gov_delay change. Immediate and idempotent (PRD §4.2).
+entry fun revoke_set_gov_delay(state: &mut State, ctx: &TxContext) {
+    check_version(state);
+    check_owner(state, ctx);
+    event::emit(NextGovDelayRevoked { pending_gov_delay: state.next_gov_delay.get_with_default(0) });
+    clear_next_gov_delay(state);
+}
+
 entry fun request_transfer_ownership(
     state: &mut State,
     new_owner: address,
+    upgrade_cap: UpgradeCap,
     clock: &Clock,
     ctx: &TxContext,
 ) {
     check_version(state);
     check_owner(state, ctx);
-    let et = clock.timestamp_ms() / 1000 + OWNER_TRANSFER_DELAY;
+    assert!(state.next_owner_et == 0, EPendingOwnerExist);
+    assert!(state.upgrade_cap_id.contains(&object::id(&upgrade_cap)), EUpgradeCapInvalid);
+
+    let et = clock.timestamp_ms() / 1000 + state.gov_delay;
     state.next_owner = option::some(new_owner);
     state.next_owner_et = et;
+    state.pending_upgrade_cap.fill(upgrade_cap);
     event::emit(TransferOwnershipRequest { old_owner: state.owner, new_owner, et });
 }
 
-entry fun execute_transfer_ownership(
-    state: &mut State,
-    upgrade_cap: UpgradeCap,
-    clock: &Clock,
-) {
+entry fun accept_transfer_ownership(state: &mut State, clock: &Clock, ctx: &TxContext) {
     check_version(state);
     assert!(state.next_owner.is_some(), ENoOwnerTransferRequest);
+    assert!(ctx.sender() == *state.next_owner.borrow(), ENotNewOwner);
     let now = clock.timestamp_ms() / 1000;
     assert!(now >= state.next_owner_et, EOwnerTransferNotReady);
-    assert!(state.upgrade_cap_id.contains(&object::id(&upgrade_cap)), EUpgradeCapInvalid);
+
     let new_owner = state.next_owner.extract();
-    state.next_owner_et = 0;
     let old_owner = state.owner;
     state.owner = new_owner;
+    state.next_owner_et = 0;
+    let upgrade_cap = state.pending_upgrade_cap.extract();
     transfer::public_transfer(upgrade_cap, new_owner);
     event::emit(TransferOwnershipEffected { old_owner, new_owner });
 }
@@ -167,13 +237,9 @@ entry fun revoke_transfer_ownership(state: &mut State, ctx: &TxContext) {
     assert!(state.next_owner.is_some(), ENoOwnerTransferRequest);
     state.next_owner = option::none();
     state.next_owner_et = 0;
+    let upgrade_cap = state.pending_upgrade_cap.extract();
+    transfer::public_transfer(upgrade_cap, state.owner);
     event::emit(TransferOwnershipRevoked { owner: state.owner });
-}
-
-entry fun migrate(state: &mut State, ctx: &TxContext) {
-    check_owner(state, ctx);
-    assert!(state.version < VERSION, EWrongVersion);
-    state.version = VERSION;
 }
 
 entry fun set_pool_account_a(state: &mut State, pool_account_a: address, ctx: &TxContext) {
@@ -312,6 +378,18 @@ public fun next_owner_et(state: &State): u64 {
     state.next_owner_et
 }
 
+public fun gov_delay(state: &State): u64 {
+    state.gov_delay
+}
+
+public fun next_gov_delay(state: &State): Option<u64> {
+    state.next_gov_delay
+}
+
+public fun next_gov_delay_et(state: &State): u64 {
+    state.next_gov_delay_et
+}
+
 public fun pool_account_a(state: &State): address {
     state.pool_account_a
 }
@@ -344,6 +422,11 @@ fun check_owner(state: &State, ctx: &TxContext) {
 
 fun check_non_zero(amount: u64) {
     assert!(amount > 0, EZeroValue);
+}
+
+fun clear_next_gov_delay(state: &mut State) {
+    state.next_gov_delay = option::none();
+    state.next_gov_delay_et = 0;
 }
 
 // === Test Functions ===
@@ -400,6 +483,6 @@ public(package) fun new_redeem_request_event(
 }
 
 #[test_only]
-public(package) fun set_version(state: &mut State, version: u64) {
-    state.version = version;
+public(package) fun set_gov_delay_for_testing(state: &mut State, value: u64) {
+    state.gov_delay = value;
 }

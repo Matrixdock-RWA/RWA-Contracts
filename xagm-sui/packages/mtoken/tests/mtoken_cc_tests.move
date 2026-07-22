@@ -83,11 +83,22 @@ fun receive_msg(
     }
 }
 
-#[test, expected_failure(abort_code = mtoken::ENotOwner)]
-fun cc_new_messenger_cap_err_not_owner() {
-    let mut scenario = init_xagm();
-    new_messenger_cap(&mut scenario, ALICE, ALICE);
-    abort
+fun disable_cc_send(scenario: &mut test_scenario::Scenario, caller: address) {
+    scenario.next_tx(caller);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
+        mtoken::disable_cc_send(&mut state, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+}
+
+fun check_cc_send_disabled(scenario: &mut test_scenario::Scenario, expected: bool) {
+    scenario.next_tx(ADMIN);
+    {
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
+        assert_eq!(state.is_cc_send_disabled(), expected);
+        test_scenario::return_shared(state);
+    };
 }
 
 #[test]
@@ -213,6 +224,68 @@ fun cc_send_token_ok() {
         test_scenario::return_shared(state);
     };
 
+    scenario.end();
+}
+
+// === disable_cc_send tests ===
+
+#[test, expected_failure(abort_code = mtoken::ENotOperator)]
+fun disable_cc_send_err_not_operator() {
+    let mut scenario = init_xagm();
+    disable_cc_send(&mut scenario, ALICE);
+    abort
+}
+
+#[test]
+fun disable_cc_send_ok() {
+    let mut scenario = init_xagm();
+    check_cc_send_disabled(&mut scenario, false);
+    disable_cc_send(&mut scenario, ADMIN);
+    check_cc_send_disabled(&mut scenario, true);
+    // disabling twice keeps the flag set
+    disable_cc_send(&mut scenario, ADMIN);
+    check_cc_send_disabled(&mut scenario, true);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = mtoken::ECCSendDisabled)]
+fun cc_send_token_err_disabled() {
+    let mut scenario = init_xagm();
+    new_messenger_cap(&mut scenario, ADMIN, ALICE);
+    disable_cc_send(&mut scenario, ADMIN);
+
+    scenario.next_tx(ADMIN);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
+        let token = state.mint_for_testing(10000, scenario.ctx());
+        transfer::public_transfer(token, ALICE);
+        test_scenario::return_shared(state);
+    };
+
+    scenario.next_tx(ALICE);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
+        let msg_cap = scenario.take_from_sender<MessengerCap>();
+        let token = scenario.take_from_sender<Coin<XAGM>>();
+        state.cc_send_token(
+            &msg_cap,
+            ADMIN,
+            b"Alice",
+            token,
+            scenario.ctx(),
+        );
+    };
+    abort
+}
+
+// disable_cc_send only gates cc_send_token; mint budget transfers stay enabled
+#[test]
+fun cc_send_mint_budget_ok_when_cc_send_disabled() {
+    let mut scenario = init_xagm();
+    new_messenger_cap(&mut scenario, ADMIN, ADMIN);
+    set_mint_budget(&mut scenario, ADMIN, 10000);
+    disable_cc_send(&mut scenario, ADMIN);
+    send_mint_budget(&mut scenario, ADMIN, 100);
     scenario.end();
 }
 

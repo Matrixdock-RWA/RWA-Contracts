@@ -14,15 +14,15 @@ use sui::dynamic_field as df;
 use sui::dynamic_object_field as dof;
 use sui::event;
 use sui::package::UpgradeCap;
+use sui::table::{Self, Table};
 use sui::url::Url;
 
 // === Errors ===
 const EWrongVersion: u64 = 100;
 const ENotOwner: u64 = 101;
 const ENotOperator: u64 = 102;
-const ENotRevoker: u64 = 103;
+const ENotOwnerOrRevoker: u64 = 103;
 const ENotEffective: u64 = 104;
-const EDelayTooShort: u64 = 105;
 const EMintBudgetNotEnough: u64 = 106;
 const ENotNewOwner: u64 = 107;
 const EUpgradeCapInvalid: u64 = 108;
@@ -30,7 +30,6 @@ const EReqExpired: u64 = 109;
 const EUpgradeCapIdNotNone: u64 = 110;
 const EInvalidMessageType: u64 = 111;
 const EInvalidMessengerCap: u64 = 112;
-const EDelayTooLong: u64 = 114;
 const EZeroValue: u64 = 115;
 const EStateIdMismatch: u64 = 116;
 const EAnnualFeeRateTooLarge: u64 = 201;
@@ -40,14 +39,20 @@ const EOzPerTokenBaseTooLarge: u64 = 204;
 const EUnexpectedOzPerToken: u64 = 205;
 const EPendingMsgsExist: u64 = 117;
 const EDeprecated: u64 = 118;
+const ERequestArgsMismatch: u64 = 119;
+const ENotOwnerOrOperator: u64 = 120;
+const ECCSendDisabled: u64 = 121;
 
 // === Constants ===
 
 const VERSION: u64 = 4;
 
-const MIN_DELAY: u64 = 3600;             // 1 hour
-const MAX_DELAY: u64 = 3600 * 24 * 7;    // 7 days
 const REQ_TTL: u64 = 3600 * 12; // 12 hours, time to live after effective
+const MIN_GOV_DELAY: u64 = 3600 * 24; // 1 day
+
+// must stay in sync with mtoken_gov (constants are module-private in Move)
+const OP_UNPAUSE: u256 = 10;
+const OP_ENABLE_CC_SEND: u256 = 11;
 
 const SECONDS_PER_DAY: u64 = 24 * 3600; // ozPerTokenBaseTime are rounded to daily boundary
 const DAYS_PER_YEAR: u64 = 365; // dailyFeeRate is annualFeeRate / DAYS_PER_YEAR
@@ -64,6 +69,9 @@ public struct TransferOwnershipEvent has copy, drop {
     req_id: ID,
 }
 
+// not used
+// Structs are part of a module's public interface and cannot be removed or changed during a 'compatible' upgrade.
+#[allow(unused_field)]
 public struct SetOperatorEvent has copy, drop {
     old_operator: address,
     new_operator: address,
@@ -71,6 +79,7 @@ public struct SetOperatorEvent has copy, drop {
     req_id: ID,
 }
 
+// not used
 public struct SetRevokerEvent has copy, drop {
     old_revoker: address,
     new_revoker: address,
@@ -78,6 +87,7 @@ public struct SetRevokerEvent has copy, drop {
     req_id: ID,
 }
 
+// not used
 public struct SetDelayEvent has copy, drop {
     old_delay: u64,
     new_delay: u64,
@@ -150,6 +160,8 @@ public struct CCSendTokenEvent has copy, drop {
     amount: u64,
 }
 
+public struct AddRateLimiterEvent has copy, drop {}
+
 public struct RateLimitedMsgProcessedEvent has copy, drop {
     msg_id: u64,
 }
@@ -166,12 +178,11 @@ public struct UnpausedEvent has copy, drop {
     caller: address,
 }
 
-public struct SetGovDelayEvent has copy, drop {
-    old_gov_delay: u64,
-    new_gov_delay: u64,
-    et: u64,
-    req_id: ID,
+public struct RequestRevokedEvent has copy, drop {
+    req_id: u256,
 }
+
+public struct DisableCCSendEvent has copy, drop {}
 
 // === Structs ===
 
@@ -182,18 +193,21 @@ public struct TransferOwnershipReq has key {
     et: u64,
 }
 
+// not used
 public struct SetOperatorReq has key {
     id: UID,
     new_operator: address,
     et: u64,
 }
 
+// not used
 public struct SetRevokerReq has key {
     id: UID,
     new_revoker: address,
     et: u64,
 }
 
+// not used
 public struct SetDelayReq has key {
     id: UID,
     new_delay: u64,
@@ -208,18 +222,15 @@ public struct MintReq has key {
     et: u64,
 }
 
-public struct SetGovDelayReq has key {
-    id: UID,
-    new_gov_delay: u64,
-    et: u64,
-}
-
+// df & dof keys
 public struct TreasuryCapKey() has copy, drop, store;
 public struct DenyCapKey() has copy, drop, store;
 public struct MessengerCapKey() has copy, drop, store;
 public struct StateIdKey() has copy, drop, store;
 public struct RateLimiterKey() has copy, drop, store;
 public struct GovDelayKey() has copy, drop, store;
+public struct RequestsKey() has copy, drop, store;
+public struct CCSendDisabledKey() has copy, drop, store;
 
 // The state of the MToken contract.
 // The type parameter T is unused here but preserved for backward compatibility.
@@ -242,46 +253,57 @@ public struct MessengerCap has key, store {
     id: UID,
 }
 
-// === Public & Entry Functions ===
+public struct RequestInfo has drop, store {
+    effective_time: u64,
+    new_value: u256,
+}
 
 /*
- Ops\Roles\Delayed                 | Owner | Operator | Revoker | Messenger| Delayed  | Uses
------------------------------------+-------+----------+---------+----------+----------+----------
-init_upgrade_cap_id                |   ✓   |          |         |          |          |
-migrate                            |   ✓   |          |         |          |          |
-update_description                 |   ✓   |          |         |          |          |
-update_icon_url                    |   ✓   |          |         |          |          |
-add_rate_limiter                   |   ✓   |          |         |          |          |
-remove_rate_limiter                |   ✓   |          |         |          |          |
-set_rate_limit                     |   ✓   |          |         |          |          |
-set_single_msg_limit               |   ✓   |          |         |          |          |
-update_whitelist                   |   ✓   |          |         |          |          |
-cc_batch_process_rate_limited_msgs |       |    ✓     |         |          |          |
-cc_batch_discard_rate_limited_msgs |       |    ✓     |         |          |          |
-cc_process_rate_limited_msg        |       |    ✓     |         |          |          |
-cc_discard_rate_limited_msg        |       |    ✓     |         |          |          |
-pause                              |       |   ✓      |         |          |          |
-unpause                            |   ✓   |          |         |          |          |
-transfer_ownership                 |   ✓   |          |         |          | ✓        | gov_delay
-set_gov_delay                      |   ✓   |          |         |          | ✓        | gov_delay
-set_operator                       |   ✓   |          |         |          | ✓        | delay
-set_revoker                        |   ✓   |          |         |          | ✓        | delay
-set_delay                          |   ✓   |          |         |          | ✓        | delay
-mint_to                            |       |   ✓      |         |          | ✓        | delay
-redeem                             |       |   ✓      |         |          |          |
-add_to_blocked_list                |       |   ✓      |         |          |          |
-remove_from_blocked_list           |       |   ✓      |         |          |          |
-revoke_transfer_ownership          |   ✓   |          |         |          |          |
-revoke_set_gov_delay               |   ✓   |          |         |          |          |
-revoke_set_revoker                 |   ✓   |          |         |          |          |
-revoke_set_operator                |       |          |   ✓     |          |          |
-revoke_set_delay                   |       |          |   ✓     |          |          |
-revoke_mint_to                     |       |          |   ✓     |          |          |
-cc_new_messenger_cap               |   ✓   |          |         |          |          |
-cc_send_mint_budget                |       |   ✓      |         | ✓        |          |
-cc_send_token                      |       |          |         | ✓        |          |
-cc_receive                         |       |          |         | ✓        |          |
+
+ Operation                         | Initiator  | Timelock | Revoker        | Executor
+-----------------------------------+------------+----------+----------------+-----------
+transfer_ownership                 | Owner      | govDelay | Owner/Revoker  | NewOwner
+set_gov_delay                      | Owner      | govDelay | Owner/Revoker  | Initiator
+set_delay                          | Owner      | govDelay | Owner/Revoker  | Initiator
+new_messenger_cap                  | Owner      | govDelay | Owner/Revoker  | Initiator
+remove_rate_limiter                | Owner      | govDelay | Owner/Revoker  | Initiator
+add_to_rate_limiter_whitelist      | Owner      | govDelay | Owner/Revoker  | Initiator
+set_revoker                        | Owner      | govDelay | Owner/Operator | NewRevoker
+set_operator                       | Owner      | delay    | Owner/Revoker  | Initiator
+set_rate_limit                     | Owner      | delay    | Owner/Revoker  | Initiator
+set_single_msg_limit               | Owner      | delay    | Owner/Revoker  | Initiator
+unpause                            | Owner      | delay    | Owner/Revoker  | Initiator
+enable_cc_send                     | Owner      | delay    | Owner/Revoker  | Initiator
+init_upgrade_cap_id                | Owner      | no       | no             | no
+migrate                            | Owner      | no       | no             | no
+update_description                 | Owner      | no       | no             | no
+update_icon_url                    | Owner      | no       | no             | no
+add_rate_limiter                   | Owner      | no       | no             | no
+remove_from_rate_limiter_whitelist | Owner      | no       | no             | no
+init_annual_fee_rate               | Owner      | no       | no             | no
+update_annual_fee_rate             | Owner      | no       | no             | no
+update_oz_per_token_base           | Owner      | no       | no             | no
+mint_to                            | Operator   | delay    | Owner/Revoker  | Initiator
+redeem                             | Operator   | no       | no             | no
+cc_send_mint_budget_manually       | Operator   | no       | no             | no
+cc_receive_mint_budget_manually    | Operator   | no       | no             | no
+pause                              | Operator   | no       | no             | no
+disable_cc_send                    | Operator   | no       | no             | no
+add_to_blocked_list                | Operator   | no       | no             | no
+remove_from_blocked_list           | Operator   | no       | no             | no
+cc_batch_process_rate_limited_msg  | Operator   | no       | no             | no
+cc_batch_discard_rate_limited_msg  | Operator   | no       | no             | no
+cc_process_rate_limited_msg        | Operator   | no       | no             | no
+cc_discard_rate_limited_msg        | Operator   | no       | no             | no
+cc_send_mint_budget                | Messenger  | no       | no             | no
+cc_send_token                      | Messenger  | no       | no             | no
+cc_receive                         | Messenger  | no       | no             | no
+
 */
+
+// === Public & Entry Functions ===
+// Note: Functions initiated by the owner that have delayed execution
+// (except transfer_ownership) reside in mtoken_gov.move
 
 #[allow(lint(share_owned), deprecated_usage)]
 public fun create_coin<T: drop>(
@@ -322,8 +344,10 @@ public fun create_coin<T: drop>(
         annual_fee_rate: 0, // will be set by init_annual_fee_rate
     };
     df::add(&mut state.id, GovDelayKey(), init_delay);
+    df::add(&mut state.id, CCSendDisabledKey(), false);
     dof::add(&mut state.id, TreasuryCapKey(), treasury_cap);
     dof::add(&mut state.id, DenyCapKey(), deny_cap);
+    state.init_requests(ctx);
 
     // https://docs.sui.io/concepts/object-ownership/shared
     transfer::public_share_object(metadata);
@@ -355,12 +379,16 @@ entry fun init_upgrade_cap_id<T>(state: &mut State<T>, upgrade_cap: &UpgradeCap,
     state.upgrade_cap_id = option::some(object::id(upgrade_cap));
 }
 
-entry fun migrate<T>(state: &mut State<T>, ctx: &TxContext) {
+entry fun migrate<T>(state: &mut State<T>, ctx: &mut TxContext) {
     check_owner(state, ctx);
     assert!(state.version < VERSION, EWrongVersion);
-    if (!df::exists_(&state.id, GovDelayKey())) {
-        df::add(&mut state.id, GovDelayKey(), state.delay);
+    if (!df::exists(&state.id, GovDelayKey())) {
+        df::add(&mut state.id, GovDelayKey(), MIN_GOV_DELAY);
     };
+    if (!df::exists(&state.id, CCSendDisabledKey())) {
+        df::add(&mut state.id, CCSendDisabledKey(), false);
+    };
+    state.init_requests(ctx);
     state.version = VERSION;
 }
 
@@ -386,7 +414,7 @@ entry fun update_icon_url<T>(
     coin::update_icon_url(state.borrow_treasury_cap(), metadata, new_url);
 }
 
-// add a rate limiter to the state
+// add a rate limiter to the state; takes effect without delay.
 entry fun add_rate_limiter<T>(
     state: &mut State<T>,
     amount: u64, // initial rate limit amount
@@ -400,69 +428,33 @@ entry fun add_rate_limiter<T>(
     let mut rl = mtoken_rate_limiter::create(ctx);
     rl.set_rate_limit(amount, window_seconds, clock);
     df::add(&mut state.id, key, rl);
+    event::emit(AddRateLimiterEvent {});
 }
 
-// remove the rate limiter from the state
-// note: aborts if there are pending rate-limited messages to prevent silent token loss.
-// process or discard all queued messages before calling this.
-entry fun remove_rate_limiter<T>(state: &mut State<T>, ctx: &TxContext) {
-    check_version(state);
-    check_owner(state, ctx);
-    let key = RateLimiterKey();
-    let rl: MTokenRateLimiter = df::remove(&mut state.id, key);
-    assert!(!rl.has_pending_msgs(), EPendingMsgsExist);
-    rl.drop();
-}
-
-// set the rate limit
-entry fun set_rate_limit<T>(
-    state: &mut State<T>,
-    amount: u64,
-    window_seconds: u64,
-    clock: &Clock,
-    ctx: &TxContext,
-) {
-    check_version(state);
-    check_owner(state, ctx);
-    let rl_key = RateLimiterKey();
-    let rl: &mut MTokenRateLimiter = df::borrow_mut(&mut state.id, rl_key);
-    rl.set_rate_limit(amount, window_seconds, clock);
-}
-
-// set the per-message amount limit; 0 disables the check
-entry fun set_single_msg_limit<T>(state: &mut State<T>, limit: u64, ctx: &TxContext) {
-    check_version(state);
-    check_owner(state, ctx);
-    let rl: &mut MTokenRateLimiter = df::borrow_mut(&mut state.id, RateLimiterKey());
-    rl.set_single_msg_limit(limit);
-}
-
-// add or update a whitelist entry for a (sender, receiver) pair
-entry fun update_whitelist<T>(
+// immediately removes a (sender, receiver) pair from the rate limiter whitelist;
+// takes effect without delay.
+entry fun remove_from_rate_limiter_whitelist<T>(
     state: &mut State<T>,
     sender: vector<u8>,
     receiver: address,
-    flag: bool,
     ctx: &TxContext,
 ) {
     check_version(state);
     check_owner(state, ctx);
-    let rl: &mut MTokenRateLimiter = df::borrow_mut(&mut state.id, RateLimiterKey());
-    rl.update_whitelist(sender, receiver, flag);
+    let rl = state.borrow_rate_limiter_mut();
+    rl.update_whitelist(sender, receiver, false);
 }
 
 entry fun pause<T>(state: &mut State<T>, deny_list: &mut DenyList, ctx: &mut TxContext) {
     check_version(state);
     check_operator(state, ctx);
+    // clear any pending unpause request so it cannot outlive this pause:
+    // a request pre-planted (or matured during a previous pause) must not
+    // be executable right after a new emergency pause, which would bypass
+    // the unpause delay window entirely
+    revoke_request(state, OP_UNPAUSE);
     coin::deny_list_v2_enable_global_pause<T>(deny_list, state.borrow_deny_cap_mut(), ctx);
     event::emit(PausedEvent { caller: ctx.sender() });
-}
-
-entry fun unpause<T>(state: &mut State<T>, deny_list: &mut DenyList, ctx: &mut TxContext) {
-    check_version(state);
-    check_owner(state, ctx);
-    coin::deny_list_v2_disable_global_pause<T>(deny_list, state.borrow_deny_cap_mut(), ctx);
-    event::emit(UnpausedEvent { caller: ctx.sender() });
 }
 
 entry fun request_transfer_ownership<T>(
@@ -512,199 +504,10 @@ entry fun revoke_transfer_ownership<T>(
     ctx: &TxContext,
 ) {
     check_version(state);
-    check_owner(state, ctx);
+    check_owner_or_revoker(state, ctx);
     check_req(state, &req.id);
     let TransferOwnershipReq { id, upgrade_cap, .. } = req;
     transfer::public_transfer(upgrade_cap, state.owner);
-    id.delete();
-}
-
-// gov_delay governs the timelock for ownership transfer only (1h–7d).
-// Changes to gov_delay are themselves timelocked by the current gov_delay value,
-// mirroring Ownable2StepTimeLockUpgradeable.setGovDelay and Solana set_gov_delay.
-entry fun request_set_gov_delay<T>(
-    state: &State<T>,
-    new_gov_delay: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    check_version(state);
-    check_owner(state, ctx);
-    assert!(new_gov_delay >= MIN_DELAY, EDelayTooShort);
-    assert!(new_gov_delay <= MAX_DELAY, EDelayTooLong);
-
-    let old_gov_delay = gov_delay(state);
-    let et = get_gov_effective_time(state, clock);
-    let mut req = SetGovDelayReq { id: object::new(ctx), new_gov_delay, et };
-    df::add(&mut req.id, StateIdKey(), object::id(state));
-    let req_id = object::id(&req);
-
-    transfer::share_object(req);
-    event::emit(SetGovDelayEvent { old_gov_delay, new_gov_delay, et, req_id });
-}
-
-entry fun execute_set_gov_delay<T>(
-    state: &mut State<T>,
-    req: SetGovDelayReq,
-    clock: &Clock,
-    ctx: &TxContext,
-) {
-    check_version(state);
-    check_owner(state, ctx);
-    check_req(state, &req.id);
-    let old_gov_delay = gov_delay(state);
-    let req_id = object::id(&req);
-    let SetGovDelayReq { id, new_gov_delay, et } = req;
-    check_effective_time(clock, et);
-
-    *df::borrow_mut(&mut state.id, GovDelayKey()) = new_gov_delay;
-    id.delete();
-    event::emit(SetGovDelayEvent { old_gov_delay, new_gov_delay, et: 0, req_id });
-}
-
-// Only owner can revoke a pending gov_delay change (mirrors EVM revokeNextGovDelay onlyOwner).
-entry fun revoke_set_gov_delay<T>(state: &State<T>, req: SetGovDelayReq, ctx: &TxContext) {
-    check_version(state);
-    check_owner(state, ctx);
-    check_req(state, &req.id);
-    let SetGovDelayReq { id, .. } = req;
-    id.delete();
-}
-
-entry fun request_set_operator<T>(
-    state: &State<T>,
-    new_operator: address,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    check_version(state);
-    check_owner(state, ctx);
-    let old_operator = state.operator;
-    let et = get_effective_time(state, clock);
-    let mut req = SetOperatorReq { id: object::new(ctx), new_operator, et };
-    df::add(&mut req.id, StateIdKey(), object::id(state));
-    let req_id = object::id(&req);
-
-    transfer::share_object(req);
-    event::emit(SetOperatorEvent { old_operator, new_operator, et, req_id });
-}
-
-entry fun execute_set_operator<T>(
-    state: &mut State<T>,
-    req: SetOperatorReq,
-    clock: &Clock,
-    ctx: &TxContext,
-) {
-    check_version(state);
-    check_owner(state, ctx);
-    check_req(state, &req.id);
-    let old_operator = state.operator;
-    let req_id = object::id(&req);
-    let SetOperatorReq { id, new_operator, et } = req;
-    check_effective_time(clock, et);
-
-    state.operator = new_operator;
-    id.delete();
-    event::emit(SetOperatorEvent { old_operator, new_operator, et: 0, req_id });
-}
-
-entry fun revoke_set_operator<T>(state: &State<T>, req: SetOperatorReq, ctx: &TxContext) {
-    check_version(state);
-    check_revoker(state, ctx);
-    check_req(state, &req.id);
-    let SetOperatorReq { id, .. } = req;
-    id.delete();
-}
-
-entry fun request_set_revoker<T>(
-    state: &State<T>,
-    new_revoker: address,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    check_version(state);
-    check_owner(state, ctx);
-    let old_revoker = state.revoker;
-    let et = get_effective_time(state, clock);
-    let mut req = SetRevokerReq { id: object::new(ctx), new_revoker, et };
-    df::add(&mut req.id, StateIdKey(), object::id(state));
-    let req_id = object::id(&req);
-
-    transfer::share_object(req);
-    event::emit(SetRevokerEvent { old_revoker, new_revoker, et, req_id });
-}
-
-entry fun execute_set_revoker<T>(
-    state: &mut State<T>,
-    req: SetRevokerReq,
-    clock: &Clock,
-    ctx: &TxContext,
-) {
-    check_version(state);
-    check_owner(state, ctx);
-    check_req(state, &req.id);
-    let old_revoker = state.revoker;
-    let req_id = object::id(&req);
-    let SetRevokerReq { id, new_revoker, et } = req;
-    check_effective_time(clock, et);
-
-    state.revoker = new_revoker;
-    id.delete();
-    event::emit(SetRevokerEvent { old_revoker, new_revoker, et: 0, req_id });
-}
-
-entry fun revoke_set_revoker<T>(state: &State<T>, req: SetRevokerReq, ctx: &TxContext) {
-    check_version(state);
-    check_owner(state, ctx);
-    check_req(state, &req.id);
-    let SetRevokerReq { id, .. } = req;
-    id.delete();
-}
-
-entry fun request_set_delay<T>(
-    state: &State<T>,
-    new_delay: u64,
-    clock: &Clock,
-    ctx: &mut TxContext,
-) {
-    check_version(state);
-    check_owner(state, ctx);
-    assert!(new_delay >= MIN_DELAY, EDelayTooShort);
-    assert!(new_delay <= MAX_DELAY, EDelayTooLong);
-    let old_delay = state.delay;
-    let et = get_effective_time(state, clock);
-    let mut req = SetDelayReq { id: object::new(ctx), new_delay, et };
-    df::add(&mut req.id, StateIdKey(), object::id(state));
-    let req_id = object::id(&req);
-
-    transfer::share_object(req);
-    event::emit(SetDelayEvent { old_delay, new_delay, et, req_id });
-}
-
-entry fun execute_set_delay<T>(
-    state: &mut State<T>,
-    req: SetDelayReq,
-    clock: &Clock,
-    ctx: &TxContext,
-) {
-    check_version(state);
-    check_owner(state, ctx);
-    check_req(state, &req.id);
-    let old_delay = state.delay;
-    let req_id = object::id(&req);
-    let SetDelayReq { id, new_delay, et } = req;
-    check_effective_time(clock, et);
-
-    state.delay = new_delay;
-    id.delete();
-    event::emit(SetDelayEvent { old_delay, new_delay, et: 0, req_id });
-}
-
-entry fun revoke_set_delay<T>(state: &State<T>, req: SetDelayReq, ctx: &TxContext) {
-    check_version(state);
-    check_revoker(state, ctx);
-    check_req(state, &req.id);
-    let SetDelayReq { id, .. } = req;
     id.delete();
 }
 
@@ -748,7 +551,6 @@ entry fun update_annual_fee_rate<T>(
         oz_per_token_base_time,
     });
 }
-
 // https://docs.sui.io/references/framework/sui-framework/coin#function-mint
 // https://docs.sui.io/references/framework/sui-framework/coin#0x2_coin_mint_and_transfer
 
@@ -797,7 +599,7 @@ entry fun execute_mint_to<T>(
 
 entry fun revoke_mint_to<T>(state: &State<T>, req: MintReq, ctx: &TxContext) {
     check_version(state);
-    check_revoker(state, ctx);
+    check_owner_or_revoker(state, ctx);
     check_req(state, &req.id);
     let MintReq { id, .. } = req;
     id.delete();
@@ -845,21 +647,6 @@ entry fun remove_from_blocked_list<T>(
     check_operator(state, ctx);
     coin::deny_list_v2_remove(deny_list, state.borrow_deny_cap_mut(), user_address, ctx);
     event::emit(UnblockEvent { user_address });
-}
-
-entry fun cc_new_messenger_cap<T>(state: &mut State<T>, holder: address, ctx: &mut TxContext) {
-    check_version(state);
-    check_owner(state, ctx);
-
-    let cap = MessengerCap {
-        id: object::new(ctx),
-    };
-
-    let key = MessengerCapKey();
-    df::remove_if_exists<MessengerCapKey, sui::object::ID>(&mut state.id, key);
-    df::add(&mut state.id, key, object::id(&cap));
-
-    transfer::transfer(cap, holder);
 }
 
 // when cross-chain bridge is not available,
@@ -912,6 +699,7 @@ public fun cc_send_token<T>(
     check_version(state);
     check_messenger_cap(state, msg_cap);
     check_non_zero(token.balance().value());
+    assert!(!state.is_cc_send_disabled(), ECCSendDisabled);
 
     // Note: Burn fails if the owner is in the deny list.
     let amount = token.balance().value();
@@ -960,8 +748,8 @@ public fun cc_receive_v2<T>(
 
     // check rate limit
     let rl_key = RateLimiterKey();
-    if (df::exists_(&state.id, rl_key)) {
-        let rl: &mut MTokenRateLimiter = df::borrow_mut(&mut state.id, rl_key);
+    if (df::exists(&state.id, rl_key)) {
+        let rl = state.borrow_rate_limiter_mut();
         if (!rl.try_consume_rate_limit_capacity(sender, receiver, amount, clock)) {
             // message overflowed, enqueued for later processing.
             return (@0x0, option::none())
@@ -1004,8 +792,7 @@ entry fun cc_process_rate_limited_msg<T>(state: &mut State<T>, msg_id: u64, ctx:
 // private function to process a single rate-limited message
 // put it here because it's only used by cc_batch_process_rate_limited_msgs and process_rate_limited_msg
 fun process_rate_limited_msg<T>(state: &mut State<T>, msg_id: u64, ctx: &mut TxContext) {
-    let rl_key = RateLimiterKey();
-    let rl: &mut MTokenRateLimiter = df::borrow_mut(&mut state.id, rl_key);
+    let rl = state.borrow_rate_limiter_mut();
     let (sender, receiver, amount) = rl.remove_rate_limited_msg(msg_id);
     let minted_coin = coin::mint<T>(state.borrow_treasury_cap_mut(), amount, ctx);
     transfer::public_transfer(minted_coin, receiver);
@@ -1037,10 +824,21 @@ entry fun cc_discard_rate_limited_msg<T>(state: &mut State<T>, msg_id: u64, ctx:
 // private function to discard a single rate-limited message
 // put it here because it's only used by cc_batch_discard_rate_limited_msgs and discard_rate_limited_msg
 fun discard_rate_limited_msg<T>(state: &mut State<T>, msg_id: u64) {
-    let rl_key = RateLimiterKey();
-    let rl: &mut MTokenRateLimiter = df::borrow_mut(&mut state.id, rl_key);
+    let rl = state.borrow_rate_limiter_mut();
     let (_sender, _receiver, _amount) = rl.remove_rate_limited_msg(msg_id);
     event::emit(RateLimitedMsgDiscardedEvent { msg_id });
+}
+
+entry fun disable_cc_send<T>(state: &mut State<T>, ctx: &TxContext) {
+    check_version(state);
+    check_operator(state, ctx);
+    // clear any pending enable_cc_send request so it cannot outlive this
+    // disable: a request pre-planted (or matured during a previous disable)
+    // must not be executable right after a new emergency disable, which
+    // would bypass the enable delay window entirely
+    revoke_request(state, OP_ENABLE_CC_SEND);
+    state.set_cc_send_disabled(true);
+    event::emit(DisableCCSendEvent {});
 }
 
 // === View Functions ===
@@ -1071,6 +869,10 @@ public fun delay<T>(state: &State<T>): u64 {
 
 public fun gov_delay<T>(state: &State<T>): u64 {
     *df::borrow(&state.id, GovDelayKey())
+}
+
+public fun is_cc_send_disabled<T>(state: &State<T>): bool {
+    *df::borrow(&state.id, CCSendDisabledKey())
 }
 
 public fun mint_budget<T>(state: &State<T>): u64 {
@@ -1113,45 +915,162 @@ public fun get_oz_amount<T>(state: &State<T>, token_amount: u64, clock: &Clock):
 
 // return true if the rate limiter is set
 public fun has_rate_limiter<T>(state: &State<T>): bool {
-    df::exists_(&state.id, RateLimiterKey())
+    df::exists(&state.id, RateLimiterKey())
 }
 
 // return the rate limit and window (in seconds)
 public fun rate_limit<T>(state: &State<T>): (u64, u64) {
-    let rl_key = RateLimiterKey();
-    let rl: &MTokenRateLimiter = df::borrow(&state.id, rl_key);
+    let rl = state.borrow_rate_limiter();
     rl.get_rate_limit()
 }
 
 // return (in_flight, capacity) at the current clock time
 public fun amount_can_be_received<T>(state: &State<T>, clock: &Clock): (u64, u64) {
-    let rl_key = RateLimiterKey();
-    let rl: &MTokenRateLimiter = df::borrow(&state.id, rl_key);
+    let rl = state.borrow_rate_limiter();
     rl.amount_can_be_received(clock)
 }
 
 // return (sender, receiver, amount) of a queued rate-limited message
 public fun rate_limited_msg<T>(state: &State<T>, msg_id: u64): (vector<u8>, address, u64) {
-    let rl: &MTokenRateLimiter = df::borrow(&state.id, RateLimiterKey());
+    let rl = state.borrow_rate_limiter();
     rl.rate_limited_msg(msg_id)
 }
 
 // return true if the message is queued
 public fun has_rate_limited_msg<T>(state: &State<T>, msg_id: u64): bool {
-    let rl: &MTokenRateLimiter = df::borrow(&state.id, RateLimiterKey());
+    let rl = state.borrow_rate_limiter();
     rl.has_rate_limited_msg(msg_id)
 }
 
 // return the single message limit (0 = disabled)
 public fun single_msg_limit<T>(state: &State<T>): u64 {
-    let rl: &MTokenRateLimiter = df::borrow(&state.id, RateLimiterKey());
+    let rl = state.borrow_rate_limiter();
     rl.get_single_msg_limit()
 }
 
 // return true if the (sender, receiver) pair is whitelisted
 public fun is_in_whitelist<T>(state: &State<T>, sender: vector<u8>, receiver: address): bool {
-    let rl: &MTokenRateLimiter = df::borrow(&state.id, RateLimiterKey());
+    let rl = state.borrow_rate_limiter();
     rl.is_in_whitelist(sender, receiver)
+}
+
+// === Package Functions ===
+
+public(package) fun check_version<T>(state: &State<T>) {
+    assert!(state.version == VERSION, EWrongVersion);
+}
+
+public(package) fun check_owner<T>(state: &State<T>, ctx: &TxContext) {
+    assert!(ctx.sender() == state.owner, ENotOwner);
+}
+
+public(package) fun check_owner_or_revoker<T>(state: &State<T>, ctx: &TxContext) {
+    assert!(ctx.sender() == state.owner || ctx.sender() == state.revoker, ENotOwnerOrRevoker);
+}
+
+public(package) fun check_owner_or_operator<T>(state: &State<T>, ctx: &TxContext) {
+    assert!(ctx.sender() == state.owner || ctx.sender() == state.operator, ENotOwnerOrOperator);
+}
+
+public(package) fun set_cc_send_disabled<T>(state: &mut State<T>, flag: bool) {
+    *df::borrow_mut(&mut state.id, CCSendDisabledKey()) = flag;
+}
+
+public(package) fun set_gov_delay<T>(state: &mut State<T>, new_gov_delay: u64) {
+    *df::borrow_mut(&mut state.id, GovDelayKey()) = new_gov_delay;
+}
+
+public(package) fun set_delay<T>(state: &mut State<T>, new_delay: u64) {
+    state.delay = new_delay;
+}
+
+public(package) fun set_operator<T>(state: &mut State<T>, new_operator: address) {
+    state.operator = new_operator;
+}
+
+public(package) fun set_revoker<T>(state: &mut State<T>, new_revoker: address) {
+    state.revoker = new_revoker;
+}
+
+public(package) fun unpause<T>(
+    state: &mut State<T>,
+    deny_list: &mut DenyList,
+    ctx: &mut TxContext,
+) {
+    let deny_cap = state.borrow_deny_cap_mut();
+    coin::deny_list_v2_disable_global_pause<T>(deny_list, deny_cap, ctx);
+    event::emit(UnpausedEvent { caller: ctx.sender() });
+}
+
+public(package) fun cc_new_messenger_cap<T>(
+    state: &mut State<T>,
+    holder: address,
+    ctx: &mut TxContext,
+) {
+    let cap = MessengerCap { id: object::new(ctx) };
+    let key = MessengerCapKey();
+    df::remove_opt<MessengerCapKey, sui::object::ID>(&mut state.id, key);
+    df::add(&mut state.id, key, object::id(&cap));
+    transfer::transfer(cap, holder);
+}
+
+public(package) fun remove_rate_limiter<T>(state: &mut State<T>) {
+    let rl: MTokenRateLimiter = df::remove(&mut state.id, RateLimiterKey());
+    assert!(!rl.has_pending_msgs(), EPendingMsgsExist);
+    rl.drop();
+}
+
+public(package) fun set_rate_limit<T>(
+    state: &mut State<T>,
+    amount: u64,
+    window_seconds: u64,
+    clock: &Clock,
+) {
+    let rl = state.borrow_rate_limiter_mut();
+    rl.set_rate_limit(amount, window_seconds, clock);
+}
+
+public(package) fun set_single_msg_limit<T>(state: &mut State<T>, limit: u64) {
+    let rl = state.borrow_rate_limiter_mut();
+    rl.set_single_msg_limit(limit);
+}
+
+public(package) fun add_to_rate_limiter_whitelist<T>(
+    state: &mut State<T>,
+    sender: vector<u8>,
+    receiver: address,
+) {
+    let rl = state.borrow_rate_limiter_mut();
+    rl.update_whitelist(sender, receiver, true);
+}
+
+public(package) fun ensure_gov_delay<T>(
+    state: &mut State<T>,
+    req_id: u256,
+    new_value: u256,
+    clock: &Clock,
+): u64 {
+    ensure_delay_(state, req_id, new_value, true, clock)
+}
+
+public(package) fun ensure_delay<T>(
+    state: &mut State<T>,
+    req_id: u256,
+    new_value: u256,
+    clock: &Clock,
+): u64 {
+    ensure_delay_(state, req_id, new_value, false, clock)
+}
+
+public(package) fun revoke_request<T>(state: &mut State<T>, req_id: u256) {
+    let requests: &mut Table<u256, RequestInfo> = dof::borrow_mut(
+        &mut state.id,
+        RequestsKey(),
+    );
+    if (requests.contains(req_id)) {
+        requests.remove(req_id);
+        event::emit(RequestRevokedEvent { req_id });
+    }
 }
 
 // === Private Functions ===
@@ -1172,20 +1091,8 @@ fun check_effective_time(clock: &Clock, et: u64) {
     assert!(et + REQ_TTL > now, EReqExpired);
 }
 
-fun check_version<T>(state: &State<T>) {
-    assert!(state.version == VERSION, EWrongVersion);
-}
-
-fun check_owner<T>(state: &State<T>, ctx: &TxContext) {
-    assert!(ctx.sender() == state.owner, ENotOwner);
-}
-
 fun check_operator<T>(state: &State<T>, ctx: &TxContext) {
     assert!(ctx.sender() == state.operator, ENotOperator);
-}
-
-fun check_revoker<T>(state: &State<T>, ctx: &TxContext) {
-    assert!(ctx.sender() == state.revoker, ENotRevoker);
 }
 
 fun check_messenger_cap<T>(state: &State<T>, cap: &MessengerCap) {
@@ -1233,6 +1140,51 @@ fun borrow_deny_cap_mut<T>(state: &mut State<T>): &mut DenyCapV2<T> {
 // current day start time, rounded to daily boundary
 fun current_day_start_time(clock: &Clock): u64 {
     (clock.timestamp_ms() / 1000 / SECONDS_PER_DAY) * SECONDS_PER_DAY
+}
+
+fun borrow_rate_limiter<T>(state: &State<T>): &MTokenRateLimiter {
+    df::borrow(&state.id, RateLimiterKey())
+}
+
+fun borrow_rate_limiter_mut<T>(state: &mut State<T>): &mut MTokenRateLimiter {
+    df::borrow_mut(&mut state.id, RateLimiterKey())
+}
+
+fun init_requests<T>(state: &mut State<T>, ctx: &mut TxContext) {
+    if (!dof::exists(&state.id, RequestsKey())) {
+        let requests = table::new<u256, RequestInfo>(ctx);
+        dof::add(&mut state.id, RequestsKey(), requests);
+    }
+}
+
+fun ensure_delay_<T>(
+    state: &mut State<T>,
+    req_id: u256,
+    new_value: u256,
+    is_gov: bool,
+    clock: &Clock,
+): u64 {
+    let effective_time = if (is_gov) {
+        state.get_gov_effective_time(clock)
+    } else {
+        state.get_effective_time(clock)
+    };
+
+    let requests: &mut Table<u256, RequestInfo> = dof::borrow_mut(
+        &mut state.id,
+        RequestsKey(),
+    );
+
+    if (!requests.contains(req_id)) {
+        requests.add(req_id, RequestInfo { effective_time, new_value });
+        return effective_time
+    };
+
+    let req_info = &requests[req_id];
+    check_effective_time(clock, req_info.effective_time);
+    assert!(req_info.new_value == new_value, ERequestArgsMismatch);
+    requests.remove(req_id);
+    return 0
 }
 
 // === Test Functions ===

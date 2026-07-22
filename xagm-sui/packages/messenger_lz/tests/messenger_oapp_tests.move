@@ -10,9 +10,10 @@ use endpoint_v2::messaging_receipt::MessagingReceipt;
 use messenger_lz::messenger_oapp::{Self, State, SendContext};
 use messenger_lz::ptb_builder;
 use mtoken::mtoken::{Self, State as MtState, MessengerCap};
+use mtoken::mtoken_gov;
 use oapp::oapp::OApp;
 use std::unit_test::{assert_eq, destroy};
-use sui::clock;
+use sui::clock::{Self, Clock};
 use sui::coin::{Self, Coin};
 use sui::deny_list::{Self, DenyList};
 use sui::sui::SUI;
@@ -164,8 +165,11 @@ fun create_new_messenger_cap(
     scenario.next_tx(caller);
     {
         let mut mt_state = scenario.take_shared<MtState<XAGM>>();
-        mt_state.cc_new_messenger_cap(holder, scenario.ctx());
+        let _clock = clock::create_for_testing(scenario.ctx());
+        mtoken_gov::new_messenger_cap(&mut mt_state, holder, &_clock, scenario.ctx());
+        mtoken_gov::new_messenger_cap(&mut mt_state, holder, &_clock, scenario.ctx());
         test_scenario::return_shared(mt_state);
+        clock::destroy_for_testing(_clock);
     };
 }
 
