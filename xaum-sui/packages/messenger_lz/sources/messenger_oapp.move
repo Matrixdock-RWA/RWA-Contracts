@@ -378,7 +378,13 @@ entry fun set_enforced_options(
     my_oapp.set_enforced_options(&state.oapp_admin_cap, eid, msg_type, options);
 }
 
-// pause the messenger
+// pause/unpause the messenger; blocks send_token / send_mint_budget (receiving is unaffected).
+// Note: on EVM, lzPause is immediate but lzUnpause is a two-step delayed operation
+// (request → effect after delay); this Sui version implements neither the two-step
+// flow nor the delay — both pausing and unpausing take effect immediately with the
+// owner's single call. Prefer mtoken::disable_cc_send to halt outbound token sends:
+// disabling is equally immediate (operator), while re-enabling
+// (mtoken_gov::enable_cc_send) is protected by the delay timelock, matching EVM.
 entry fun set_paused(state: &mut State, paused: bool, ctx: &TxContext) {
     state.check_version();
     state.check_owner(ctx);

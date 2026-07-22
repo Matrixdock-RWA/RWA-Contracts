@@ -4,6 +4,7 @@ module mtoken::mtoken_rate_limiter_tests;
 use mtoken::message_codec;
 use mtoken::mt::{Self, MT as XAUM};
 use mtoken::mtoken::{Self, MessengerCap};
+use mtoken::mtoken_gov;
 use mtoken::mtoken_rate_limiter;
 use std::unit_test::assert_eq;
 use sui::clock::{Self, Clock};
@@ -48,7 +49,13 @@ fun cc_receive_token(
         let msg_cap = scenario.take_from_sender<MessengerCap>();
         let deny_list = scenario.take_shared<DenyList>();
         let msg = message_codec::encode_cc_token_message(sender, receiver.to_bytes(), amount);
-        let (_receiver, opt) = state.cc_receive_v2(&msg_cap, msg, &deny_list, clock, scenario.ctx());
+        let (_receiver, opt) = state.cc_receive_v2(
+            &msg_cap,
+            msg,
+            &deny_list,
+            clock,
+            scenario.ctx(),
+        );
         opt.destroy_none();
         scenario.return_to_sender(msg_cap);
         test_scenario::return_shared(state);
@@ -75,7 +82,7 @@ fun remove_rate_limiter(scenario: &mut test_scenario::Scenario, caller: address)
     scenario.next_tx(caller);
     {
         let mut state = scenario.take_shared<mtoken::State<XAUM>>();
-        state.remove_rate_limiter(scenario.ctx());
+        state.remove_rate_limiter();
         test_scenario::return_shared(state);
     };
 }
@@ -90,7 +97,7 @@ fun set_rate_limit(
     scenario.next_tx(caller);
     {
         let mut state = scenario.take_shared<mtoken::State<XAUM>>();
-        state.set_rate_limit(amount, window_seconds, _clock, scenario.ctx());
+        state.set_rate_limit(amount, window_seconds, _clock);
         test_scenario::return_shared(state);
     };
 }
@@ -99,22 +106,35 @@ fun set_single_msg_limit(scenario: &mut test_scenario::Scenario, caller: address
     scenario.next_tx(caller);
     {
         let mut state = scenario.take_shared<mtoken::State<XAUM>>();
-        state.set_single_msg_limit(limit, scenario.ctx());
+        state.set_single_msg_limit(limit);
         test_scenario::return_shared(state);
     };
 }
 
-fun update_whitelist(
+fun add_to_whitelist(
     scenario: &mut test_scenario::Scenario,
     caller: address,
     sender: vector<u8>,
     receiver: address,
-    flag: bool,
 ) {
     scenario.next_tx(caller);
     {
         let mut state = scenario.take_shared<mtoken::State<XAUM>>();
-        state.update_whitelist(sender, receiver, flag, scenario.ctx());
+        state.add_to_rate_limiter_whitelist(sender, receiver);
+        test_scenario::return_shared(state);
+    };
+}
+
+fun remove_from_whitelist(
+    scenario: &mut test_scenario::Scenario,
+    caller: address,
+    sender: vector<u8>,
+    receiver: address,
+) {
+    scenario.next_tx(caller);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        state.remove_from_rate_limiter_whitelist(sender, receiver, scenario.ctx());
         test_scenario::return_shared(state);
     };
 }
@@ -264,7 +284,7 @@ fun check_has_rate_limited_msg(
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
 fun add_rate_limiter_err_not_owner() {
     let (mut scenario, _clock) = init_xaum();
-    add_rate_limiter(&mut scenario, ALICE, 0, 0, &_clock);
+    add_rate_limiter(&mut scenario, ALICE, 100, 3600, &_clock);
     abort
 }
 
@@ -277,13 +297,6 @@ fun add_rate_limiter_ok() {
     check_rate_limit(&mut scenario, 12345, 1200);
     clock::destroy_for_testing(_clock);
     scenario.end();
-}
-
-#[test, expected_failure(abort_code = mtoken::ENotOwner)]
-fun remove_rate_limiter_err_not_owner() {
-    let (mut scenario, _clock) = init_xaum();
-    remove_rate_limiter(&mut scenario, ALICE);
-    abort
 }
 
 #[test, expected_failure(abort_code = mtoken::EPendingMsgsExist)]
@@ -304,13 +317,6 @@ fun remove_rate_limiter_ok() {
     check_has_rate_limiter(&mut scenario, false);
     clock::destroy_for_testing(_clock);
     scenario.end();
-}
-
-#[test, expected_failure(abort_code = mtoken::ENotOwner)]
-fun set_rate_limit_err_not_owner() {
-    let (mut scenario, _clock) = init_xaum();
-    set_rate_limit(&mut scenario, ALICE, 10000, 3600, &_clock);
-    abort
 }
 
 #[test]
@@ -512,13 +518,6 @@ fun cc_batch_process_rate_limited_msgs_ok() {
 
 // ===== single_msg_limit tests =====
 
-#[test, expected_failure(abort_code = mtoken::ENotOwner)]
-fun set_single_msg_limit_err_not_owner() {
-    let (mut scenario, _clock) = init_xaum();
-    set_single_msg_limit(&mut scenario, ALICE, 5000);
-    abort
-}
-
 #[test]
 fun set_single_msg_limit_ok() {
     let (mut scenario, _clock) = init_xaum();
@@ -570,9 +569,10 @@ fun single_msg_limit_disabled_when_zero() {
 // ===== whitelist tests =====
 
 #[test, expected_failure(abort_code = mtoken::ENotOwner)]
-fun update_whitelist_err_not_owner() {
+fun remove_from_whitelist_err_not_owner() {
     let (mut scenario, _clock) = init_xaum();
-    update_whitelist(&mut scenario, ALICE, ALICE.to_bytes(), BOB, true);
+    add_rate_limiter(&mut scenario, ADMIN, 123, 456, &_clock);
+    remove_from_whitelist(&mut scenario, ALICE, ALICE.to_bytes(), BOB);
     abort
 }
 
@@ -581,10 +581,10 @@ fun update_whitelist_ok() {
     let (mut scenario, _clock) = init_xaum();
     add_rate_limiter(&mut scenario, ADMIN, 123, 456, &_clock);
     check_is_in_whitelist(&mut scenario, ALICE.to_bytes(), BOB, false);
-    update_whitelist(&mut scenario, ADMIN, ALICE.to_bytes(), BOB, true);
+    add_to_whitelist(&mut scenario, ADMIN, ALICE.to_bytes(), BOB);
     check_is_in_whitelist(&mut scenario, ALICE.to_bytes(), BOB, true);
     // removing from whitelist
-    update_whitelist(&mut scenario, ADMIN, ALICE.to_bytes(), BOB, false);
+    remove_from_whitelist(&mut scenario, ADMIN, ALICE.to_bytes(), BOB);
     check_is_in_whitelist(&mut scenario, ALICE.to_bytes(), BOB, false);
     clock::destroy_for_testing(_clock);
     scenario.end();
@@ -595,7 +595,7 @@ fun whitelist_bypasses_rate_limit() {
     let (mut scenario, _clock) = init_xaum();
     // tight rate limit: only 100 per window
     add_rate_limiter(&mut scenario, ADMIN, 100, 3600, &_clock);
-    update_whitelist(&mut scenario, ADMIN, ALICE.to_bytes(), BOB, true);
+    add_to_whitelist(&mut scenario, ADMIN, ALICE.to_bytes(), BOB);
 
     // whitelisted: 9999 passes despite the tiny rate limit window
     cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 9999, &_clock);
@@ -613,7 +613,7 @@ fun whitelist_bypasses_single_msg_limit() {
     let (mut scenario, _clock) = init_xaum();
     add_rate_limiter(&mut scenario, ADMIN, 10000, 3600, &_clock);
     set_single_msg_limit(&mut scenario, ADMIN, 100);
-    update_whitelist(&mut scenario, ADMIN, ALICE.to_bytes(), BOB, true);
+    add_to_whitelist(&mut scenario, ADMIN, ALICE.to_bytes(), BOB);
 
     // whitelisted: 9999 > single_msg_limit=100 but still passes
     cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 9999, &_clock);
@@ -628,7 +628,7 @@ fun whitelist_is_pair_specific() {
     let (mut scenario, _clock) = init_xaum();
     add_rate_limiter(&mut scenario, ADMIN, 100, 3600, &_clock);
     // only (ALICE -> BOB) is whitelisted, not (BOB -> ALICE)
-    update_whitelist(&mut scenario, ADMIN, ALICE.to_bytes(), BOB, true);
+    add_to_whitelist(&mut scenario, ADMIN, ALICE.to_bytes(), BOB);
 
     // ALICE->BOB: whitelisted, passes
     cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 9999, &_clock);
