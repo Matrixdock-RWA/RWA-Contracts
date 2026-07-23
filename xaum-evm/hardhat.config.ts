@@ -22,34 +22,29 @@ module.exports = {
       },
     ],
     overrides: {
-      "contracts/XAUMDCA.sol": {
-        version: "0.8.24",
-        settings: {
-          optimizer: {
-            enabled: true,
-            runs: 800,
-          },
-        },
-      },
       "contracts/MTokenMain.sol": {
         version: "0.8.24",
         settings: {
           optimizer: {
             enabled: true,
-            runs: 800,
+            runs: 200,
           },
+          viaIR: true,
+        },
+      },
+      "contracts/MTokenSide.sol": {
+        version: "0.8.24",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+          // viaIR: true,
         },
       },
     },
   },
-  tronSolc: {
-    enable: true,
-    // Optional: specify an array of contract filenames (without path) to selectively compile. Leave as empty array to compile all contracts.
-    filter: [],
-    compilers: [{ version: "0.8.24" }], // can be any tron-solc version
-    // Optional: Define version remappings for compiler versions
-    versionRemapping: [],
-  },
+
   etherscan: {
     apiKey: {
       mainnet   : process.env.ETHSCAN_KEY,
