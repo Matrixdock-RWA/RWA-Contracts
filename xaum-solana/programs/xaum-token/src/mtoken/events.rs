@@ -189,7 +189,18 @@ pub struct Paused {
     pub caller: Pubkey,
 }
 
+// #14: request to unpause (delayed). Effected by the `Unpaused` event.
+#[event]
+pub struct UnpauseRequest {
+    pub et: i64,
+}
+
 #[event]
 pub struct Unpaused {
     pub caller: Pubkey,
+}
+
+#[event]
+pub struct RevokeNextUnpause {
+    pub pending_et: i64,
 }

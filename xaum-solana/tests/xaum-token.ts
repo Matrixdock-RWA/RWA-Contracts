@@ -20,16 +20,19 @@ import {
     getATA,
     getTokenState,
     createToken,
-    setOwner, acceptOwnership, setRevoker, setOperator, setMessager, setDelay,
-    revokeNextOwner, revokeNextRevoker, revokeNextOperator, revokeNextMessager, revokeNextDelay,
+    setOwner, acceptOwnership, setRevoker, acceptRevoker, setOperator, setMessager, setDelay, setGovDelay,
+    revokeNextOwner, revokeNextRevoker, revokeNextOperator, revokeNextMessager, revokeNextDelay, revokeNextGovDelay,
     changeMintBudget, mint, redeem, revokeNextMint, addToBlockedList, removeFromBlockedList,
     setForcedTransferReceiver, revokeNextForcedTransferReceiver, revokeForcedTransfer, forcedTransfer,
-    updateMetadata, updateTransferFee, pause, unpause,
+    updateMetadata, updateTransferFee, pause, unpause, revokeUnpause,
     withdrawTransferFees,
 } from "./utils/mtoken";
 
-const minDelay = 3600; // 1 hour (MIN_ACCEPTABLE_DELAY)
-const maxDelay = 7 * 24 * 3600; // 7 days (MAX_ACCEPTABLE_DELAY)
+// Timelock V2 bounds (independent per tier).
+const minDelay = 3600; // 1 hour (MIN_DELAY)
+const maxDelay = 48 * 3600; // 48 hours (MAX_DELAY)
+const minGovDelay = 24 * 3600; // 24 hours (MIN_GOV_DELAY)
+const maxGovDelay = 7 * 24 * 3600; // 7 days (MAX_GOV_DELAY)
 
 const initDelay = 3;
 const xaumName = "Solana Gold";
@@ -108,8 +111,27 @@ describe("MToken", () => {
             "NegativeDelay",
         );
         await checkErrorCode(
+            createToken(deployer.payer, xaumName, xaumSymbol, xaumUri, 0, -1),
+            "NegativeDelay",
+        );
+        // delay upper bound is MAX_DELAY (48h)
+        await checkErrorCode(
             createToken(deployer.payer, xaumName, xaumSymbol, xaumUri, maxDelay + 1, 0),
             "DelayExceedsMaximum",
+        );
+        // gov_delay upper bound is MAX_GOV_DELAY (7d)
+        await checkErrorCode(
+            createToken(deployer.payer, xaumName, xaumSymbol, xaumUri, 0, maxGovDelay + 1),
+            "DelayExceedsMaximum",
+        );
+        // gov_delay must not be shorter than the operational delay
+        await checkErrorCode(
+            createToken(deployer.payer, xaumName, xaumSymbol, xaumUri, maxDelay, 0),
+            "GovDelayBelowDelay",
+        );
+        await checkErrorCode(
+            createToken(deployer.payer, xaumName, xaumSymbol, xaumUri, 60 * 60, 1),
+            "GovDelayBelowDelay",
         );
     });
 
@@ -132,6 +154,10 @@ describe("MToken", () => {
         assert.equal(stateData.delay.toNumber(), initDelay);
         assert.deepEqual(stateData.nextDelay.toNumber(), 0);
         assert.equal(stateData.nextDelayEt.toNumber(), 0);
+        assert.equal(stateData.govDelay.toNumber(), initDelay);
+        assert.equal(stateData.nextGovDelay.toNumber(), 0);
+        assert.equal(stateData.nextGovDelayEt.toNumber(), 0);
+        assert.equal(stateData.nextUnpauseEt.toNumber(), 0);
         assert.deepEqual(stateData.nextMintRecipient, admin);
         assert.deepEqual(stateData.nextMintAmount.toNumber(), 0);
         assert.deepEqual(stateData.nextMintEt.toNumber(), 0);
@@ -177,35 +203,39 @@ describe("MToken", () => {
         });
 
         it("revoke_setOwner", async () => {
-            // only owner can revoke
-            await checkErrorCode(revokeNextOwner(user1), "NotOwner");
+            // #2: revoke by owner OR revoker; anyone else rejected
+            await checkErrorCode(revokeNextOwner(user1), "NotOwnerOrRevoker");
 
-            // start a transfer, then revoke it
+            // owner can revoke
             await setOwner(owner, user1.publicKey);
-            const state = await getTokenState();
-            assert.isTrue(state.nextOwnerEt.toNumber() > 0);
-
+            assert.isTrue((await getTokenState()).nextOwnerEt.toNumber() > 0);
             await revokeNextOwner(owner);
             const state2 = await getTokenState();
             assert.equal(state2.nextOwnerEt.toNumber(), 0);
             assert.deepEqual(state2.owner, owner.publicKey); // owner unchanged
+
+            // revoker can also revoke (revoker was set to `revoker` during init? no —
+            // at this point the on-chain revoker is still the deployer; use deployer.payer)
+            await setOwner(owner, user1.publicKey);
+            assert.isTrue((await getTokenState()).nextOwnerEt.toNumber() > 0);
+            await revokeNextOwner(deployer.payer); // current revoker
+            assert.equal((await getTokenState()).nextOwnerEt.toNumber(), 0);
         });
 
+        // setOperator (#12, delay window) and setMessager (#6, gov_delay window) share the
+        // single-call request/execute loop. Both windows equal initDelay here (delay ==
+        // gov_delay == initDelay from init), so timing stays fast. setRevoker (#1) is NOT
+        // here — it is a two-step accept, tested separately below.
         const testCases = [
-            {name: "setRevoker", func: setRevoker, revokeFunc: revokeNextRevoker, field: "revoker", nextField: "nextRevoker", nextEtField: "nextRevokerEt", roleErr: "NotOwner", caller: owner, oldVal: deployer.payer.publicKey, newVal: revoker.publicKey, newVal2: user1.publicKey, revoker: owner},
-            {name: "setOperator", func: setOperator, revokeFunc: revokeNextOperator, field: "operator", nextField: "nextOperator", nextEtField: "nextOperatorEt", roleErr: "NotOwner", caller: owner, oldVal: deployer.payer.publicKey, newVal: operator.publicKey, newVal2: user1.publicKey, revoker},
-            {name: "setMessager", func: setMessager, revokeFunc: revokeNextMessager, field: "messager", nextField: "nextMessager", nextEtField: "nextMessagerEt", roleErr: "NotOwner", caller: owner, oldVal: deployer.payer.publicKey, newVal: messager.publicKey, newVal2: user1.publicKey, revoker: revoker},
-            // NOTE: setDelay is tested separately at the end of the suite. It enforces the
-            // [MIN_ACCEPTABLE_DELAY, MAX_ACCEPTABLE_DELAY] bounds and executing it would
-            // permanently raise `delay` above the fast (initDelay) value the other timed
-            // tests depend on, so it cannot share this generic loop.
+            {name: "setOperator", func: setOperator, revokeFunc: revokeNextOperator, field: "operator", nextField: "nextOperator", nextEtField: "nextOperatorEt", caller: owner, oldVal: deployer.payer.publicKey, newVal: operator.publicKey, newVal2: user1.publicKey},
+            {name: "setMessager", func: setMessager, revokeFunc: revokeNextMessager, field: "messager", nextField: "nextMessager", nextEtField: "nextMessagerEt", caller: owner, oldVal: deployer.payer.publicKey, newVal: messager.publicKey, newVal2: user1.publicKey},
         ];
 
         for (const testCase of testCases) {
-            const {name, func, field, nextField, nextEtField, roleErr, caller, oldVal, newVal, newVal2} = testCase;
+            const {name, func, field, nextField, nextEtField, caller, oldVal, newVal, newVal2} = testCase;
 
             it(name, async () => {
-                await checkErrorCode(func(user1, newVal as any), roleErr);
+                await checkErrorCode(func(user1, newVal as any), "NotOwner");
 
                 // request
                 await func(caller, newVal as any);
@@ -231,31 +261,97 @@ describe("MToken", () => {
             });
         }; // end of for
 
+        // #1 setRevoker: gov_delay + two-step accept (owner requests, new revoker accepts).
+        it("setRevoker", async () => {
+            // only owner can start
+            await checkErrorCode(setRevoker(user1, revoker.publicKey), "NotOwner");
+
+            // step 1: owner requests
+            await setRevoker(owner, revoker.publicKey);
+            const state = await getTokenState();
+            assert.deepEqual(state.revoker, deployer.payer.publicKey); // unchanged until accept
+            assert.deepEqual(state.nextRevoker, revoker.publicKey);
+            assert.isTrue(state.nextRevokerEt.toNumber() > 0);
+
+            // cannot start another while one is pending
+            await checkErrorCode(setRevoker(owner, user1.publicKey), "PendingRevokerExist");
+
+            // step 2 too early / wrong signer
+            await checkErrorCode(acceptRevoker(revoker), "NotEffective");
+            await checkErrorCode(acceptRevoker(user1), "NotNextRevoker");
+
+            // wait gov_delay, then the pending revoker accepts
+            await increaseBlockTime(provider, initDelay);
+            await acceptRevoker(revoker);
+            const state2 = await getTokenState();
+            assert.deepEqual(state2.revoker, revoker.publicKey);
+            assert.equal(state2.nextRevokerEt.toNumber(), 0);
+
+            // accepting again with nothing pending fails
+            await checkErrorCode(acceptRevoker(revoker), "NoPendingRevoker");
+        });
+
+        // #1 revoke: owner OR operator (self-exclusion — revoker cannot cancel its own change).
+        it("revoke_setRevoker", async () => {
+            await setRevoker(owner, user1.publicKey);
+            assert.isTrue((await getTokenState()).nextRevokerEt.toNumber() > 0);
+
+            // the revoker itself cannot revoke (self-exclusion), nor can a stranger
+            await checkErrorCode(revokeNextRevoker(revoker), "NotOwnerOrOperator");
+            await checkErrorCode(revokeNextRevoker(user1), "NotOwnerOrOperator");
+
+            // operator can revoke
+            await revokeNextRevoker(operator);
+            assert.equal((await getTokenState()).nextRevokerEt.toNumber(), 0);
+
+            // owner can also revoke
+            await setRevoker(owner, user1.publicKey);
+            await revokeNextRevoker(owner);
+            assert.equal((await getTokenState()).nextRevokerEt.toNumber(), 0);
+        });
+
+        // owner-or-revoker revocation for the single-call setters (#6, #12)
         for (const testCase of testCases) {
-            const {name, func, revokeFunc, nextEtField, caller, oldVal, revoker} = testCase;
+            const {name, func, revokeFunc, nextEtField, caller, oldVal} = testCase;
 
             it("revoke_" + name, async () => {
-                const err = revoker == owner ? "NotOwner" : "NotRevoker";
-                await checkErrorCode(revokeFunc(user1), err);
+                await checkErrorCode(revokeFunc(user1), "NotOwnerOrRevoker");
 
                 // request
                 await func(caller, oldVal as any);
-                const state = await getTokenState();
-                assert.isTrue(state[nextEtField].toNumber() > 0);
+                assert.isTrue((await getTokenState())[nextEtField].toNumber() > 0);
 
-                // revoke
+                // revoke by revoker
                 await revokeFunc(revoker);
-                const state2 = await getTokenState();
-                assert.isTrue(state2[nextEtField].toNumber() == 0);
+                assert.isTrue((await getTokenState())[nextEtField].toNumber() == 0);
+
+                // request + revoke by owner
+                await func(caller, oldVal as any);
+                await revokeFunc(owner);
+                assert.isTrue((await getTokenState())[nextEtField].toNumber() == 0);
             });
         } // end of for
 
     }); // end of describe
 
     describe("state config", () => {
-        it("setDelay", async () => {
+        // gov_delay is still initDelay (3s) here, so setDelay's invariant (new_delay <=
+        // gov_delay) always fails for any in-bounds delay — this is exactly the tiering guard.
+        it("setDelay: bounds + gov_delay invariant", async () => {
+            await checkErrorCode(setDelay(user1, minDelay), "NotOwner");
             await checkErrorCode(setDelay(owner, minDelay - 1), "DelayBelowMinimum");
             await checkErrorCode(setDelay(owner, maxDelay + 1), "DelayExceedsMaximum");
+            // in-bounds but exceeds current gov_delay (3s) → tiering guard
+            await checkErrorCode(setDelay(owner, minDelay), "DelayExceedsGovDelay");
+            // revoke auth is checked before state (no pending needed)
+            await checkErrorCode(revokeNextDelay(user1), "NotOwnerOrRevoker");
+        });
+
+        it("setGovDelay: bounds", async () => {
+            await checkErrorCode(setGovDelay(user1, minGovDelay), "NotOwner");
+            await checkErrorCode(setGovDelay(owner, minGovDelay - 1), "DelayBelowMinimum");
+            await checkErrorCode(setGovDelay(owner, maxGovDelay + 1), "DelayExceedsMaximum");
+            await checkErrorCode(revokeNextGovDelay(user1), "NotOwnerOrRevoker");
         });
     });
 
@@ -329,8 +425,53 @@ describe("MToken", () => {
         });
 
         it("set_paused", async () => {
-            await pause(operator); // ok
-            await unpause(owner); // ok
+            // unpause request is rejected while not paused — otherwise a pre-staged
+            // matured request could bypass the delay of a future emergency pause
+            await checkErrorCode(unpause(owner), "NotPaused");
+
+            await pause(operator); // #20 immediate
+
+            // #14 unpause is a delayed two-call op
+            await unpause(owner); // request
+            assert.isTrue((await getTokenState()).nextUnpauseEt.toNumber() > 0);
+            await checkErrorCode(unpause(owner), "NotEffective"); // too early
+            await increaseBlockTime(provider, initDelay);
+            await unpause(owner); // execute
+            assert.equal((await getTokenState()).nextUnpauseEt.toNumber(), 0);
+        });
+
+        it("revoke_unpause", async () => {
+            await pause(operator);
+            await unpause(owner); // request
+            assert.isTrue((await getTokenState()).nextUnpauseEt.toNumber() > 0);
+
+            // revoke by owner OR revoker; stranger rejected
+            await checkErrorCode(revokeUnpause(user1), "NotOwnerOrRevoker");
+            await revokeUnpause(revoker);
+            assert.equal((await getTokenState()).nextUnpauseEt.toNumber(), 0);
+
+            // mint is still paused — unpause properly so later tests can transfer
+            await unpause(owner); // request
+            await increaseBlockTime(provider, initDelay);
+            await unpause(owner); // execute
+            assert.equal((await getTokenState()).nextUnpauseEt.toNumber(), 0);
+        });
+
+        it("pause_clears_pending_unpause", async () => {
+            await pause(operator);
+            await unpause(owner); // request
+            await increaseBlockTime(provider, initDelay); // request matures
+
+            // a new pause wipes the matured request — every pause gets a fresh delay
+            await pause(operator);
+            assert.equal((await getTokenState()).nextUnpauseEt.toNumber(), 0);
+
+            // owner must go through the full two-call delay again
+            await unpause(owner); // new request
+            await checkErrorCode(unpause(owner), "NotEffective");
+            await increaseBlockTime(provider, initDelay);
+            await unpause(owner); // execute
+            assert.equal((await getTokenState()).nextUnpauseEt.toNumber(), 0);
         });
 
     });
@@ -402,7 +543,7 @@ describe("MToken", () => {
         });
 
         it("revoke_mint", async () => {
-            await checkErrorCode(revokeNextMint(user1), "NotRevoker");
+            await checkErrorCode(revokeNextMint(user1), "NotOwnerOrRevoker");
 
             // request
             await mint(operator, user2.publicKey, 100);
@@ -540,7 +681,10 @@ describe("MToken", () => {
                 transferToken(user1, user2.publicKey, 100),
                 "Transferring, minting, and burning is paused on this mint",
             );
-            await unpause(owner);
+            // #14 delayed two-call unpause
+            await unpause(owner); // request
+            await increaseBlockTime(provider, initDelay);
+            await unpause(owner); // execute
         });
 
     });
@@ -637,55 +781,57 @@ describe("MToken", () => {
 
     })
 
-    // setDelay is tested last: executing it raises `delay` above initDelay, which would
-    // break the fast-timing of the other delayed-op tests if run earlier. The pending
-    // request still becomes effective after the *current* (small) delay, so the full
-    // request -> execute flow is still exercisable here.
-    describe("delayed setDelay", () => {
+    // Arming (setGovDelay / setDelay) runs LAST: executing setGovDelay raises gov_delay to
+    // 24h, which would make every gov_delay-windowed op (setOwner/setRevoker/setMessager/…)
+    // require a 24h wait. setGovDelay's window is the CURRENT gov_delay (still initDelay here),
+    // so its full request→execute is fast. setDelay's full execute is NOT tested — once armed
+    // its window is gov_delay (24h) and the real-sleep harness can't wait that long; we
+    // exercise its request path (invariant now satisfied) and revoke instead.
+    describe("arming (setGovDelay / setDelay)", () => {
 
-        it("setDelay", async () => {
-            const curDelay = (await getTokenState()).delay.toNumber();
-            const newDelay = minDelay;       // 1h, within bounds
-            const newDelay2 = minDelay + 60; // a different valid value
+        it("setGovDelay: full request -> execute", async () => {
+            const newGovDelay = minGovDelay; // 24h value; window is the CURRENT gov_delay
+            const curGovDelay = (await getTokenState()).govDelay.toNumber();
 
-            // role check
-            await checkErrorCode(setDelay(user1, newDelay), "NotOwner");
+            // request (window == current gov_delay == initDelay)
+            await setGovDelay(owner, newGovDelay);
+            const s1 = await getTokenState();
+            assert.equal(s1.govDelay.toNumber(), curGovDelay); // unchanged until execute
+            assert.equal(s1.nextGovDelay.toNumber(), newGovDelay);
+            assert.isTrue(s1.nextGovDelayEt.toNumber() > 0);
 
-            // request
-            await setDelay(owner, newDelay);
-            const state = await getTokenState();
-            assert.equal(state.delay.toNumber(), curDelay);
-            assert.equal(state.nextDelay.toNumber(), newDelay);
-            assert.isTrue(state.nextDelayEt.toNumber() > 0);
+            // too early
+            await checkErrorCode(setGovDelay(owner, newGovDelay), "NotEffective");
 
-            // execute too early
-            await checkErrorCode(setDelay(owner, newDelay), "NotEffective");
+            await increaseBlockTime(provider, curGovDelay);
 
-            // wait for the (still small) current delay to elapse
-            await increaseBlockTime(provider, curDelay);
+            // mismatch
+            await checkErrorCode(setGovDelay(owner, newGovDelay + 60), "RequestMismatch");
 
-            // request with different value
-            await checkErrorCode(setDelay(owner, newDelay2), "RequestMismatch");
-
-            // execute OK
-            await setDelay(owner, newDelay);
-            const state2 = await getTokenState();
-            assert.equal(state2.delay.toNumber(), newDelay);
-            assert.equal(state2.nextDelayEt.toNumber(), 0);
+            // execute
+            await setGovDelay(owner, newGovDelay);
+            const s2 = await getTokenState();
+            assert.equal(s2.govDelay.toNumber(), newGovDelay);
+            assert.equal(s2.nextGovDelayEt.toNumber(), 0);
         });
 
-        it("revoke_setDelay", async () => {
-            await checkErrorCode(revokeNextDelay(user1), "NotRevoker");
+        it("setDelay: request path (invariant satisfied) + revoke", async () => {
+            // gov_delay is now 24h, so an in-bounds delay <= gov_delay is accepted.
+            await setDelay(owner, minDelay); // 1h <= 24h
+            const s1 = await getTokenState();
+            assert.equal(s1.nextDelay.toNumber(), minDelay);
+            assert.isTrue(s1.nextDelayEt.toNumber() > 0);
 
-            // request
-            await setDelay(owner, minDelay + 120);
-            const state = await getTokenState();
-            assert.isTrue(state.nextDelayEt.toNumber() > 0);
-
-            // revoke
+            // revoke by revoker (executing would need a 24h wait — out of scope for this harness)
             await revokeNextDelay(revoker);
-            const state2 = await getTokenState();
-            assert.equal(state2.nextDelayEt.toNumber(), 0);
+            assert.equal((await getTokenState()).nextDelayEt.toNumber(), 0);
+        });
+
+        it("setGovDelay: revoke", async () => {
+            await setGovDelay(owner, minGovDelay + 3600); // request (only the pending is needed)
+            assert.isTrue((await getTokenState()).nextGovDelayEt.toNumber() > 0);
+            await revokeNextGovDelay(owner);
+            assert.equal((await getTokenState()).nextGovDelayEt.toNumber(), 0);
         });
 
     });

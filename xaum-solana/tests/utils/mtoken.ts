@@ -87,17 +87,48 @@ export async function setDelay(signer: Keypair, newDelay: number) {
         .signers([signer])
         .rpc();
 }
+// setRevoker (#1): two-step accept — signed by the pending revoker (next_revoker).
+export async function acceptRevoker(signer: Keypair) {
+    await program.methods
+        .acceptRevoker()
+        .accounts({nextRevoker: signer.publicKey})
+        .signers([signer])
+        .rpc();
+}
+export async function setGovDelay(signer: Keypair, newGovDelay: number) {
+    await program.methods
+        .setGovDelay(new anchor.BN(newGovDelay))
+        .accounts({owner: signer.publicKey})
+        .signers([signer])
+        .rpc();
+}
+// revoke_* are owner-or-revoker (owner-or-operator for revoke_next_revoker); the
+// context takes a single `signer` account and checks the role in-handler.
 export async function revokeNextOwner(signer: Keypair) {
     await program.methods
         .revokeNextOwner()
-        .accounts({owner: signer.publicKey})
+        .accounts({signer: signer.publicKey})
         .signers([signer])
         .rpc();
 }
 export async function revokeNextRevoker(signer: Keypair) {
     await program.methods
         .revokeNextRevoker()
-        .accounts({owner: signer.publicKey})
+        .accounts({signer: signer.publicKey})
+        .signers([signer])
+        .rpc();
+}
+export async function revokeNextGovDelay(signer: Keypair) {
+    await program.methods
+        .revokeNextGovDelay()
+        .accounts({signer: signer.publicKey})
+        .signers([signer])
+        .rpc();
+}
+export async function revokeUnpause(signer: Keypair) {
+    await program.methods
+        .revokeUnpause()
+        .accounts({signer: signer.publicKey})
         .signers([signer])
         .rpc();
 }
@@ -132,32 +163,32 @@ export async function unpause(signer: Keypair) {
         .rpc();
 }
 
-// only revoker
+// owner-or-revoker revocations
 export async function revokeNextOperator(signer: Keypair) {
     await program.methods
         .revokeNextOperator()
-        .accounts({revoker: signer.publicKey})
+        .accounts({signer: signer.publicKey})
         .signers([signer])
         .rpc();
 }
 export async function revokeNextMessager(signer: Keypair) {
     await program.methods
         .revokeNextMessager()
-        .accounts({revoker: signer.publicKey})
+        .accounts({signer: signer.publicKey})
         .signers([signer])
         .rpc();
 }
 export async function revokeNextDelay(signer: Keypair) {
     await program.methods
         .revokeNextDelay()
-        .accounts({revoker: signer.publicKey})
+        .accounts({signer: signer.publicKey})
         .signers([signer])
         .rpc();
 }
 export async function revokeNextMint(signer: Keypair) {
     await program.methods
         .revokeMint()
-        .accounts({revoker: signer.publicKey})
+        .accounts({signer: signer.publicKey})
         .signers([signer])
         .rpc();
 }
@@ -235,7 +266,7 @@ export async function setForcedTransferReceiver(signer: Keypair, newReceiver: Pu
 export async function revokeNextForcedTransferReceiver(signer: Keypair) {
     await program.methods
         .revokeNextForcedTransferReceiver()
-        .accounts({revoker: signer.publicKey})
+        .accounts({signer: signer.publicKey})
         .signers([signer])
         .rpc();
 }
@@ -243,7 +274,7 @@ export async function revokeNextForcedTransferReceiver(signer: Keypair) {
 export async function revokeForcedTransfer(signer: Keypair) {
     await program.methods
         .revokeForcedTransfer()
-        .accounts({revoker: signer.publicKey})
+        .accounts({signer: signer.publicKey})
         .signers([signer])
         .rpc();
 }

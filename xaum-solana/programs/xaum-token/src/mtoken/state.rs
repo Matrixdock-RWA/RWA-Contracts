@@ -5,6 +5,7 @@ use anchor_lang::prelude::*;
 // on existing mainnet accounts. All-zero decodes to valid initial state.
 // _reserved was 256 bytes; 24 bytes consumed by gov_delay group; then 184 bytes
 // consumed by forced_transfer_receiver + pending forced-transfer slot = 48 remaining.
+// Then 8 bytes consumed by next_unpause_et = 40 remaining.
 // Total INIT_SPACE is unchanged — no account reallocation required on upgrade.
 #[account]
 #[derive(InitSpace)]
@@ -29,7 +30,8 @@ pub struct State {
     pub next_messager: Pubkey,
     pub next_messager_et: i64,
 
-    // operational delay: operator / revoker / messager / mint changes (1h–7d)
+    // operational delay: operator / mint / forceTransfer / unpause changes (1h–48h).
+    // revoker & messager were promoted to gov_delay in Timelock V2.
     pub delay: i64,
     pub next_delay: i64,
     pub next_delay_et: i64,
@@ -41,7 +43,8 @@ pub struct State {
 
     pub mint_budget: u64,
 
-    // governance delay: ownership transfer (1h–7d).
+    // governance delay: owner / revoker / messager / setDelay / setGovDelay /
+    // forcedTransferReceiver changes (24h–7d).
     // Carved from _reserved head; existing accounts read zero → gov_delay=0 until set.
     pub gov_delay: i64,
     pub next_gov_delay: i64,
@@ -60,10 +63,15 @@ pub struct State {
     pub next_forced_transfer_et: i64,
     pub next_forced_transfer_nonce: [u8; 32],
 
+    // pending GlobalUnpause — single-slot delayed op (#14). 0 = none pending.
+    // Carved from _reserved head; existing accounts read zero → no pending unpause.
+    pub next_unpause_et: i64,
+
     // reserved for future fields
     // 256 - 24 consumed by gov_delay = 232 remaining
     // 232 - 184 consumed by forced_transfer = 48 remaining
-    pub _reserved: [u8; 48],
+    // 48 - 8 consumed by next_unpause_et = 40 remaining
+    pub _reserved: [u8; 40],
 
     pub bump: u8,
 }

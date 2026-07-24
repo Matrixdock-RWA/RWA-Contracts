@@ -27,7 +27,7 @@ pub mod xaum_token {
         mint::mint_token(ctx, amount, nonce)
     }
 
-    pub fn revoke_mint(ctx: Context<RevokerOp>) -> Result<()> {
+    pub fn revoke_mint(ctx: Context<OwnerOrRevokerOp>) -> Result<()> {
         authority::revoke_mint(ctx)
     }
 
@@ -60,7 +60,7 @@ pub mod xaum_token {
         authority::accept_ownership(ctx)
     }
 
-    pub fn revoke_next_owner(ctx: Context<OwnerOp>) -> Result<()> {
+    pub fn revoke_next_owner(ctx: Context<OwnerOrRevokerOp>) -> Result<()> {
         authority::revoke_next_owner(ctx)
     }
 
@@ -68,7 +68,7 @@ pub mod xaum_token {
         authority::set_operator(ctx, new_operator)
     }
 
-    pub fn revoke_next_operator(ctx: Context<RevokerOp>) -> Result<()> {
+    pub fn revoke_next_operator(ctx: Context<OwnerOrRevokerOp>) -> Result<()> {
         authority::revoke_next_operator(ctx)
     }
 
@@ -76,7 +76,11 @@ pub mod xaum_token {
         authority::set_revoker(ctx, new_revoker)
     }
 
-    pub fn revoke_next_revoker(ctx: Context<OwnerOp>) -> Result<()> {
+    pub fn accept_revoker(ctx: Context<AcceptRevokerOp>) -> Result<()> {
+        authority::accept_revoker(ctx)
+    }
+
+    pub fn revoke_next_revoker(ctx: Context<OwnerOrOperatorOp>) -> Result<()> {
         authority::revoke_next_revoker(ctx)
     }
 
@@ -84,7 +88,7 @@ pub mod xaum_token {
         authority::set_messager(ctx, new_messager)
     }
 
-    pub fn revoke_next_messager(ctx: Context<RevokerOp>) -> Result<()> {
+    pub fn revoke_next_messager(ctx: Context<OwnerOrRevokerOp>) -> Result<()> {
         authority::revoke_next_messager(ctx)
     }
 
@@ -92,7 +96,7 @@ pub mod xaum_token {
         authority::set_delay(ctx, new_delay)
     }
 
-    pub fn revoke_next_delay(ctx: Context<RevokerOp>) -> Result<()> {
+    pub fn revoke_next_delay(ctx: Context<OwnerOrRevokerOp>) -> Result<()> {
         authority::revoke_next_delay(ctx)
     }
 
@@ -100,7 +104,7 @@ pub mod xaum_token {
         authority::set_gov_delay(ctx, new_delay)
     }
 
-    pub fn revoke_next_gov_delay(ctx: Context<OwnerOp>) -> Result<()> {
+    pub fn revoke_next_gov_delay(ctx: Context<OwnerOrRevokerOp>) -> Result<()> {
         authority::revoke_next_gov_delay(ctx)
     }
 
@@ -118,11 +122,11 @@ pub mod xaum_token {
         authority::set_forced_transfer_receiver(ctx, new_receiver)
     }
 
-    pub fn revoke_next_forced_transfer_receiver(ctx: Context<RevokerOp>) -> Result<()> {
+    pub fn revoke_next_forced_transfer_receiver(ctx: Context<OwnerOrRevokerOp>) -> Result<()> {
         authority::revoke_next_forced_transfer_receiver(ctx)
     }
 
-    pub fn revoke_forced_transfer(ctx: Context<RevokerOp>) -> Result<()> {
+    pub fn revoke_forced_transfer(ctx: Context<OwnerOrRevokerOp>) -> Result<()> {
         authority::revoke_forced_transfer(ctx)
     }
 
@@ -142,8 +146,12 @@ pub mod xaum_token {
         extensions::pause(ctx)
     }
 
-    pub fn unpause(ctx: Context<UpdateExtension>) -> Result<()> {
+    pub fn unpause(ctx: Context<Unpause>) -> Result<()> {
         extensions::unpause(ctx)
+    }
+
+    pub fn revoke_unpause(ctx: Context<OwnerOrRevokerOp>) -> Result<()> {
+        authority::revoke_unpause(ctx)
     }
 
     pub fn harvest_transfer_fees<'info>(

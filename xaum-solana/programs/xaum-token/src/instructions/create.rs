@@ -16,7 +16,11 @@ use {
 };
 
 use super::super::mtoken::utils::update_account_lamports_to_minimum_rent_balance;
-use super::super::mtoken::{errors::ErrorCode, state::State, xaum::MAX_ACCEPTABLE_DELAY, xaum::XAUM_DECIMALS};
+use super::super::mtoken::{
+    errors::ErrorCode,
+    state::State,
+    xaum::{MAX_DELAY, MAX_GOV_DELAY, XAUM_DECIMALS},
+};
 
 #[derive(Accounts)]
 pub struct CreateToken<'info> {
@@ -52,10 +56,14 @@ pub fn create_token(
     delay: i64,     // operational delay in seconds (zero allowed for initialization)
     gov_delay: i64, // governance delay in seconds (zero allowed for initialization)
 ) -> Result<()> {
+    // Factory init allows 0/0 (timelocks disarmed) so the deployer can complete wiring
+    // and ownership handover without waiting. A configured governance delay must never
+    // be shorter than the operational delay.
     require!(delay >= 0, ErrorCode::NegativeDelay);
-    require!(delay <= MAX_ACCEPTABLE_DELAY, ErrorCode::DelayExceedsMaximum);
+    require!(delay <= MAX_DELAY, ErrorCode::DelayExceedsMaximum);
     require!(gov_delay >= 0, ErrorCode::NegativeDelay);
-    require!(gov_delay <= MAX_ACCEPTABLE_DELAY, ErrorCode::DelayExceedsMaximum);
+    require!(gov_delay <= MAX_GOV_DELAY, ErrorCode::DelayExceedsMaximum);
+    require!(gov_delay >= delay, ErrorCode::GovDelayBelowDelay);
 
     // Initialize state
     let state = &mut ctx.accounts.state;

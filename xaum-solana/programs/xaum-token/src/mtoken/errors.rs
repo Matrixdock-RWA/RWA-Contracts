@@ -61,4 +61,28 @@ pub enum ErrorCode {
 
     #[msg("TransferWouldDrainAccount")]
     TransferWouldDrainAccount,
+
+    #[msg("NotOwnerOrRevoker")]
+    NotOwnerOrRevoker,
+
+    #[msg("NotOwnerOrOperator")]
+    NotOwnerOrOperator,
+
+    #[msg("NotNextRevoker")]
+    NotNextRevoker,
+
+    #[msg("PendingRevokerExist")]
+    PendingRevokerExist,
+
+    #[msg("NoPendingRevoker")]
+    NoPendingRevoker,
+
+    #[msg("DelayExceedsGovDelay")]
+    DelayExceedsGovDelay,
+
+    #[msg("GovDelayBelowDelay")]
+    GovDelayBelowDelay,
+
+    #[msg("NotPaused")]
+    NotPaused,
 }

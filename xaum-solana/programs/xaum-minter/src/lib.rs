@@ -2,12 +2,15 @@ use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token_interface::{self, Mint, TokenAccount, TokenInterface, TransferChecked};
 
-declare_id!("7oRKE73rQCQ13hrmGrVUmUwg7S6LzEV8yuV3GTgAzjGY");
+declare_id!("8oHoHXfMAZmZW2pmXBFTCqvwSHBbLMhd8rwSJCzrsemH");
 
 pub const DELAY_MAX: i64 = 59;
 pub const MAX_ACCEPTED_TOKENS: usize = 10;
-// Ownership transfer timelock: request must wait this long before taking effect.
-pub const OWNER_TRANSFER_DELAY: i64 = 12 * 3600; // 12 hours
+// Governance timelock bounds (Timelock & Revoke V2). transfer_ownership (#2) and
+// set_gov_delay (#3) are protected by gov_delay. Factory init = 0 (disarmed) so the
+// deployer can complete wiring / ownership handover without waiting.
+pub const MIN_GOV_DELAY: i64 = 24 * 3600; // 24 hours
+pub const MAX_GOV_DELAY: i64 = 7 * 24 * 3600; // 7 days
 
 #[program]
 pub mod xaum_minter {
@@ -41,7 +44,7 @@ pub mod xaum_minter {
         Ok(())
     }
 
-    // Two-step ownership transfer with a hardcoded 12-hour timelock.
+    // #2 Two-step ownership transfer, timelocked by gov_delay (24h once armed).
     // Step 1 (owner): records the pending new owner and starts the countdown.
     // Step 2 (new owner): the pending owner calls accept_ownership after the delay.
     // A pending transfer must be revoked before a new one can be started.
@@ -50,11 +53,68 @@ pub mod xaum_minter {
         require!(state.next_owner_et == 0, ErrorCode::PendingOwnerExist);
         let clock = Clock::get()?;
         state.next_owner = new_owner;
-        state.next_owner_et = clock.unix_timestamp + OWNER_TRANSFER_DELAY;
+        state.next_owner_et = clock.unix_timestamp + state.gov_delay;
         emit!(SetOwnerRequest {
             old_owner: state.owner,
             new_owner,
             et: state.next_owner_et,
+        });
+        Ok(())
+    }
+
+    // One-time growth of the production state account to the V2 INIT_SPACE (adds the
+    // gov_delay group). Kept as its own instruction so the frequently-called governance
+    // ops (set_gov_delay request/execute/revoke) don't carry realloc overhead or require
+    // system_program on every call. Idempotent: a no-op once the account is already sized
+    // (freshly initialized accounts are created at the V2 size, so this is only for the
+    // pre-V2 mainnet account). Call it once during arming before set_gov_delay.
+    pub fn resize_state(_ctx: Context<ResizeState>) -> Result<()> {
+        Ok(())
+    }
+
+    // #3 setGovDelay — self-protected by the CURRENT gov_delay, bounded 24h–7d.
+    // Two-call pattern (request → execute). Uses the plain OnlyOwner context; the account
+    // must already be at the V2 size (see resize_state). Existing mainnet accounts over-
+    // allocated for max_len Vecs, so writing the gov_delay group fits without a resize
+    // unless both token lists are near-full — resize_state covers that edge.
+    pub fn set_gov_delay(ctx: Context<OnlyOwner>, new_gov_delay: i64) -> Result<()> {
+        require!(new_gov_delay >= MIN_GOV_DELAY, ErrorCode::DelayBelowMinimum);
+        require!(new_gov_delay <= MAX_GOV_DELAY, ErrorCode::DelayExceedsMaximum);
+
+        let state = &mut ctx.accounts.state;
+        let clock = Clock::get()?;
+        if state.next_gov_delay_et == 0 {
+            let curr_gov_delay = state.gov_delay;
+            state.next_gov_delay = new_gov_delay;
+            state.next_gov_delay_et = clock.unix_timestamp + curr_gov_delay;
+            emit!(SetGovDelayRequest {
+                old_gov_delay: curr_gov_delay,
+                new_gov_delay,
+                et: state.next_gov_delay_et,
+            });
+        } else {
+            require!(
+                state.next_gov_delay_et <= clock.unix_timestamp,
+                ErrorCode::NotEffective
+            );
+            require!(
+                state.next_gov_delay == new_gov_delay,
+                ErrorCode::RequestMismatch
+            );
+            state.gov_delay = state.next_gov_delay;
+            state.next_gov_delay_et = 0;
+            emit!(SetGovDelayEffected { new_gov_delay });
+        }
+        Ok(())
+    }
+
+    // Owner can cancel a pending gov_delay change (minter has no revoker → onlyOwner).
+    pub fn revoke_next_gov_delay(ctx: Context<OnlyOwner>) -> Result<()> {
+        let state = &mut ctx.accounts.state;
+        let pending = state.next_gov_delay;
+        state.next_gov_delay_et = 0;
+        emit!(RevokeNextGovDelay {
+            pending_gov_delay: pending,
         });
         Ok(())
     }
@@ -257,6 +317,23 @@ pub struct RevokeNextOwner {
 }
 
 #[event]
+pub struct SetGovDelayRequest {
+    pub old_gov_delay: i64,
+    pub new_gov_delay: i64,
+    pub et: i64,
+}
+
+#[event]
+pub struct SetGovDelayEffected {
+    pub new_gov_delay: i64,
+}
+
+#[event]
+pub struct RevokeNextGovDelay {
+    pub pending_gov_delay: i64,
+}
+
+#[event]
 pub struct SetPoolAccountAEvent {
     pub pool_account_a: Pubkey,
 }
@@ -310,12 +387,17 @@ pub struct RedeemRequestEvent {
 
 // ------- Account Definitions -------
 
+// UPGRADE SAFETY: production accounts were serialized without the next_owner group or
+// the gov_delay group — their layout ends at `bump`. Because Borsh is positional and
+// the Vec fields sit before `bump`, new fields can only be APPENDED after `bump`.
+// Existing accounts over-allocated for max_len(10) Vecs, so the trailing (unwritten)
+// bytes are zero → next_owner_et / gov_delay group decode to 0 (no pending / disarmed).
+// The one-time resize_state instruction reallocs the account up to the new INIT_SPACE
+// and tops up rent (only needed if both token lists are near-full).
 #[account]
 #[derive(InitSpace)]
 pub struct State {
     pub owner: Pubkey,
-    pub next_owner: Pubkey,
-    pub next_owner_et: i64,
     pub pool_account_a: Pubkey,
     pub pool_account_b: Pubkey,
     #[max_len(MAX_ACCEPTED_TOKENS)]
@@ -323,6 +405,16 @@ pub struct State {
     #[max_len(MAX_ACCEPTED_TOKENS)]
     pub accepted_by_b: Vec<Pubkey>,
     pub bump: u8,
+
+    // V2 two-step ownership transfer (appended for upgrade safety; zero-decodes on
+    // existing accounts → no pending owner).
+    pub next_owner: Pubkey,
+    pub next_owner_et: i64,
+
+    // V2 governance delay (appended for upgrade safety; zero-decodes on existing accounts).
+    pub gov_delay: i64,
+    pub next_gov_delay: i64,
+    pub next_gov_delay_et: i64,
 }
 
 // -------- Context Definitions --------
@@ -353,10 +445,31 @@ pub struct OnlyOwner<'info> {
         mut,
         seeds = [b"state"],
         bump = state.bump,
-        has_one = owner,
+        has_one = owner @ ErrorCode::NotOwner,
     )]
     pub state: Account<'info, State>,
     pub owner: Signer<'info>,
+}
+
+// One-time realloc of the (production) state account up to the V2 INIT_SPACE. Isolated
+// here so only this rarely-called instruction pays the realloc/rent-check cost and carries
+// system_program; the governance ops stay on the cheap OnlyOwner context. Idempotent:
+// realloc to the current size is a no-op.
+#[derive(Accounts)]
+pub struct ResizeState<'info> {
+    #[account(
+        mut,
+        seeds = [b"state"],
+        bump = state.bump,
+        has_one = owner @ ErrorCode::NotOwner,
+        realloc = 8 + State::INIT_SPACE,
+        realloc::payer = owner,
+        realloc::zero = false,
+    )]
+    pub state: Account<'info, State>,
+    #[account(mut)]
+    pub owner: Signer<'info>,
+    pub system_program: Program<'info, System>,
 }
 
 // Signed by the pending owner (next_owner) to accept a timelocked ownership transfer.
@@ -528,4 +641,10 @@ pub enum ErrorCode {
     PendingOwnerExist,
     #[msg("NoPendingOwner")]
     NoPendingOwner,
+    #[msg("DelayBelowMinimum")]
+    DelayBelowMinimum,
+    #[msg("DelayExceedsMaximum")]
+    DelayExceedsMaximum,
+    #[msg("NotOwner")]
+    NotOwner,
 }
