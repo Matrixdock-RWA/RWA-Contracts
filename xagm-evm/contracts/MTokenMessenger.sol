@@ -13,7 +13,7 @@ import {ICCClient} from "./interfaces/ICCClient.sol";
 
    CCIP                                |   LayerZero
 ---------------------------------------+--------------------------------
-setAllowedPeer                         | lzSetPeer
+addAllowedPeer / removeAllowedPeer     | lzAddPeer / lzRemovePeer
 sendTokenToChain                       | lzSendTokenToChain
 sendMintBudgetToChain                  | lzSendMintBudgetToChain
 calculateCCSendTokenFeeAndMessage      | lzCalculateSendTokenFee
@@ -35,7 +35,11 @@ contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
     mapping(uint64 chainSelector => mapping(bytes messenger => PeerInfo))
         public allowedPeer;
 
-    event AllowedPeer(uint64 chainSelector, bytes messenger, bool allowed);
+    bytes32 constant OP_ADD_ALLOWED_PEER = keccak256("OP_ADD_ALLOWED_PEER");
+
+    event AddAllowedPeerEffected(uint64 chainSelector, bytes messenger, uint8 addrLen);
+    event AllowedPeerRemoved(uint64 chainSelector, bytes messenger);
+    event AddAllowedPeerRequest(uint64 chainSelector, bytes messenger, uint8 addrLen, uint64 et);
     event CCReceive(bytes32 indexed messageID, bytes messageData);
     event CCSendToken(bytes32 indexed messageID, bytes messageData);
     event CCSendMintBudget(bytes32 indexed messageID, bytes messageData);
@@ -49,18 +53,48 @@ contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
         address _lzEndpoint
     ) CCIPReceiver(_ccipRouter) MTokenMessengerLZ(_lzEndpoint) {}
 
-    // CCIP related config.
-    function setAllowedPeer(
+    // CCIP related config: allow a peer. Granting a peer is risk-expanding
+    // (it can send messages that mint on this chain), so it goes through the
+    // normal `delay` before taking effect (two-call pattern, same as mintTo).
+    function addAllowedPeer(
         uint64 chainSelector,
         bytes calldata messenger,
-        bool allowed,
         uint8 addrLen
     ) external onlyOwner {
-        allowedPeer[chainSelector][messenger] = PeerInfo({
-            allowed: allowed,
-            addrLen: addrLen
-        });
-        emit AllowedPeer(chainSelector, messenger, allowed);
+        uint64 et = ensureDelay(_addAllowedPeerReqHash(chainSelector, messenger), addrLen, delay);
+        if (et == 0) {
+            allowedPeer[chainSelector][messenger] = PeerInfo({
+                allowed: true,
+                addrLen: addrLen
+            });
+            emit AddAllowedPeerEffected(chainSelector, messenger, addrLen);
+        } else {
+            emit AddAllowedPeerRequest(chainSelector, messenger, addrLen, et);
+        }
+    }
+
+    function revokeAddAllowedPeer(uint64 chainSelector, bytes calldata messenger) external onlyOwner {
+        revoke(_addAllowedPeerReqHash(chainSelector, messenger));
+    }
+
+    // CCIP related config: remove a peer. This is a safety action and takes
+    // effect immediately, unlike addAllowedPeer.
+    function removeAllowedPeer(
+        uint64 chainSelector,
+        bytes calldata messenger
+    ) external onlyOwner {
+        // clear any pending add request so it cannot mature right after removal
+        // and silently re-allow the peer, bypassing the intent of this safety action
+        revoke(_addAllowedPeerReqHash(chainSelector, messenger));
+        delete allowedPeer[chainSelector][messenger];
+        emit AllowedPeerRemoved(chainSelector, messenger);
+    }
+
+    function _addAllowedPeerReqHash(
+        uint64 chainSelector,
+        bytes calldata messenger
+    ) private pure returns (bytes32) {
+        return keccak256(abi.encode(OP_ADD_ALLOWED_PEER, chainSelector, messenger));
     }
 
     function _ccipReceive(

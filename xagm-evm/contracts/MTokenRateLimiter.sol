@@ -242,6 +242,15 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter, DelayedRolesUpgra
         return (_msg.receiver, _msg.amount, _msg.sender);
     }
 
+    // Called by MToken before registering/maturing a delayed process/discard request,
+    // so a request can't be pre-planted for an index that doesn't hold a message yet
+    // (and later mature against whatever unrelated message eventually lands there).
+    function checkRateLimitedMsg(uint256 index) external view {
+        if (index >= rateLimitedMsgs.length || rateLimitedMsgs[index].amount == 0) {
+            revert RateLimitedMsgInvalid(index);
+        }
+    }
+
     // Check whether an incoming cross-chain token transfer is within the rate limit,
     // and update the in-flight counter if so.
     // Returns true if within limit, false otherwise.

@@ -93,12 +93,12 @@ unpause                   | Owner      | delay    | Owner/Revoker  | Initiator
 enableCcSend              | Owner      | delay    | Owner/Revoker  | Initiator
 forcedTransfer            | Owner      | delay    | Owner/Revoker  | Initiator
 mintTo                    | Operator   | delay    | Owner/Revoker  | Initiator
+ccProcessRateLimitedMsg   | Operator   | delay    | Owner/Revoker  | Initiator
+ccDiscardRateLimitedMsg   | Operator   | delay    | Owner/Revoker  | Initiator
 pause                     | Operator   | no       | no             | no
 disableCcSend             | Operator   | no       | no             | no
 addToBlockedList          | Operator   | no       | no             | no
 removeFromBlockedList     | Operator   | no       | no             | no
-ccProcessRateLimitedMsg   | Operator   | no       | no             | no
-ccDiscardRateLimitedMsg   | Operator   | no       | no             | no
  */
 
 // this contract will be deployed on EVM-compatible chains other than Ethereum
@@ -123,6 +123,8 @@ contract MToken is MTokenBase, ICCClient {
     bytes32 constant OP_SET_FEE_COLLECTOR            = keccak256("OP_SET_FEE_COLLECTOR");            // 0x5fce929af8ba9add31f60f79948e01faec04215045e21ffe8284dc2340bb0717
     bytes32 constant OP_ENABLE_CC_SEND               = keccak256("OP_ENABLE_CC_SEND");               // 0x55c10731fa798db7b348dc2a315fbefd2f566460cff39a69411ef19b2c82a5e7
     bytes32 constant OP_UNPAUSE                      = keccak256("OP_UNPAUSE");                      // 0x19aebff3bbcef323e5c760a3ed420922e4d158f9d2c6e69bda4f540960d86e97
+    bytes32 constant OP_CC_PROCESS_RATE_LIMITED_MSG  = keccak256("OP_CC_PROCESS_RATE_LIMITED_MSG");  // 0x81e6015855d4c8f939048e3993d674969d59fa69958ee3faff23afeb0e5ce58d
+    bytes32 constant OP_CC_DISCARD_RATE_LIMITED_MSG  = keccak256("OP_CC_DISCARD_RATE_LIMITED_MSG");  // 0x22b4483527e4f6d017f96b7dbe00af387783d2ee104e87c1aaadeb61728b5ade
 
     event SetMessengerRequest(address oldAddr, address newAddr, uint64 et);
     event SetMessengerEffected(address newAddr);
@@ -132,6 +134,10 @@ contract MToken is MTokenBase, ICCClient {
     event SetForcedTransferReceiverEffected(address newAddr);
     event EnableCCSendRequest(uint64 et);
     event EnableCCSendEffected();
+    event RateLimitedMsgProcessRequest(uint256 index, uint64 et);
+    event RateLimitedMsgProcessEffected(uint256 index);
+    event RateLimitedMsgDiscardRequest(uint256 index, uint64 et);
+    event RateLimitedMsgDiscardEffected(uint256 index);
     event UnpauseRequest(uint64 et);
     event BlockPlaced(address indexed _user);
     event BlockReleased(address indexed _user);
@@ -143,8 +149,6 @@ contract MToken is MTokenBase, ICCClient {
     event CCReceiveMintBudgetManually(uint112 value);
     event Redeem(address indexed customer, uint256 amount, bytes data);
     event MintRequest(address indexed receiver, uint256 amount, uint256 nonce);
-    event RateLimitedMsgProcessed(uint256 index);
-    event RateLimitedMsgDiscarded(uint256 index);
     event Paused(address indexed _userAddress);
     event Unpaused(address indexed _userAddress); // intentionally named Unpaused (not UnpauseEffected) to match ERC3643
     event DisableCcSend();
@@ -721,37 +725,49 @@ contract MToken is MTokenBase, ICCClient {
         emit CCReceiveMintBudgetManually(value);
     }
 
-    // Process a batch of queued rate-limited cross-chain token messages.
-    // note: if any single index reverts (e.g. invalid/already-deleted slot), the entire batch reverts.
-    // Callers must exclude problematic indices and submit them separately or discard them.
-    function ccBatchProcessRateLimitedMsgs(uint256[] calldata indices) public {
-        for (uint256 i = 0; i < indices.length; i++) {
-            ccProcessRateLimitedMsg(indices[i]);
-        }
-    }
-
     // manually deliver a queued rate-limited cross-chain token message
     // note: allows minting to blocked receiver by design (same as ccReceiveToken)
+    // delayed via the normal `delay` (two-call pattern, same as mintTo)
+    //
+    // reqHash is bound to both `rateLimiter` and the message's current existence:
+    // binding to `rateLimiter` stops a request from a since-replaced rate limiter
+    // (see setRateLimiter) from being matured against a same-numbered message in a
+    // new one; requiring the message to exist at request time stops the operator
+    // from pre-registering a request for a not-yet-queued index and letting it
+    // mature in advance, then instantly delivering whatever real message eventually
+    // lands there with the delay never having actually applied to it. Once queued,
+    // a message's content at a given index never changes before it's removed (only
+    // `removeRateLimitedMsg` mutates a slot, and removed slots are never reused), so
+    // no further binding to the message content itself is needed.
     function ccProcessRateLimitedMsg(uint256 index) public onlyOperator whenNotPaused {
-        (address receiver, uint256 value, bytes memory sender) = IMTokenRateLimiter(rateLimiter).removeRateLimitedMsg(index);
-        _mint(receiver, value);
-        emit CCReceiveToken(sender, receiver, value);
-        emit RateLimitedMsgProcessed(index);
-    }
-
-    // Permanently discard a batch of queued rate-limited cross-chain token messages.
-    function ccBatchDiscardRateLimitedMsgs(uint256[] calldata indices) public {
-        for (uint256 i = 0; i < indices.length; i++) {
-            ccDiscardRateLimitedMsg(indices[i]);
+        IMTokenRateLimiter(rateLimiter).checkRateLimitedMsg(index);
+        bytes32 reqHash = keccak256(abi.encode(OP_CC_PROCESS_RATE_LIMITED_MSG, rateLimiter, index));
+        uint64 et = ensureDelay(reqHash, 0, delay);
+        if (et == 0) {
+            (address receiver, uint256 value, bytes memory sender) = IMTokenRateLimiter(rateLimiter).removeRateLimitedMsg(index);
+            _mint(receiver, value);
+            emit CCReceiveToken(sender, receiver, value);
+            emit RateLimitedMsgProcessEffected(index);
+        } else {
+            emit RateLimitedMsgProcessRequest(index, et);
         }
     }
 
     // Permanently discard a queued RateLimited cross-chain token message.
     // Use this when the queued message is identified as malicious (e.g. forged by an attacker)
     // and should never be delivered. No tokens are minted.
+    // delayed via the normal `delay` (two-call pattern, same as mintTo); see
+    // ccProcessRateLimitedMsg for why reqHash binds rateLimiter + requires existence.
     function ccDiscardRateLimitedMsg(uint256 index) public onlyOperator {
-        IMTokenRateLimiter(rateLimiter).removeRateLimitedMsg(index);
-        emit RateLimitedMsgDiscarded(index);
+        IMTokenRateLimiter(rateLimiter).checkRateLimitedMsg(index);
+        bytes32 reqHash = keccak256(abi.encode(OP_CC_DISCARD_RATE_LIMITED_MSG, rateLimiter, index));
+        uint64 et = ensureDelay(reqHash, 0, delay);
+        if (et == 0) {
+            IMTokenRateLimiter(rateLimiter).removeRateLimitedMsg(index);
+            emit RateLimitedMsgDiscardEffected(index);
+        } else {
+            emit RateLimitedMsgDiscardRequest(index, et);
+        }
     }
 
 }

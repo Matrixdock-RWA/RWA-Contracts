@@ -76,10 +76,13 @@ describe("MTokenMessenger", function () {
       expect(await mtMsg.getRouter()).to.equal(ccipRouter.target);
     });
 
-    it("setAllowedPeer", async function () {
+    it("addAllowedPeer / removeAllowedPeer", async function () {
       const {mtMsg, alice, bob} = await loadFixture(deployTestFixture);
 
-      await expect(mtMsg.connect(alice).setAllowedPeer(123, bob.address, true, 20))
+      await expect(mtMsg.connect(alice).addAllowedPeer(123, bob.address, 20))
+        .to.be.revertedWithCustomError(mtMsg, 'OwnableUnauthorizedAccount')
+        .withArgs(alice);
+      await expect(mtMsg.connect(alice).removeAllowedPeer(123, bob.address))
         .to.be.revertedWithCustomError(mtMsg, 'OwnableUnauthorizedAccount')
         .withArgs(alice);
 
@@ -90,20 +93,24 @@ describe("MTokenMessenger", function () {
         [987, "0x1987"],
       ];
 
-      // allow
+      // allow: two-call delayed pattern (delay defaults to 0, so 2nd call executes)
       for (const [chainSelector, messenger] of testCases) {
         expect(await mtMsg.allowedPeer(chainSelector, messenger)).to.deep.equal([false, 0]);
-        await expect(mtMsg.setAllowedPeer(chainSelector, messenger, true, 20))
-          .to.emit(mtMsg, "AllowedPeer")
-          .withArgs(chainSelector, messenger.toLowerCase(), true);
+        await expect(mtMsg.addAllowedPeer(chainSelector, messenger, 20))
+          .to.emit(mtMsg, "AddAllowedPeerRequest");
+        expect(await mtMsg.allowedPeer(chainSelector, messenger)).to.deep.equal([false, 0]);
+        await expect(mtMsg.addAllowedPeer(chainSelector, messenger, 20))
+          .to.emit(mtMsg, "AddAllowedPeerEffected")
+          .withArgs(chainSelector, messenger.toLowerCase(), 20);
       }
 
-      // disallow
+      // disallow: takes effect immediately
       for (const [chainSelector, messenger] of testCases) {
         expect(await mtMsg.allowedPeer(chainSelector, messenger)).to.deep.equal([true, 20]);
-        await expect(mtMsg.setAllowedPeer(chainSelector, messenger, false, 20))
-          .to.emit(mtMsg, "AllowedPeer")
-          .withArgs(chainSelector, messenger.toLowerCase(), false);
+        await expect(mtMsg.removeAllowedPeer(chainSelector, messenger))
+          .to.emit(mtMsg, "AllowedPeerRemoved")
+          .withArgs(chainSelector, messenger.toLowerCase());
+        expect(await mtMsg.allowedPeer(chainSelector, messenger)).to.deep.equal([false, 0]);
       }
     });
 
@@ -151,8 +158,10 @@ describe("MTokenMessenger", function () {
     it("sendTokenToChain", async function () {
       const {mt, mtSide, mtMsg, mtMsgSide, ccipRouter, reserveFeed,
         operator, alice, bob} = await loadFixture(deployTestFixture);
-      await mtMsg.setAllowedPeer(123, mtMsgSide.target, true, 20);
-      await mtMsgSide.setAllowedPeer(100, mtMsg.target, true, 20);
+      await mtMsg.addAllowedPeer(123, mtMsgSide.target, 20);
+      await mtMsg.addAllowedPeer(123, mtMsgSide.target, 20);
+      await mtMsgSide.addAllowedPeer(100, mtMsg.target, 20);
+      await mtMsgSide.addAllowedPeer(100, mtMsg.target, 20);
       await mtSide.setMessenger(mtMsgSide.target);
       await mtSide.setMessenger(mtMsgSide.target);
       await mt.setMessenger(mtMsg.target);
@@ -217,7 +226,8 @@ describe("MTokenMessenger", function () {
       for (const [receiverAddr, bytes32, lenHex, addrLen] of testCases) {
         const chainSel = 10000 + addrLen;
         const msgAddr = '0x' + (0x1000000000100000000010000000001000000000n + BigInt(addrLen)).toString(16);
-        await mtMsg.setAllowedPeer(chainSel,msgAddr, true, addrLen);
+        await mtMsg.addAllowedPeer(chainSel, msgAddr, addrLen);
+        await mtMsg.addAllowedPeer(chainSel, msgAddr, addrLen);
         const expectedData = '0x'
           + '0000000000000000000000000000000000000000000000000000000000000002'
           + '0000000000000000000000000000000000000000000000000000000000000040'
@@ -246,8 +256,10 @@ describe("MTokenMessenger", function () {
     it("sendMintBudgetToChain", async function () {
       const {mt, mtSide, mtMsg, mtMsgSide, ccipRouter, reserveFeed,
         operator} = await loadFixture(deployTestFixture);
-      await mtMsg.setAllowedPeer(123, mtMsgSide.target, true, 20);
-      await mtMsgSide.setAllowedPeer(100, mtMsg.target, true, 20);
+      await mtMsg.addAllowedPeer(123, mtMsgSide.target, 20);
+      await mtMsg.addAllowedPeer(123, mtMsgSide.target, 20);
+      await mtMsgSide.addAllowedPeer(100, mtMsg.target, 20);
+      await mtMsgSide.addAllowedPeer(100, mtMsg.target, 20);
       await mtSide.setMessenger(mtMsgSide.target);
       await mtSide.setMessenger(mtMsgSide.target);
       await mt.setMessenger(mtMsg.target);
@@ -317,28 +329,68 @@ describe("MTokenMessenger", function () {
       expect(await mtMsg.owner()).to.equal(bob.address);
     });
 
-    it("lzSetPeer", async function () {
+    it("lzAddPeer / lzRemovePeer", async function () {
       const {mtMsg, alice, bob} = await loadFixture(deployTestFixture);
       const aliceAddr32 = addrToBytes32(alice.address);
       const bobAddr32 = addrToBytes32(bob.address);
       expect(await mtMsg.peers(123)).to.equal(zeroBytes32);
       expect(await mtMsg.peers(456)).to.equal(zeroBytes32);
 
-      await expect(mtMsg.connect(alice).lzSetPeer(123, bobAddr32, 20))
+      await expect(mtMsg.connect(alice).lzAddPeer(123, bobAddr32, 20))
+        .to.be.revertedWithCustomError(mtMsg, 'OwnableUnauthorizedAccount')
+        .withArgs(alice);
+      await expect(mtMsg.connect(alice).lzRemovePeer(123))
         .to.be.revertedWithCustomError(mtMsg, 'OwnableUnauthorizedAccount')
         .withArgs(alice);
 
-      await expect(mtMsg.lzSetPeer(123, aliceAddr32, 20))
-        .to.emit(mtMsg, "PeerSet").withArgs(123, aliceAddr32);
-      await expect(mtMsg.lzSetPeer(456, bobAddr32, 20))
+      // add: two-call delayed pattern (delay defaults to 0, so the 2nd call executes)
+      await expect(mtMsg.lzAddPeer(123, aliceAddr32, 20))
+        .to.emit(mtMsg, "LZAddPeerRequest");
+      expect(await mtMsg.peers(123)).to.equal(zeroBytes32);
+      await expect(mtMsg.lzAddPeer(123, aliceAddr32, 20))
+        .to.emit(mtMsg, "PeerSet").withArgs(123, aliceAddr32)
+        .to.emit(mtMsg, "LZAddPeerEffected").withArgs(123, aliceAddr32, 20);
+
+      await expect(mtMsg.lzAddPeer(456, bobAddr32, 20))
+        .to.emit(mtMsg, "LZAddPeerRequest");
+      await expect(mtMsg.lzAddPeer(456, bobAddr32, 20))
         .to.emit(mtMsg, "PeerSet").withArgs(456, bobAddr32);
+
       expect(await mtMsg.peers(123)).to.equal(aliceAddr32);
       expect(await mtMsg.peers(456)).to.equal(bobAddr32);
 
-      await expect(mtMsg.lzSetPeer(123, zeroBytes32, 20))
-        .to.emit(mtMsg, "PeerSet").withArgs(123, zeroBytes32);
+      // remove: takes effect immediately
+      await expect(mtMsg.lzRemovePeer(123))
+        .to.emit(mtMsg, "PeerSet").withArgs(123, zeroBytes32)
+        .to.emit(mtMsg, "LZPeerRemoved").withArgs(123);
       expect(await mtMsg.peers(123)).to.equal(zeroBytes32);
       expect(await mtMsg.peers(456)).to.equal(bobAddr32);
+
+      // direct setPeer (bypassing eidToAddrLen bookkeeping) is disabled, even for owner
+      await expect(mtMsg.setPeer(123, bobAddr32))
+        .to.be.revertedWithCustomError(mtMsg, 'UseLzAddPeer');
+    });
+
+    it("lzRemovePeer revokes a pending lzAddPeer request", async function () {
+      const {mtMsg, alice} = await loadFixture(deployTestFixture);
+      await mtMsg.setGovDelay(DAY);
+      await mtMsg.setGovDelay(DAY);
+      await mtMsg.setDelay(HOUR);
+      await mtMsg.setDelay(HOUR);
+
+      const peer32 = addrToBytes32(alice.address);
+      await expect(mtMsg.lzAddPeer(123, peer32, 20))
+        .to.emit(mtMsg, "LZAddPeerRequest"); // matures in 1h, not yet applied
+      expect(await mtMsg.peers(123)).to.equal(zeroBytes32);
+
+      await mtMsg.lzRemovePeer(123); // safety action: also revokes the pending add
+
+      await time.increase(HOUR + 1);
+      // the old request is gone, so this starts a brand-new delay window
+      // instead of maturing the stale (and now cleared) one
+      await expect(mtMsg.lzAddPeer(123, peer32, 20))
+        .to.emit(mtMsg, "LZAddPeerRequest");
+      expect(await mtMsg.peers(123)).to.equal(zeroBytes32);
     });
 
     it("error: NoPeer", async function () {
@@ -383,7 +435,8 @@ describe("MTokenMessenger", function () {
       await mt.connect(operator).increaseMintBudget(500000);
       await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
       await mt.connect(operator).mintTo(alice.address, 20000, 0, ozPerToken);
-      await mtMsg.setPeer(123, addrToBytes32(mtMsgSide.target));
+      await mtMsg.lzAddPeer(123, addrToBytes32(mtMsgSide.target), 0);
+      await mtMsg.lzAddPeer(123, addrToBytes32(mtMsgSide.target), 0);
 
       const nativeFee2 = await mtMsg.lzCalculateSendMintBudgetFee(
         123, 50000, "0x0e472a");
@@ -400,8 +453,10 @@ describe("MTokenMessenger", function () {
     it("sendTokenToChain", async function () {
       const {mt, mtSide, mtMsg, mtMsgSide, lzEndpoint, reserveFeed,
         operator, alice, bob} = await loadFixture(deployTestFixture);
-      await mtMsg.lzSetPeer(123, addrToBytes32(mtMsgSide.target), 20);
-      await mtMsgSide.lzSetPeer(100, addrToBytes32(mtMsg.target), 20);
+      await mtMsg.lzAddPeer(123, addrToBytes32(mtMsgSide.target), 20);
+      await mtMsg.lzAddPeer(123, addrToBytes32(mtMsgSide.target), 20);
+      await mtMsgSide.lzAddPeer(100, addrToBytes32(mtMsg.target), 20);
+      await mtMsgSide.lzAddPeer(100, addrToBytes32(mtMsg.target), 20);
       await mtSide.setMessenger(mtMsgSide.target);
       await mtSide.setMessenger(mtMsgSide.target);
       await mt.setMessenger(mtMsg.target);
@@ -460,7 +515,8 @@ describe("MTokenMessenger", function () {
       for (const [receiverAddr, bytes32, lenHex, addrLen] of testCases) {
         const eid = 10000 + addrLen;
         const peerAddr = '0x' + (0x1000000000100000000010000000001000000000n + BigInt(addrLen)).toString(16);
-        await mtMsg.lzSetPeer(eid, addrToBytes32(peerAddr), addrLen);
+        await mtMsg.lzAddPeer(eid, addrToBytes32(peerAddr), addrLen);
+        await mtMsg.lzAddPeer(eid, addrToBytes32(peerAddr), addrLen);
         const expectedData = '0x'
           + '0000000000000000000000000000000000000000000000000000000000000002'
           + '0000000000000000000000000000000000000000000000000000000000000040'
@@ -489,8 +545,10 @@ describe("MTokenMessenger", function () {
     it("sendMintBudgetToChain", async function () {
       const {mt, mtSide, mtMsg, mtMsgSide, lzEndpoint, reserveFeed,
         operator, alice} = await loadFixture(deployTestFixture);
-      await mtMsg.setPeer(123, addrToBytes32(mtMsgSide.target));
-      await mtMsgSide.setPeer(100, addrToBytes32(mtMsg.target));
+      await mtMsg.lzAddPeer(123, addrToBytes32(mtMsgSide.target), 0);
+      await mtMsg.lzAddPeer(123, addrToBytes32(mtMsgSide.target), 0);
+      await mtMsgSide.lzAddPeer(100, addrToBytes32(mtMsg.target), 0);
+      await mtMsgSide.lzAddPeer(100, addrToBytes32(mtMsg.target), 0);
       await mtSide.setMessenger(mtMsgSide.target);
       await mtSide.setMessenger(mtMsgSide.target);
       await mt.setMessenger(mtMsg.target);

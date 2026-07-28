@@ -9,6 +9,10 @@ interface IMTokenRateLimiter {
     // Called by MToken to deliver or discard a queued message.
     function removeRateLimitedMsg(uint256 index) external returns (address receiver, uint256 amount, bytes memory sender);
 
+    // Reverts unless a message is currently queued at index (rejects out-of-bounds
+    // and already-delivered/discarded slots).
+    function checkRateLimitedMsg(uint256 index) external view;
+
     // Returns true if there are queued messages not yet processed.
     function hasPendingMsgs() external view returns (bool);
 
