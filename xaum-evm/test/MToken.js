@@ -255,8 +255,6 @@ describe("MTokenFT", function () {
         ["NotOperator", mt.connect(alice).removeFromBlockedList(alice.address)],
         ["NotOperator", mt.connect(alice).ccProcessRateLimitedMsg(123)],
         ["NotOperator", mt.connect(alice).ccDiscardRateLimitedMsg(456)],
-        ["NotOperator", mt.connect(alice).ccBatchProcessRateLimitedMsgs([123, 456])],
-        ["NotOperator", mt.connect(alice).ccBatchDiscardRateLimitedMsgs([123, 456])],
         ["NotOperator", mt.connect(alice).disableCcSend()],
         // onlyNFTContract
         ["NotNftContract", mt.connect(alice).pack(alice.address, 123)],

@@ -3,6 +3,7 @@ const {
   loadFixture,
 } = require("@nomicfoundation/hardhat-toolbox/network-helpers");
 const { expect } = require("chai");
+const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 const {
   deployTestFixture,
   addrTo32Bytes, scaleUp,
@@ -338,20 +339,25 @@ describe("MTokenRateLimiter", function () {
     await mt.ccReceiveToken(alice.address, bob.address, 3000); // #0
     await mt.ccReceiveToken(bob.address, alice.address, 4000); // #1
 
+    // ccProcessRateLimitedMsg is delayed (delay=0: two calls)
+    await expect(mt.connect(operator).ccProcessRateLimitedMsg(1))
+      .to.emit(mt, "RateLimitedMsgProcessRequest").withArgs(1, anyValue);
     const tx = mt.connect(operator).ccProcessRateLimitedMsg(1);
     await expect(tx).to.emit(mt, "CCReceiveToken")
       .withArgs(bob.address.toLowerCase(), alice.address, scaleUp(4000));
-    await expect(tx).to.emit(mt, "RateLimitedMsgProcessed").withArgs(1);
+    await expect(tx).to.emit(mt, "RateLimitedMsgProcessEffected").withArgs(1);
     await expect(tx).to.emit(rateLimiter, "RateLimitedMsgRemoved").withArgs(1);
     expect(await mt.balanceOf(alice.address)).to.equal(scaleUp(4000));
     expect(await rateLimiter.rateLimitedMsgs(1))
       .to.deep.equal([zeroAddr, 0, "0x"]);
 
+    // index 1 is now a dead slot: even a fresh request is rejected immediately,
+    // rather than only failing later when it matures
     await expect(mt.connect(operator).ccProcessRateLimitedMsg(1))
       .to.be.revertedWithCustomError(rateLimiter, "RateLimitedMsgInvalid")
       .withArgs(1);
 
-    // paused: processing is blocked
+    // paused: processing is blocked (request phase is also guarded by whenNotPaused)
     await mt.connect(operator).pause();
     await expect(mt.connect(operator).ccProcessRateLimitedMsg(0))
       .to.be.revertedWithCustomError(mt, "GlobalPaused");
@@ -359,8 +365,9 @@ describe("MTokenRateLimiter", function () {
     // unpause (delay=0: two calls) and processing resumes
     await mt.unpause();
     await mt.unpause();
+    await mt.connect(operator).ccProcessRateLimitedMsg(0);
     await expect(mt.connect(operator).ccProcessRateLimitedMsg(0))
-      .to.emit(mt, "RateLimitedMsgProcessed").withArgs(0);
+      .to.emit(mt, "RateLimitedMsgProcessEffected").withArgs(0);
   });
 
   it("ccDiscardRateLimitedMsg", async function () {
@@ -376,35 +383,89 @@ describe("MTokenRateLimiter", function () {
     // must be removable even while the token is paused
     await mt.connect(operator).pause();
 
+    // ccDiscardRateLimitedMsg is delayed (delay=0: two calls)
+    await expect(mt.connect(operator).ccDiscardRateLimitedMsg(1))
+      .to.emit(mt, "RateLimitedMsgDiscardRequest").withArgs(1, anyValue);
     const tx = mt.connect(operator).ccDiscardRateLimitedMsg(1);
-    await expect(tx).to.emit(mt, "RateLimitedMsgDiscarded").withArgs(1);
+    await expect(tx).to.emit(mt, "RateLimitedMsgDiscardEffected").withArgs(1);
     await expect(tx).to.emit(rateLimiter, "RateLimitedMsgRemoved").withArgs(1);
     expect(await mt.balanceOf(alice.address)).to.equal(0);
     expect(await rateLimiter.rateLimitedMsgs(1))
       .to.deep.equal([zeroAddr, 0, "0x"]);
 
+    // index 1 is now a dead slot: even a fresh request is rejected immediately,
+    // rather than only failing later when it matures
     await expect(mt.connect(operator).ccDiscardRateLimitedMsg(1))
       .to.be.revertedWithCustomError(rateLimiter, "RateLimitedMsgInvalid")
       .withArgs(1);
   });
 
-  it("batch", async function () {
+  it("ccProcessRateLimitedMsg cannot pre-plant a request for a not-yet-queued message", async function () {
     const { mt, rateLimiter, operator, alice, bob } = await loadFixture(deployTestFixture);
     await setupRateLimiter(mt, rateLimiter, operator);
     await rateLimiter.setRateLimit(scaleUp(10000), 3600);
     await rateLimiter.setRateLimit(scaleUp(10000), 3600);
+
+    // no message has ever been queued: index 0 is out of bounds in the rate
+    // limiter's array, so the peek itself reverts
+    await expect(mt.connect(operator).ccProcessRateLimitedMsg(0))
+      .to.be.revertedWithCustomError(rateLimiter, "RateLimitedMsgInvalid")
+      .withArgs(0);
+    await expect(mt.connect(operator).ccDiscardRateLimitedMsg(0))
+      .to.be.revertedWithCustomError(rateLimiter, "RateLimitedMsgInvalid")
+      .withArgs(0);
+
+    // once #0 actually exists, requesting against it works normally
     await mt.ccReceiveToken(alice.address, bob.address, 8000);
     await mt.ccReceiveToken(alice.address, bob.address, 3000); // #0
-    await mt.ccReceiveToken(bob.address, alice.address, 4000); // #1
-    await mt.ccReceiveToken(bob.address, alice.address, 5000); // #2
-    await mt.ccReceiveToken(bob.address, alice.address, 6000); // #3
+    await expect(mt.connect(operator).ccProcessRateLimitedMsg(0))
+      .to.emit(mt, "RateLimitedMsgProcessRequest").withArgs(0, anyValue);
+  });
 
-    await expect(mt.connect(operator).ccBatchProcessRateLimitedMsgs([0, 2]))
-      .to.emit(mt, "RateLimitedMsgProcessed").withArgs(0)
-      .to.emit(mt, "RateLimitedMsgProcessed").withArgs(2);
-    await expect(mt.connect(operator).ccBatchDiscardRateLimitedMsgs([1, 3]))
-      .to.emit(mt, "RateLimitedMsgDiscarded").withArgs(1)
-      .to.emit(mt, "RateLimitedMsgDiscarded").withArgs(3);
+  it("a request tied to a since-replaced rate limiter cannot be matured against a new one", async function () {
+    const { mt, rateLimiter, operator, alice, bob, owner } = await loadFixture(deployTestFixture);
+    await setupRateLimiter(mt, rateLimiter, operator);
+    await rateLimiter.setRateLimit(scaleUp(10000), 3600);
+    await rateLimiter.setRateLimit(scaleUp(10000), 3600);
+    await mt.ccReceiveToken(alice.address, bob.address, 8000);
+    await mt.ccReceiveToken(alice.address, bob.address, 3000); // #0 in the old rate limiter
+
+    // pre-register a process request against the old rate limiter's #0, but
+    // never mature/execute it
+    await expect(mt.connect(operator).ccProcessRateLimitedMsg(0))
+      .to.emit(mt, "RateLimitedMsgProcessRequest").withArgs(0, anyValue);
+
+    // drain the old rate limiter so it can be swapped out
+    await mt.connect(operator).ccDiscardRateLimitedMsg(0);
+    await mt.connect(operator).ccDiscardRateLimitedMsg(0);
+
+    // swap in a brand-new rate limiter
+    const MTokenRateLimiter = await ethers.getContractFactory("MTokenRateLimiter");
+    const rateLimiter2 = await upgrades.deployProxy(MTokenRateLimiter,
+      [owner.address, owner.address, owner.address, 0, 0],
+      {
+        kind: "uups",
+        constructorArgs: [mt.target],
+        unsafeAllow: ['constructor', 'state-variable-immutable'],
+      }
+    );
+    await mt.setRateLimiter(rateLimiter2.target);
+    await mt.setRateLimiter(rateLimiter2.target);
+    await mt.setMessenger(operator.address); // ccReceiveToken helper below re-sends through mt
+    await mt.setMessenger(operator.address);
+
+    // a different, unrelated message lands at #0 in the new rate limiter
+    await rateLimiter2.setRateLimit(scaleUp(10000), 3600);
+    await rateLimiter2.setRateLimit(scaleUp(10000), 3600);
+    await mt.ccReceiveToken(alice.address, bob.address, 8000);
+    await mt.ccReceiveToken(bob.address, alice.address, 5000); // #0 in the new rate limiter
+
+    // the stale request from the old rate limiter must NOT mature this
+    // unrelated message instantly; it should register as a brand-new request
+    await expect(mt.connect(operator).ccProcessRateLimitedMsg(0))
+      .to.emit(mt, "RateLimitedMsgProcessRequest").withArgs(0, anyValue);
+    expect(await rateLimiter2.rateLimitedMsgs(0))
+      .to.deep.equal([alice.address, scaleUp(5000), bob.address.toLowerCase()]);
   });
 
   it("pendingMsgs", async function () {

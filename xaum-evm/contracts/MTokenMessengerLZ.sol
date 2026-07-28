@@ -17,6 +17,7 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
     }
 
     bytes32 constant OP_LZ_UNPAUSE = keccak256("OP_LZ_UNPAUSE");
+    bytes32 constant OP_LZ_ADD_PEER = keccak256("OP_LZ_ADD_PEER");
 
     // namespace="mtokenmessengerlz.storage.eidtoaddrlen"
     // keccak256(abi.encode(uint256(keccak256(abi.encodePacked(namespace))) - 1)) & ~bytes32(uint256(0xff))
@@ -35,9 +36,13 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
     event LZPaused();
     event LZUnpauseRequest(uint64 et);
     event LZUnpauseEffected();
+    event LZAddPeerEffected(uint32 indexed eid, bytes32 peer, uint8 addrLen);
+    event LZPeerRemoved(uint32 indexed eid);
+    event LZAddPeerRequest(uint32 indexed eid, bytes32 peer, uint8 addrLen, uint64 et);
 
     error InvalidRecipientLength(uint8 expected, uint8 actual);
     error LZNotPaused();
+    error UseLzAddPeer();
 
     modifier onlyLZNotPaused() {
         MsgLzStorage storage $ = _getMsgLzStorage();
@@ -108,15 +113,54 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
         revoke(OP_LZ_UNPAUSE);
     }
 
-    // to differentiate from setAllowedPeer in MTokenMessenger
-    function lzSetPeer(
+    // disabled: setPeer alone would leave eidToAddrLen out of sync, use lzAddPeer instead
+    function setPeer(uint32, bytes32) public pure override {
+        revert UseLzAddPeer();
+    }
+
+    // Granting/changing a peer is risk-expanding (it can send messages that mint
+    // on this chain), so it goes through the normal `delay` before taking effect
+    // (two-call pattern, same as mintTo). Keyed by eid alone so lzRemovePeer can
+    // always locate and revoke a pending add without needing to know its peer/addrLen.
+    function lzAddPeer(
         uint32 _eid,
         bytes32 _peer,
         uint8 _addrLen
     ) public onlyOwner {
-        setPeer(_eid, _peer);
+        uint64 et = ensureDelay(_lzAddPeerReqHash(_eid), _lzAddPeerVal(_peer, _addrLen), delay);
+        if (et == 0) {
+            super.setPeer(_eid, _peer);
+            MsgLzStorage storage $ = _getMsgLzStorage();
+            $.eidToAddrLen[_eid] = _addrLen;
+            emit LZAddPeerEffected(_eid, _peer, _addrLen);
+        } else {
+            emit LZAddPeerRequest(_eid, _peer, _addrLen, et);
+        }
+    }
+
+    function revokeLzAddPeer(uint32 _eid) public onlyOwner {
+        revoke(_lzAddPeerReqHash(_eid));
+    }
+
+    // Removing a peer is a safety action and takes effect immediately, unlike lzAddPeer.
+    function lzRemovePeer(uint32 _eid) public onlyOwner {
+        // clear any pending add request so it cannot mature right after removal
+        // and silently re-establish the peer, bypassing the intent of this safety action
+        revoke(_lzAddPeerReqHash(_eid));
+        super.setPeer(_eid, bytes32(0));
         MsgLzStorage storage $ = _getMsgLzStorage();
-        $.eidToAddrLen[_eid] = _addrLen;
+        $.eidToAddrLen[_eid] = 0;
+        emit LZPeerRemoved(_eid);
+    }
+
+    function _lzAddPeerReqHash(uint32 _eid) private pure returns (bytes32) {
+        return keccak256(abi.encode(OP_LZ_ADD_PEER, _eid));
+    }
+
+    // fingerprints (peer, addrLen) into the ensureDelay value slot (uint160), since
+    // _peer (bytes32) cannot be packed there directly; collision risk is negligible
+    function _lzAddPeerVal(bytes32 _peer, uint8 _addrLen) private pure returns (uint160) {
+        return uint160(uint256(keccak256(abi.encode(_peer, _addrLen))));
     }
 
     // lz OApp receive implementation
