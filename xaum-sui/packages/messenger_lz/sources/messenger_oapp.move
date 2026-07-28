@@ -341,6 +341,15 @@ entry fun skip(
 }
 
 // https://docs.layerzero.network/v2/developers/sui/oapp/overview#peer-configuration-establishing-trust
+//
+// Note: unlike EVM (setPeer split into lzRemovePeer, immediate, and lzAddPeer, delayed via
+// the normal `delay`), this cannot be split the same way on Sui. oapp::oapp_peer (a pinned
+// LayerZero-Labs dependency, not this project's code) only exposes set_peer as an upsert
+// (table_ext::upsert!) that additionally rejects a zero peer address — there is no
+// remove/clear/unset function anywhere in that package, and its Peer.peers table isn't
+// exposed for us to remove from directly. So there is no way to make "removing a peer"
+// immediate and distinct from "setting a peer" the way EVM does; both stay a single,
+// immediate, owner-only upsert here.
 entry fun set_peer(
     state: &mut State,
     my_oapp: &mut OApp,
