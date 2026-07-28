@@ -18,6 +18,8 @@ pub enum MinterError {
     InvalidTimestamp = 30,
     TooEarlyToExecute = 31,
     PendingRequestExists = 32,
+    DelayTooSmall = 33,
+    DelayTooLarge = 34,
 
     // -------- config --------
     InvalidWasmHash = 40,

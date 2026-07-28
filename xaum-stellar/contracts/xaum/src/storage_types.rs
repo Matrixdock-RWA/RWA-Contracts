@@ -32,6 +32,7 @@ pub enum DataKey {
     Allowance(AllowanceDataKey),
     Balance(Address),
     MintRequest(BytesN<32>), // hash(receiver, amount, nonce) -> u64(et)
+    ForcedTransferRequest(BytesN<32>), // hash(from, to, amount, nonce, data, extra_data) -> u64(et)
     Blocked(Address),
     NewWasmHash, //BytesN<32>, hash of the new wasm to be set by upgrade
     EtNextUpgrade,
@@ -52,4 +53,9 @@ pub enum DataKey {
     GovDelay,
     NextGovDelay,
     EtNextGovDelay,
+    Paused,
+    EtNextUnpause,
+    ForcedTransferReceiver,
+    NextForcedTransferReceiver,
+    EtNextForcedTransferReceiver,
 }

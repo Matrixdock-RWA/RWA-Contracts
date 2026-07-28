@@ -9,8 +9,11 @@ use crate::storage_types::{INSTANCE_BUMP_AMOUNT, INSTANCE_LIFETIME_THRESHOLD};
 #[contract]
 pub struct BullionMinter;
 
-const DELAY_MAX: u64 = 59;
-const DELAY_SETTING: u64 = 12 * 3600; // 12 hours in seconds
+const DELAY_MAX: u64 = 59; // max age (seconds) of a request's client timestamp
+// Governance-level timelock bounds. Minter is single-role (owner only): no operational
+// delay, so owner transfer / upgrade / setGovDelay all sit at the governance tier.
+const MIN_GOV_DELAY: u64 = 3600 * 24; // 24 hours
+const MAX_GOV_DELAY: u64 = 3600 * 24 * 7; // 7 days
 
 #[contractimpl]
 impl BullionMinter {
@@ -24,6 +27,8 @@ impl BullionMinter {
         tokens_accepted_by_a: Vec<Address>,
         tokens_accepted_by_b: Vec<Address>,
     ) {
+        // gov_delay is deliberately left at 0 (timelock disarmed) so the deployer can complete
+        // wiring and ownership handover without waiting. Armed later via set_gov_delay.
         write_owner(&env, &owner);
         write_pool_account_a(&env, &pool_a);
         write_pool_account_b(&env, &pool_b);
@@ -56,7 +61,7 @@ impl BullionMinter {
 
         write_next_upgrade_wasm_hash(&env, &new_wasm_hash);
         let now = env.ledger().timestamp();
-        let effective_time = now + DELAY_SETTING;
+        let effective_time = now + read_gov_delay(&env);
         write_et_next_upgrade(&env, effective_time);
         UpgradeRequested {
             owner,
@@ -96,10 +101,18 @@ impl BullionMinter {
 
         bump_instance(&env);
 
-        let new_wasm_hash = read_next_upgrade_wasm_hash(&env)
-            .unwrap_or_else(|| panic_with_error!(&env, MinterError::NoPendingUpgrade));
-        remove_next_upgrade_wasm_hash(&env);
-        remove_et_next_upgrade(&env);
+        // Always emit, matching every other revoke op. Emit the real pending hash when one
+        // existed (and clear it), otherwise an all-zero BytesN<32> sentinel, so monitoring can
+        // distinguish a real revoke from an anomalous/no-pending revoke. Event schema is
+        // unchanged (contract already deployed): new_wasm_hash stays BytesN<32>.
+        let new_wasm_hash = match read_next_upgrade_wasm_hash(&env) {
+            Some(hash) => {
+                remove_next_upgrade_wasm_hash(&env);
+                remove_et_next_upgrade(&env);
+                hash
+            }
+            None => BytesN::from_array(&env, &[0u8; 32]),
+        };
 
         UpgradeRevoked {
             owner,
@@ -118,7 +131,7 @@ impl BullionMinter {
 
         write_pending_owner(&env, &new_owner);
         let now = env.ledger().timestamp();
-        let effective_time = now + DELAY_SETTING;
+        let effective_time = now + read_gov_delay(&env);
         write_et_next_owner(&env, effective_time);
         OwnerTransferRequested {
             owner,
@@ -158,6 +171,58 @@ impl BullionMinter {
         remove_pending_owner(&env);
         remove_et_next_owner(&env);
         OwnerRevoked {}.publish(&env);
+    }
+
+    // setGovDelay (#3): self-governed (protected by the current gov_delay). Two-call pattern.
+    // No delay invariant here — minter has no operational delay.
+    pub fn set_gov_delay(env: Env, new_delay: u64) {
+        Self::require_owner(&env);
+
+        bump_instance(&env);
+
+        if new_delay < MIN_GOV_DELAY {
+            panic_with_error!(&env, MinterError::DelayTooSmall);
+        }
+        if new_delay > MAX_GOV_DELAY {
+            panic_with_error!(&env, MinterError::DelayTooLarge);
+        }
+        let now = env.ledger().timestamp();
+
+        let current_delay = read_gov_delay(&env);
+        let next_delay = read_next_gov_delay(&env); // Option<u64>
+
+        if let Some(et) = read_et_next_gov_delay(&env) {
+            // next_gov_delay is always Some while a request is pending
+            if next_delay.unwrap() != new_delay {
+                panic_with_error!(&env, MinterError::PendingRequestExists);
+            }
+            if et >= now {
+                panic_with_error!(&env, MinterError::TooEarlyToExecute);
+            }
+            write_gov_delay(&env, new_delay);
+            remove_et_next_gov_delay(&env);
+            remove_next_gov_delay(&env);
+            SetGovDelayEffected { delay: new_delay }.publish(&env);
+            return;
+        }
+
+        let effective_time = now + current_delay;
+        write_next_gov_delay(&env, new_delay);
+        write_et_next_gov_delay(&env, effective_time);
+
+        SetGovDelayRequest {
+            current_delay,
+            next_delay: new_delay,
+            effective_time,
+        }
+        .publish(&env);
+    }
+
+    pub fn revoke_next_gov_delay(env: Env) {
+        Self::require_owner(&env);
+        remove_et_next_gov_delay(&env);
+        remove_next_gov_delay(&env);
+        GovDelayRevoked {}.publish(&env);
     }
 
     pub fn set_pool_account_a(env: Env, pool: Address) {
@@ -322,6 +387,18 @@ impl BullionMinter {
 
     pub fn et_next_upgrade(env: Env) -> Option<u64> {
         read_et_next_upgrade(&env)
+    }
+
+    pub fn gov_delay(env: Env) -> u64 {
+        read_gov_delay(&env)
+    }
+
+    pub fn next_gov_delay(env: Env) -> Option<u64> {
+        read_next_gov_delay(&env)
+    }
+
+    pub fn et_next_gov_delay(env: Env) -> Option<u64> {
+        read_et_next_gov_delay(&env)
     }
 }
 

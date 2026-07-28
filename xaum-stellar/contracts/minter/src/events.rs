@@ -83,8 +83,24 @@ pub struct ContractUpgraded {
 #[contractevent]
 pub struct UpgradeRevoked {
     pub owner: Address,
+    // Real pending hash for a valid revoke; all-zero sentinel when nothing was pending.
     pub new_wasm_hash: BytesN<32>,
 }
 
 #[contractevent]
 pub struct OwnerRevoked {}
+
+#[contractevent]
+pub struct SetGovDelayRequest {
+    pub current_delay: u64,
+    pub next_delay: u64,
+    pub effective_time: u64,
+}
+
+#[contractevent]
+pub struct SetGovDelayEffected {
+    pub delay: u64,
+}
+
+#[contractevent]
+pub struct GovDelayRevoked {}

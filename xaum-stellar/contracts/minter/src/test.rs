@@ -7,10 +7,24 @@ use soroban_sdk::{
     contract, contractimpl,
     testutils::{Address as _, Ledger},
     token::TokenInterface,
-    Address, Bytes, Env, MuxedAddress, String, Vec,
+    map, Address, Bytes, BytesN, Env, IntoVal, MuxedAddress, String, Symbol, Val, Vec,
 };
 
 const START_TIME: u64 = 1_000_000;
+const GOV_DELAY: u64 = 3600 * 24; // 24h (MIN_GOV_DELAY)
+const MAX_GOV_DELAY: u64 = 3600 * 24 * 7; // 7d
+
+fn warp(e: &Env, secs: u64) {
+    e.ledger().set_timestamp(e.ledger().timestamp() + secs);
+}
+
+/// Arm gov_delay while it is still 0 (executes instantly: two calls, +1s between).
+fn arm_gov_delay(e: &Env, m: &BullionMinterClient, gov: u64) {
+    m.set_gov_delay(&gov);
+    warp(e, 1);
+    m.set_gov_delay(&gov);
+    assert_eq!(m.gov_delay(), gov);
+}
 
 // ---- inline mock token ----
 
@@ -380,9 +394,24 @@ fn test_two_step_ownership() {
     let s = setup(&e);
     let new_owner = Address::generate(&e);
 
+    // gov_delay = 0 (disarmed): et = now; advance past it before accepting
     s.minter.request_owner_transfer(&new_owner);
-    // DELAY_SETTING = 12h; advance past et before accepting
-    e.ledger().set_timestamp(START_TIME + 12 * 3600 + 1);
+    warp(&e, 1);
+    s.minter.accept_owner();
+    assert_eq!(s.minter.owner(), new_owner);
+}
+
+#[test]
+fn test_owner_transfer_uses_gov_delay() {
+    let e = Env::default();
+    let s = setup(&e);
+    let new_owner = Address::generate(&e);
+
+    arm_gov_delay(&e, &s.minter, GOV_DELAY);
+    let now = e.ledger().timestamp();
+    s.minter.request_owner_transfer(&new_owner);
+    assert_eq!(s.minter.et_next_owner(), Some(now + GOV_DELAY));
+    warp(&e, GOV_DELAY + 1);
     s.minter.accept_owner();
     assert_eq!(s.minter.owner(), new_owner);
 }
@@ -393,6 +422,115 @@ fn test_accept_owner_no_pending_panics() {
     let e = Env::default();
     let s = setup(&e);
     s.minter.accept_owner(); // NoPendingOwner
+}
+
+// ---- gov delay ----
+
+#[test]
+fn test_set_gov_delay_two_phase() {
+    let e = Env::default();
+    let s = setup(&e);
+    assert_eq!(s.minter.gov_delay(), 0);
+    arm_gov_delay(&e, &s.minter, GOV_DELAY);
+    assert_eq!(s.minter.gov_delay(), GOV_DELAY);
+}
+
+#[test]
+#[should_panic]
+fn test_set_gov_delay_too_small_panics() {
+    let e = Env::default();
+    let s = setup(&e);
+    s.minter.set_gov_delay(&(GOV_DELAY - 1)); // < MIN_GOV_DELAY
+}
+
+#[test]
+#[should_panic]
+fn test_set_gov_delay_too_large_panics() {
+    let e = Env::default();
+    let s = setup(&e);
+    s.minter.set_gov_delay(&(MAX_GOV_DELAY + 1)); // > MAX_GOV_DELAY
+}
+
+#[test]
+fn test_revoke_next_gov_delay() {
+    let e = Env::default();
+    let s = setup(&e);
+
+    arm_gov_delay(&e, &s.minter, GOV_DELAY);
+    s.minter.set_gov_delay(&MAX_GOV_DELAY); // register (window = gov = 24h)
+    assert!(s.minter.et_next_gov_delay().is_some());
+    s.minter.revoke_next_gov_delay();
+    assert!(s.minter.et_next_gov_delay().is_none());
+    assert_eq!(s.minter.gov_delay(), GOV_DELAY);
+}
+
+#[test]
+fn test_upgrade_request_uses_gov_delay() {
+    let e = Env::default();
+    let s = setup(&e);
+
+    arm_gov_delay(&e, &s.minter, GOV_DELAY);
+    let now = e.ledger().timestamp();
+    let hash = soroban_sdk::BytesN::from_array(&e, &[3u8; 32]);
+    s.minter.request_upgrade(&hash);
+    assert_eq!(s.minter.et_next_upgrade(), Some(now + GOV_DELAY));
+}
+
+// revoke_next_upgrade must emit UpgradeRevoked in BOTH cases so monitoring can observe every
+// revoke. Payload: the real pending hash for a valid revoke, or an all-zero BytesN<32>
+// sentinel when nothing was pending (anomalous / no-op revoke). Event schema is unchanged:
+// new_wasm_hash stays BytesN<32>. Assert both emission and the exact payload monitors consume.
+#[test]
+fn test_revoke_next_upgrade_always_emits_event() {
+    use soroban_sdk::testutils::Events;
+    let e = Env::default();
+    let s = setup(&e);
+
+    // pending-present: revoke emits exactly one event and clears the pending upgrade.
+    let hash = soroban_sdk::BytesN::from_array(&e, &[9u8; 32]);
+    s.minter.request_upgrade(&hash);
+    assert!(s.minter.et_next_upgrade().is_some());
+    let before = e.events().all().len();
+    s.minter.revoke_next_upgrade();
+    assert_eq!(
+        e.events().all().len(),
+        before + 1,
+        "revoke with pending upgrade must emit UpgradeRevoked (real hash payload)"
+    );
+    let (_, _, data) = e.events().all().last().unwrap();
+    let expected_data: Val = map![
+        &e,
+        (Symbol::new(&e, "owner"), s.owner.clone().into_val(&e)),
+        (
+            Symbol::new(&e, "new_wasm_hash"),
+            hash.clone().into_val(&e)
+        ),
+    ]
+    .into_val(&e);
+    assert_eq!(data, expected_data);
+    assert!(s.minter.et_next_upgrade().is_none());
+
+    // pending-absent: revoke STILL emits exactly one event (the behavior change under test),
+    // carrying the all-zero sentinel hash.
+    let before = e.events().all().len();
+    s.minter.revoke_next_upgrade();
+    assert_eq!(
+        e.events().all().len(),
+        before + 1,
+        "revoke with no pending upgrade must still emit UpgradeRevoked (zero sentinel)"
+    );
+    let (_, _, data) = e.events().all().last().unwrap();
+    let expected_data: Val = map![
+        &e,
+        (Symbol::new(&e, "owner"), s.owner.clone().into_val(&e)),
+        (
+            Symbol::new(&e, "new_wasm_hash"),
+            BytesN::from_array(&e, &[0u8; 32]).into_val(&e)
+        ),
+    ]
+    .into_val(&e);
+    assert_eq!(data, expected_data);
+    assert!(s.minter.et_next_upgrade().is_none());
 }
 
 // ---- removed accepted token blocks new requests ----

@@ -15,8 +15,12 @@ use soroban_token_sdk::metadata::TokenMetadata;
 #[cfg(test)]
 use crate::storage_types::{AllowanceDataKey, AllowanceValue, DataKey};
 
-const MIN_DELAY: u64 = 3600; // 1hour
-const MAX_DELAY: u64 = 3600 * 24 * 7; // 7days
+// Governance-level timelock: bounds control-plane changes (roles, rules, upgrade).
+const MIN_GOV_DELAY: u64 = 3600 * 24; // 24 hours
+const MAX_GOV_DELAY: u64 = 3600 * 24 * 7; // 7 days
+// Operational-level timelock: bounds day-to-day fund/role operations.
+const MIN_DELAY: u64 = 3600; // 1 hour
+const MAX_DELAY: u64 = 3600 * 24 * 2; // 48 hours
 
 #[contract]
 pub struct Token;
@@ -38,6 +42,9 @@ impl Token {
         state::write_owner(&env, &owner);
         state::write_operator(&env, &operator);
         state::write_revoker(&env, &revoker);
+        // gov_delay/delay are deliberately left at 0 (timelocks disarmed) so the deployer
+        // can complete wiring and ownership handover without waiting. They are armed later
+        // via set_gov_delay then set_delay.
         write_metadata(
             &env,
             TokenMetadata {
@@ -61,8 +68,9 @@ impl Token {
 
         state::write_next_upgrade_wasm_hash(&env, &new_wasm_hash);
         let now = env.ledger().timestamp();
-        let delay = state::read_delay(&env);
-        let effective_time = now + delay;
+        // upgrade = arbitrary code = all assets: governance-level timelock
+        let gov_delay = state::read_gov_delay(&env);
+        let effective_time = now + gov_delay;
         state::write_et_next_upgrade(&env, effective_time);
         UpgradeRequested {
             owner,
@@ -98,19 +106,26 @@ impl Token {
     }
 
     // WARNING!!! Upgrade Support Function must always here in any version of contract, otherwise the contract will be locked forever.
-    pub fn revoke_next_upgrade(env: Env) {
-        let owner = state::read_owner(&env);
-        owner.require_auth();
+    pub fn revoke_next_upgrade(env: Env, caller: Address) {
+        require_owner_or_revoker(&env, &caller);
 
         bump_instance(&env);
 
-        let new_wasm_hash = state::read_next_upgrade_wasm_hash(&env)
-            .unwrap_or_else(|| panic_with_error!(&env, TokenError::NoPendingUpgrade));
-        state::remove_next_upgrade_wasm_hash(&env);
-        state::remove_et_next_upgrade(&env);
+        // Always emit, matching every other revoke op. Emit the real pending hash when one
+        // existed (and clear it), otherwise an all-zero BytesN<32> sentinel, so monitoring can
+        // distinguish a real revoke from an anomalous/no-pending revoke. Event schema is
+        // unchanged (contract already deployed): new_wasm_hash stays BytesN<32>.
+        let new_wasm_hash = match state::read_next_upgrade_wasm_hash(&env) {
+            Some(hash) => {
+                state::remove_next_upgrade_wasm_hash(&env);
+                state::remove_et_next_upgrade(&env);
+                hash
+            }
+            None => BytesN::from_array(&env, &[0u8; 32]),
+        };
 
         UpgradeRevoked {
-            owner,
+            caller,
             new_wasm_hash,
         }
         .publish(&env);
@@ -163,9 +178,8 @@ impl Token {
         .publish(&env);
     }
 
-    pub fn revoke_next_owner(env: Env) {
-        let owner = state::read_owner(&env);
-        owner.require_auth();
+    pub fn revoke_next_owner(env: Env, caller: Address) {
+        require_owner_or_revoker(&env, &caller);
 
         state::remove_pending_owner(&env);
         state::remove_et_next_owner(&env);
@@ -216,46 +230,51 @@ impl Token {
         .publish(&env);
     }
 
-    pub fn set_revoker(env: Env, new_revoker: Address) {
+    // setRevoker (#1): governance-level timelock, two-step accept.
+    // Owner requests; after gov_delay the new revoker accepts in person (guards against
+    // typo'd / dead addresses). Revocable by owner-or-operator (never by revoker itself).
+    pub fn request_set_revoker(env: Env, new_revoker: Address) {
         // onlyOwner
         let owner = state::read_owner(&env);
         owner.require_auth();
 
         bump_instance(&env);
 
-        let now = env.ledger().timestamp();
-
-        let current_revoker = state::read_revoker(&env);
-        let next_revoker = state::read_next_revoker(&env); // Option<Address>
-
-        if let Some(et) = state::read_et_next_revoker(&env) {
-            // next_revoker is always Some while a request is pending, no need to check
-            if next_revoker.unwrap() != new_revoker {
-                panic_with_error!(&env, TokenError::PendingRequestExists);
-            }
-            if et >= now {
-                panic_with_error!(&env, TokenError::TooEarlyToExecute);
-            }
-            state::write_revoker(&env, &new_revoker);
-            state::remove_et_next_revoker(&env);
-            state::remove_next_revoker(&env);
-            SetRevokerEffected {
-                revoker: new_revoker,
-            }
-            .publish(&env);
-            return;
+        if state::read_et_next_revoker(&env).is_some() {
+            panic_with_error!(&env, TokenError::PendingRequestExists);
         }
 
-        let delay = state::read_delay(&env);
-        let effective_time = now + delay;
-
+        let current_revoker = state::read_revoker(&env);
         state::write_next_revoker(&env, &new_revoker);
+        let now = env.ledger().timestamp();
+        let gov_delay = state::read_gov_delay(&env);
+        let effective_time = now + gov_delay;
         state::write_et_next_revoker(&env, effective_time);
 
         SetRevokerRequest {
             current_revoker,
             next_revoker: new_revoker,
             effective_time,
+        }
+        .publish(&env);
+    }
+
+    pub fn accept_revoker(env: Env) {
+        let next_revoker = state::read_next_revoker(&env)
+            .unwrap_or_else(|| panic_with_error!(&env, TokenError::NoPendingRevoker));
+        next_revoker.require_auth();
+
+        bump_instance(&env);
+        let now = env.ledger().timestamp();
+        match state::read_et_next_revoker(&env) {
+            Some(et) if et < now => {}
+            _ => panic_with_error!(&env, TokenError::TooEarlyToExecute),
+        }
+        state::write_revoker(&env, &next_revoker);
+        state::remove_next_revoker(&env);
+        state::remove_et_next_revoker(&env);
+        SetRevokerEffected {
+            revoker: next_revoker,
         }
         .publish(&env);
     }
@@ -273,6 +292,10 @@ impl Token {
         if new_delay > MAX_DELAY {
             panic_with_error!(&env, TokenError::DelayTooLarge);
         }
+        // invariant: gov_delay >= delay must always hold
+        if new_delay > state::read_gov_delay(&env) {
+            panic_with_error!(&env, TokenError::DelayExceedsGovDelay);
+        }
         let now = env.ledger().timestamp();
 
         let current_delay = state::read_delay(&env);
@@ -286,6 +309,14 @@ impl Token {
             if et >= now {
                 panic_with_error!(&env, TokenError::TooEarlyToExecute);
             }
+            // Re-validate the invariant against the *currently effective* gov_delay:
+            // a set_gov_delay request may have matured and lowered gov_delay after this
+            // request was staged, so the request-path check is not sufficient. Current
+            // effective state is authoritative; do not inspect the counterpart pending
+            // value. Panic before writing so the pending request survives for revoke.
+            if new_delay > state::read_gov_delay(&env) {
+                panic_with_error!(&env, TokenError::DelayExceedsGovDelay);
+            }
             state::write_delay(&env, new_delay);
             state::remove_et_next_delay(&env);
             state::remove_next_delay(&env);
@@ -293,8 +324,9 @@ impl Token {
             return;
         }
 
-        let delay = state::read_delay(&env);
-        let effective_time = now + delay;
+        // setDelay is protected by gov_delay (staging principle: can't shorten delay quickly)
+        let gov_delay = state::read_gov_delay(&env);
+        let effective_time = now + gov_delay;
 
         state::write_next_delay(&env, new_delay);
         state::write_et_next_delay(&env, effective_time);
@@ -314,11 +346,15 @@ impl Token {
 
         bump_instance(&env);
 
-        if new_delay < MIN_DELAY {
-            panic_with_error!(&env, TokenError::DelayTooSmall);
+        if new_delay < MIN_GOV_DELAY {
+            panic_with_error!(&env, TokenError::GovDelayTooSmall);
         }
-        if new_delay > MAX_DELAY {
-            panic_with_error!(&env, TokenError::DelayTooLarge);
+        if new_delay > MAX_GOV_DELAY {
+            panic_with_error!(&env, TokenError::GovDelayTooLarge);
+        }
+        // invariant: gov_delay >= delay must always hold
+        if new_delay < state::read_delay(&env) {
+            panic_with_error!(&env, TokenError::GovDelayBelowDelay);
         }
         let now = env.ledger().timestamp();
 
@@ -332,6 +368,14 @@ impl Token {
             }
             if et >= now {
                 panic_with_error!(&env, TokenError::TooEarlyToExecute);
+            }
+            // Re-validate the invariant against the *currently effective* delay:
+            // a set_delay request may have matured and raised delay after this request
+            // was staged, so the request-path check is not sufficient. Current effective
+            // state is authoritative; do not inspect the counterpart pending value.
+            // Panic before writing so the pending request survives for revoke.
+            if new_delay < state::read_delay(&env) {
+                panic_with_error!(&env, TokenError::GovDelayBelowDelay);
             }
             state::write_gov_delay(&env, new_delay);
             state::remove_et_next_gov_delay(&env);
@@ -354,53 +398,231 @@ impl Token {
         .publish(&env);
     }
 
-    // owner auth required to revoke pending gov delay change here
-    pub fn revoke_next_gov_delay(env: Env) {
-        let owner = state::read_owner(&env);
-        owner.require_auth();
+    pub fn revoke_next_gov_delay(env: Env, caller: Address) {
+        require_owner_or_revoker(&env, &caller);
         state::remove_et_next_gov_delay(&env);
         state::remove_next_gov_delay(&env);
         GovDelayRevoked {}.publish(&env);
     }
 
-    // owner auth required to forced transfer here
-    pub fn forced_transfer(env: Env, from: Address, to: Address, amount: i128, data: String, extra_data: String) {
+    // forced_transfer (#13): monitored/clawback transfer, delay tier, two-call pattern (like mint_to).
+    // Constraints: `from` must already be blocked (freeze precedes clawback); `to` is locked to the
+    // configured forced-transfer receiver. Deliberately NOT subject to pause nor to the block-send
+    // limit, so clawback stays possible while paused. Per-request revoke by owner-or-revoker.
+    // note: nonce lets identical (from, amount, data) transfers be requested independently.
+    pub fn forced_transfer(
+        env: Env,
+        from: Address,
+        to: Address,
+        amount: i128,
+        nonce: u64,
+        data: String,
+        extra_data: String,
+    ) -> bool {
         let owner = state::read_owner(&env);
         owner.require_auth();
         check_nonnegative_amount(&env, amount);
 
         bump_instance(&env);
 
-        update_balance(&env, Some(from.clone()), Some(to.clone()), amount);
-        events::Transfer {
-            from: from.clone(),
-            to: to.clone(),
-            to_muxed_id: None,
-            amount,
+        if !state::is_blocked(&env, &from) {
+            panic_with_error!(&env, TokenError::NotBlocked);
         }
-        .publish(&env);
-        ForcedTransfer { from, to, amount, data, extra_data }.publish(&env);
+        let receiver = state::read_forced_transfer_receiver(&env)
+            .unwrap_or_else(|| panic_with_error!(&env, TokenError::NoForcedTransferReceiver));
+        if to != receiver {
+            panic_with_error!(&env, TokenError::InvalidForcedTransferReceiver);
+        }
+
+        // req = sha256(from, to, amount, nonce, data, extra_data): binds the whole request
+        // (incl. audit context) so execute cannot deviate from what was requested.
+        let mut bytes = Bytes::new(&env);
+        bytes.append(&from.clone().to_xdr(&env));
+        bytes.append(&to.clone().to_xdr(&env));
+        bytes.append(&Bytes::from_slice(&env, &amount.to_be_bytes()));
+        bytes.append(&Bytes::from_slice(&env, &nonce.to_be_bytes()));
+        bytes.append(&data.clone().to_xdr(&env));
+        bytes.append(&extra_data.clone().to_xdr(&env));
+        let req: BytesN<32> = env.crypto().sha256(&bytes).into();
+
+        let now = env.ledger().timestamp();
+        let delay = state::read_delay(&env);
+
+        match state::read_forced_transfer_request(&env, &req) {
+            None => {
+                let et = now + delay;
+                state::write_forced_transfer_request(&env, &req, et);
+                ForcedTransferRequest {
+                    from,
+                    to,
+                    amount,
+                    nonce,
+                    data,
+                    extra_data,
+                    et,
+                }
+                .publish(&env);
+                false
+            }
+            Some(et) => {
+                if et >= now {
+                    panic_with_error!(&env, TokenError::TooEarlyToExecute);
+                }
+                state::remove_forced_transfer_request(&env, &req);
+                update_balance(&env, Some(from.clone()), Some(to.clone()), amount);
+                events::Transfer {
+                    from: from.clone(),
+                    to: to.clone(),
+                    to_muxed_id: None,
+                    amount,
+                }
+                .publish(&env);
+                ForcedTransferEffected {
+                    from,
+                    to,
+                    amount,
+                    nonce,
+                    data,
+                    extra_data,
+                }
+                .publish(&env);
+                true
+            }
+        }
     }
 
-    pub fn revoke_next_delay(env: Env) {
-        let revoker = state::read_revoker(&env);
-        revoker.require_auth();
+    pub fn revoke_forced_transfer(env: Env, caller: Address, req: BytesN<32>) {
+        require_owner_or_revoker(&env, &caller);
+        state::remove_forced_transfer_request(&env, &req);
+        ForcedTransferRevoked { req }.publish(&env);
+    }
+
+    // set_forced_transfer_receiver: the fixed Cactus custody address forced_transfer may
+    // move funds into. Governance-level timelock (its being easily changeable would let a
+    // compromised owner redirect clawbacks). Two-call pattern; revoke by owner-or-revoker.
+    pub fn set_forced_transfer_receiver(env: Env, new_receiver: Address) {
+        let owner = state::read_owner(&env);
+        owner.require_auth();
+
+        bump_instance(&env);
+
+        let now = env.ledger().timestamp();
+        let next = state::read_next_forced_transfer_receiver(&env); // Option<Address>
+
+        if let Some(et) = state::read_et_next_forced_transfer_receiver(&env) {
+            if next.unwrap() != new_receiver {
+                panic_with_error!(&env, TokenError::PendingRequestExists);
+            }
+            if et >= now {
+                panic_with_error!(&env, TokenError::TooEarlyToExecute);
+            }
+            state::write_forced_transfer_receiver(&env, &new_receiver);
+            state::remove_et_next_forced_transfer_receiver(&env);
+            state::remove_next_forced_transfer_receiver(&env);
+            ForcedReceiverEffected {
+                receiver: new_receiver,
+            }
+            .publish(&env);
+            return;
+        }
+
+        let gov_delay = state::read_gov_delay(&env);
+        let effective_time = now + gov_delay;
+        state::write_next_forced_transfer_receiver(&env, &new_receiver);
+        state::write_et_next_forced_transfer_receiver(&env, effective_time);
+
+        ForcedReceiverRequest {
+            next_receiver: new_receiver,
+            effective_time,
+        }
+        .publish(&env);
+    }
+
+    pub fn revoke_forced_transfer_receiver(env: Env, caller: Address) {
+        require_owner_or_revoker(&env, &caller);
+        state::remove_et_next_forced_transfer_receiver(&env);
+        state::remove_next_forced_transfer_receiver(&env);
+        ForcedReceiverRevoked {}.publish(&env);
+    }
+
+    // ---------- pause ----------
+
+    // pause: operator, immediate, non-revocable. Pure risk contraction (emergency brake).
+    pub fn pause(env: Env) {
+        let operator = state::read_operator(&env);
+        operator.require_auth();
+        bump_instance(&env);
+        state::write_paused(&env, true);
+        // Void any in-flight unpause so its delay window cannot have elapsed before this
+        // pause: every pause forces the unpause clock to restart from scratch. Without this,
+        // an unpause request pre-staged (and matured) while unpaused could re-open the gate
+        // instantly the moment operator pauses, defeating the unpause delay.
+        state::remove_et_next_unpause(&env);
+        Paused { operator }.publish(&env);
+    }
+
+    // unpause: owner, delay tier, two-call. Revocable by owner-or-revoker.
+    // Prevents a compromised owner from re-opening the gate instantly during an incident.
+    pub fn request_unpause(env: Env) {
+        let owner = state::read_owner(&env);
+        owner.require_auth();
+        bump_instance(&env);
+
+        // defense in depth: only meaningful while paused; also blocks pre-staging the unpause
+        // clock while the contract is running normally.
+        if !state::read_paused(&env) {
+            panic_with_error!(&env, TokenError::NotPaused);
+        }
+        if state::read_et_next_unpause(&env).is_some() {
+            panic_with_error!(&env, TokenError::PendingRequestExists);
+        }
+        let now = env.ledger().timestamp();
+        let delay = state::read_delay(&env);
+        let effective_time = now + delay;
+        state::write_et_next_unpause(&env, effective_time);
+        GlobalUnpauseRequest { effective_time }.publish(&env);
+    }
+
+    pub fn unpause(env: Env) {
+        let owner = state::read_owner(&env);
+        owner.require_auth();
+        bump_instance(&env);
+
+        let now = env.ledger().timestamp();
+        match state::read_et_next_unpause(&env) {
+            Some(et) if et < now => {}
+            Some(_) => panic_with_error!(&env, TokenError::TooEarlyToExecute),
+            None => panic_with_error!(&env, TokenError::NoPendingUnpause),
+        }
+        state::write_paused(&env, false);
+        state::remove_et_next_unpause(&env);
+        GlobalUnpauseEffected { owner }.publish(&env);
+    }
+
+    pub fn revoke_next_unpause(env: Env, caller: Address) {
+        require_owner_or_revoker(&env, &caller);
+        state::remove_et_next_unpause(&env);
+        UnpauseRevoked {}.publish(&env);
+    }
+
+    pub fn revoke_next_delay(env: Env, caller: Address) {
+        require_owner_or_revoker(&env, &caller);
         state::remove_et_next_delay(&env);
         state::remove_next_delay(&env);
         DelayRevoked {}.publish(&env);
     }
 
-    pub fn revoke_next_operator(env: Env) {
-        let revoker = state::read_revoker(&env);
-        revoker.require_auth();
+    // revoker guards the operator seat (adjacency rule): owner-or-revoker may revoke.
+    pub fn revoke_next_operator(env: Env, caller: Address) {
+        require_owner_or_revoker(&env, &caller);
         state::remove_et_next_operator(&env);
         state::remove_next_operator(&env);
         OperatorRevoked {}.publish(&env);
     }
 
-    pub fn revoke_next_revoker(env: Env) {
-        let owner = state::read_owner(&env);
-        owner.require_auth();
+    // self-exclusion rule (#1): the revoker rotation is revoked by owner-or-operator, never revoker.
+    pub fn revoke_next_revoker(env: Env, caller: Address) {
+        require_owner_or_operator(&env, &caller);
         state::remove_et_next_revoker(&env);
         state::remove_next_revoker(&env);
         RevokerRevoked {}.publish(&env);
@@ -426,6 +648,7 @@ impl Token {
     pub fn mint_to(env: Env, receiver: Address, amount: i128, nonce: u64) -> bool {
         let operator = state::read_operator(&env);
         operator.require_auth();
+        require_not_paused(&env);
         check_nonnegative_amount(&env, amount);
 
         bump_instance(&env);
@@ -490,9 +713,8 @@ impl Token {
         }
     }
 
-    pub fn revoke_mint_request(env: Env, req: BytesN<32>) {
-        let revoker = state::read_revoker(&env);
-        revoker.require_auth();
+    pub fn revoke_mint_request(env: Env, caller: Address, req: BytesN<32>) {
+        require_owner_or_revoker(&env, &caller);
 
         state::remove_mint_request(&env, &req);
         MintRequestRevoked { req }.publish(&env);
@@ -604,6 +826,30 @@ impl Token {
         state::read_total_supply(&env)
     }
 
+    pub fn paused(env: Env) -> bool {
+        state::read_paused(&env)
+    }
+
+    pub fn et_next_unpause(env: Env) -> Option<u64> {
+        state::read_et_next_unpause(&env)
+    }
+
+    pub fn forced_transfer_receiver(env: Env) -> Option<Address> {
+        state::read_forced_transfer_receiver(&env)
+    }
+
+    pub fn next_forced_transfer_receiver(env: Env) -> Option<Address> {
+        state::read_next_forced_transfer_receiver(&env)
+    }
+
+    pub fn et_next_forced_transfer_receiver(env: Env) -> Option<u64> {
+        state::read_et_next_forced_transfer_receiver(&env)
+    }
+
+    pub fn forced_transfer_request_et(env: Env, req: BytesN<32>) -> Option<u64> {
+        state::read_forced_transfer_request(&env, &req)
+    }
+
     #[cfg(test)]
     pub fn get_allowance(env: Env, from: Address, spender: Address) -> Option<AllowanceValue> {
         let key = DataKey::Allowance(AllowanceDataKey { from, spender });
@@ -648,6 +894,7 @@ impl TokenInterface for Token {
 
     fn transfer(env: Env, from: Address, to_muxed: MuxedAddress, amount: i128) {
         from.require_auth();
+        require_not_paused(&env);
         require_not_blocked(&env, &from);
         check_nonnegative_amount(&env, amount);
 
@@ -666,6 +913,7 @@ impl TokenInterface for Token {
 
     fn transfer_from(env: Env, spender: Address, from: Address, to: Address, amount: i128) {
         spender.require_auth();
+        require_not_paused(&env);
         require_not_blocked(&env, &spender);
         require_not_blocked(&env, &from);
         check_nonnegative_amount(&env, amount);
@@ -687,6 +935,7 @@ impl TokenInterface for Token {
     fn burn(env: Env, from: Address, amount: i128) {
         let operator = state::read_operator(&env);
         operator.require_auth();
+        require_not_paused(&env);
         check_nonnegative_amount(&env, amount);
         bump_instance(&env);
 
@@ -815,15 +1064,66 @@ pub struct Redeem {
 }
 
 #[contractevent]
-pub struct ForcedTransfer {
+pub struct ForcedTransferRequest {
     #[topic]
     pub from: Address,
     #[topic]
     pub to: Address,
     pub amount: i128,
+    pub nonce: u64,
+    pub data: String,
+    pub extra_data: String,
+    pub et: u64,
+}
+
+#[contractevent]
+pub struct ForcedTransferEffected {
+    #[topic]
+    pub from: Address,
+    #[topic]
+    pub to: Address,
+    pub amount: i128,
+    pub nonce: u64,
     pub data: String,
     pub extra_data: String,
 }
+
+#[contractevent]
+pub struct ForcedTransferRevoked {
+    pub req: BytesN<32>,
+}
+
+#[contractevent]
+pub struct ForcedReceiverRequest {
+    pub next_receiver: Address,
+    pub effective_time: u64,
+}
+
+#[contractevent]
+pub struct ForcedReceiverEffected {
+    pub receiver: Address,
+}
+
+#[contractevent]
+pub struct ForcedReceiverRevoked {}
+
+#[contractevent]
+pub struct Paused {
+    pub operator: Address,
+}
+
+#[contractevent]
+pub struct GlobalUnpauseEffected {
+    pub owner: Address,
+}
+
+#[contractevent]
+pub struct GlobalUnpauseRequest {
+    pub effective_time: u64,
+}
+
+#[contractevent]
+pub struct UnpauseRevoked {}
 
 #[contractevent]
 pub struct SetGovDelayEffected {
@@ -852,7 +1152,8 @@ pub struct ContractUpgraded {
 
 #[contractevent]
 pub struct UpgradeRevoked {
-    pub owner: Address,
+    pub caller: Address,
+    // Real pending hash for a valid revoke; all-zero sentinel when nothing was pending.
     pub new_wasm_hash: BytesN<32>,
 }
 
@@ -880,6 +1181,30 @@ pub struct MintRequestRevoked {
 fn require_not_blocked(env: &Env, user: &Address) {
     if state::is_blocked(env, user) {
         panic_with_error!(&env, TokenError::UserBlocked);
+    }
+}
+
+fn require_not_paused(env: &Env) {
+    if state::read_paused(env) {
+        panic_with_error!(env, TokenError::ContractPaused);
+    }
+}
+
+// Revocation is widened to "owner OR revoker": owner is the superior role and may
+// recall a pending delayed op. Soroban has no "either-of" auth primitive, so the
+// caller is passed explicitly and checked for membership.
+fn require_owner_or_revoker(env: &Env, caller: &Address) {
+    caller.require_auth();
+    if *caller != state::read_owner(env) && *caller != state::read_revoker(env) {
+        panic_with_error!(env, TokenError::Unauthorized);
+    }
+}
+
+// setRevoker rotation is revoked by owner OR operator (self-exclusion rule: never the revoker).
+fn require_owner_or_operator(env: &Env, caller: &Address) {
+    caller.require_auth();
+    if *caller != state::read_owner(env) && *caller != state::read_operator(env) {
+        panic_with_error!(env, TokenError::Unauthorized);
     }
 }
 

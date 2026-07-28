@@ -340,3 +340,105 @@ pub fn write_et_next_upgrade(env: &Env, et: u64) {
 pub fn remove_et_next_upgrade(env: &Env) {
     env.storage().temporary().remove(&DataKey::EtNextUpgrade);
 }
+
+//--------- pause ----------
+
+pub fn read_paused(env: &Env) -> bool {
+    env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+}
+
+pub fn write_paused(env: &Env, paused: bool) {
+    env.storage().instance().set(&DataKey::Paused, &paused);
+}
+
+pub fn read_et_next_unpause(env: &Env) -> Option<u64> {
+    env.storage().temporary().get(&DataKey::EtNextUnpause)
+}
+
+pub fn write_et_next_unpause(env: &Env, et: u64) {
+    let key = DataKey::EtNextUnpause;
+    env.storage().temporary().set(&key, &et);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_et_next_unpause(env: &Env) {
+    env.storage().temporary().remove(&DataKey::EtNextUnpause);
+}
+
+//--------- forced transfer receiver ----------
+
+pub fn read_forced_transfer_receiver(env: &Env) -> Option<Address> {
+    env.storage()
+        .instance()
+        .get(&DataKey::ForcedTransferReceiver)
+}
+
+pub fn write_forced_transfer_receiver(env: &Env, receiver: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::ForcedTransferReceiver, receiver);
+}
+
+pub fn read_next_forced_transfer_receiver(env: &Env) -> Option<Address> {
+    env.storage()
+        .temporary()
+        .get(&DataKey::NextForcedTransferReceiver)
+}
+
+pub fn write_next_forced_transfer_receiver(env: &Env, next: &Address) {
+    let key = DataKey::NextForcedTransferReceiver;
+    env.storage().temporary().set(&key, next);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_next_forced_transfer_receiver(env: &Env) {
+    env.storage()
+        .temporary()
+        .remove(&DataKey::NextForcedTransferReceiver);
+}
+
+pub fn read_et_next_forced_transfer_receiver(env: &Env) -> Option<u64> {
+    env.storage()
+        .temporary()
+        .get(&DataKey::EtNextForcedTransferReceiver)
+}
+
+pub fn write_et_next_forced_transfer_receiver(env: &Env, et: u64) {
+    let key = DataKey::EtNextForcedTransferReceiver;
+    env.storage().temporary().set(&key, &et);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_et_next_forced_transfer_receiver(env: &Env) {
+    env.storage()
+        .temporary()
+        .remove(&DataKey::EtNextForcedTransferReceiver);
+}
+
+//--------- forced transfer request ----------
+
+pub fn read_forced_transfer_request(env: &Env, key: &BytesN<32>) -> Option<u64> {
+    env.storage()
+        .temporary()
+        .get(&DataKey::ForcedTransferRequest(key.clone()))
+}
+
+pub fn write_forced_transfer_request(env: &Env, key: &BytesN<32>, et: u64) {
+    let k = DataKey::ForcedTransferRequest(key.clone());
+    env.storage().temporary().set(&k, &et);
+    env.storage()
+        .temporary()
+        .extend_ttl(&k, MINT_REQUEST_TTL_LEDGERS, MINT_REQUEST_TTL_LEDGERS);
+}
+
+pub fn remove_forced_transfer_request(env: &Env, key: &BytesN<32>) {
+    env.storage()
+        .temporary()
+        .remove(&DataKey::ForcedTransferRequest(key.clone()));
+}

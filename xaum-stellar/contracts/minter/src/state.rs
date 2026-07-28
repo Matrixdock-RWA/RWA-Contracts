@@ -98,6 +98,53 @@ pub fn remove_token_accepted_by_b(env: &Env, token: &Address) {
     env.storage().instance().remove(&key);
 }
 
+//-------- gov delay ----------
+
+pub fn read_gov_delay(env: &Env) -> u64 {
+    env.storage()
+        .instance()
+        .get(&DataKey::GovDelay)
+        .unwrap_or(0)
+}
+
+pub fn write_gov_delay(env: &Env, new_gov_delay: u64) {
+    env.storage()
+        .instance()
+        .set(&DataKey::GovDelay, &new_gov_delay);
+}
+
+pub fn read_next_gov_delay(env: &Env) -> Option<u64> {
+    env.storage().temporary().get(&DataKey::NextGovDelay)
+}
+
+pub fn write_next_gov_delay(env: &Env, next: u64) {
+    let key = DataKey::NextGovDelay;
+    env.storage().temporary().set(&key, &next);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_next_gov_delay(env: &Env) {
+    env.storage().temporary().remove(&DataKey::NextGovDelay);
+}
+
+pub fn read_et_next_gov_delay(env: &Env) -> Option<u64> {
+    env.storage().temporary().get(&DataKey::EtNextGovDelay)
+}
+
+pub fn write_et_next_gov_delay(env: &Env, et: u64) {
+    let key = DataKey::EtNextGovDelay;
+    env.storage().temporary().set(&key, &et);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_et_next_gov_delay(env: &Env) {
+    env.storage().temporary().remove(&DataKey::EtNextGovDelay);
+}
+
 //--------- upgrade ----------
 
 pub fn read_next_upgrade_wasm_hash(env: &Env) -> Option<BytesN<32>> {
