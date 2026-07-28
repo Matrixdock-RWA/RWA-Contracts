@@ -18,6 +18,10 @@ const ADMIN: address = @0xAD;
 const ALICE: address = @0xA11CE;
 const BOB: address = @0xB0B;
 
+// constants are not exported, so we need to redefine them here
+const MIN_DELAY: u64 = 3600;
+const MIN_GOV_DELAY: u64 = 3600 * 24;
+
 fun init_xagm(): (test_scenario::Scenario, Clock) {
     let mut scenario = test_scenario::begin(SYS);
     deny_list::create_for_testing(scenario.ctx());
@@ -143,37 +147,12 @@ fun cc_process_rate_limited_msg(
     scenario: &mut test_scenario::Scenario,
     caller: address,
     msg_id: u64,
+    clock: &Clock,
 ) {
     scenario.next_tx(caller);
     {
         let mut state = scenario.take_shared<mtoken::State<XAGM>>();
-        state.cc_process_rate_limited_msg(msg_id, scenario.ctx());
-        test_scenario::return_shared(state);
-    };
-}
-
-fun cc_batch_process_rate_limited_msgs(
-    scenario: &mut test_scenario::Scenario,
-    caller: address,
-    msg_ids: vector<u64>,
-) {
-    scenario.next_tx(caller);
-    {
-        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
-        state.cc_batch_process_rate_limited_msgs(msg_ids, scenario.ctx());
-        test_scenario::return_shared(state);
-    };
-}
-
-fun cc_batch_discard_rate_limited_msgs(
-    scenario: &mut test_scenario::Scenario,
-    caller: address,
-    msg_ids: vector<u64>,
-) {
-    scenario.next_tx(caller);
-    {
-        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
-        state.cc_batch_discard_rate_limited_msgs(msg_ids, scenario.ctx());
+        state.cc_process_rate_limited_msg(msg_id, clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
 }
@@ -182,13 +161,81 @@ fun cc_discard_rate_limited_msg(
     scenario: &mut test_scenario::Scenario,
     caller: address,
     msg_id: u64,
+    clock: &Clock,
 ) {
     scenario.next_tx(caller);
     {
         let mut state = scenario.take_shared<mtoken::State<XAGM>>();
-        state.cc_discard_rate_limited_msg(msg_id, scenario.ctx());
+        state.cc_discard_rate_limited_msg(msg_id, clock, scenario.ctx());
         test_scenario::return_shared(state);
     };
+}
+
+fun revoke_cc_process_rate_limited_msg(
+    scenario: &mut test_scenario::Scenario,
+    caller: address,
+    msg_id: u64,
+) {
+    scenario.next_tx(caller);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
+        state.revoke_cc_process_rate_limited_msg(msg_id, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+}
+
+fun revoke_cc_discard_rate_limited_msg(
+    scenario: &mut test_scenario::Scenario,
+    caller: address,
+    msg_id: u64,
+) {
+    scenario.next_tx(caller);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
+        state.revoke_cc_discard_rate_limited_msg(msg_id, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+}
+
+fun set_gov_delay(
+    scenario: &mut test_scenario::Scenario,
+    caller: address,
+    new_gov_delay: u64,
+    clock: &Clock,
+) {
+    scenario.next_tx(caller);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
+        mtoken_gov::set_gov_delay(&mut state, new_gov_delay, clock, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+}
+
+fun set_delay(
+    scenario: &mut test_scenario::Scenario,
+    caller: address,
+    new_delay: u64,
+    clock: &Clock,
+) {
+    scenario.next_tx(caller);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
+        mtoken_gov::set_delay(&mut state, new_delay, clock, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+}
+
+// raise gov_delay then delay above their initial (zero) values so cc_process/cc_discard
+// actually queue a pending request instead of executing immediately. Raising gov_delay
+// itself executes in one call (clock is at t=0, and its OWN timelock uses the *current*
+// gov_delay, which is still 0). set_delay, however, is governed by gov_delay (not by
+// `delay` itself) — so once gov_delay is raised, the first set_delay call only registers
+// a pending request; advance the clock past the new gov_delay and call it again to finish.
+fun raise_delay(scenario: &mut test_scenario::Scenario, clock: &mut Clock, new_delay: u64) {
+    set_gov_delay(scenario, ADMIN, MIN_GOV_DELAY, clock);
+    set_delay(scenario, ADMIN, new_delay, clock);
+    clock.increment_for_testing(MIN_GOV_DELAY * 1000);
+    set_delay(scenario, ADMIN, new_delay, clock);
 }
 
 fun check_has_rate_limiter(scenario: &mut test_scenario::Scenario, isSet: bool) {
@@ -414,28 +461,33 @@ fun rate_limited_msg_queue() {
 #[test, expected_failure(abort_code = mtoken::ENotOperator)]
 fun cc_process_rate_limited_msg_err_not_operator() {
     let (mut scenario, _clock) = init_xagm();
-    cc_process_rate_limited_msg(&mut scenario, ALICE, 123);
+    cc_process_rate_limited_msg(&mut scenario, ALICE, 123, &_clock);
     abort
 }
 
 #[test, expected_failure(abort_code = mtoken::ENotOperator)]
 fun cc_discard_rate_limited_msg_err_not_operator() {
     let (mut scenario, _clock) = init_xagm();
-    cc_discard_rate_limited_msg(&mut scenario, ALICE, 123);
+    cc_discard_rate_limited_msg(&mut scenario, ALICE, 123, &_clock);
     abort
 }
 
-#[test, expected_failure(abort_code = mtoken::ENotOperator)]
-fun cc_batch_process_rate_limited_msgs_err_not_operator() {
+// closes the delay-bypass where an operator could pre-register a request against a
+// msg_id that doesn't hold a message yet, let it mature in advance, and instantly
+// deliver/discard whatever real message eventually lands there
+#[test, expected_failure(abort_code = mtoken::ERateLimitedMsgNotFound)]
+fun cc_process_rate_limited_msg_err_not_found() {
     let (mut scenario, _clock) = init_xagm();
-    cc_batch_process_rate_limited_msgs(&mut scenario, ALICE, vector[1, 2, 3]);
+    add_rate_limiter(&mut scenario, ADMIN, 10000, 3600, &_clock);
+    cc_process_rate_limited_msg(&mut scenario, ADMIN, 0, &_clock);
     abort
 }
 
-#[test, expected_failure(abort_code = mtoken::ENotOperator)]
-fun cc_batch_discard_rate_limited_msgs_err_not_operator() {
+#[test, expected_failure(abort_code = mtoken::ERateLimitedMsgNotFound)]
+fun cc_discard_rate_limited_msg_err_not_found() {
     let (mut scenario, _clock) = init_xagm();
-    cc_batch_discard_rate_limited_msgs(&mut scenario, ALICE, vector[1, 2, 3]);
+    add_rate_limiter(&mut scenario, ADMIN, 10000, 3600, &_clock);
+    cc_discard_rate_limited_msg(&mut scenario, ADMIN, 0, &_clock);
     abort
 }
 
@@ -450,12 +502,12 @@ fun cc_process_rate_limited_msg_ok() {
     cc_receive_token(&mut scenario, ADMIN, BOB, ALICE, 4000, &_clock);
 
     // process msg#1 -> mints 4000 to ALICE
-    cc_process_rate_limited_msg(&mut scenario, ADMIN, 1);
-    // 3 events: RateLimitedMsgRemovedEvent, CCReceiveTokenEvent, RateLimitedMsgProcessedEvent
+    cc_process_rate_limited_msg(&mut scenario, ADMIN, 1, &_clock);
+    // 3 events: RateLimitedMsgRemovedEvent, CCReceiveTokenEvent, ProcessRateLimitedMsgEffectedEvent
     assert_eq!(event::num_events(), 3);
     event::events_by_type<mtoken_rate_limiter::RateLimitedMsgRemovedEvent>().pop_back();
     event::events_by_type<mtoken::CCReceiveTokenEvent>().pop_back();
-    event::events_by_type<mtoken::RateLimitedMsgProcessedEvent>().pop_back();
+    event::events_by_type<mtoken::ProcessRateLimitedMsgEffectedEvent>().pop_back();
 
     // msg#1 removed, msg#0 still queued; total_supply = 8000 (BOB) + 4000 (ALICE) = 12000
     check_has_rate_limited_msg(&mut scenario, 0, true);
@@ -476,11 +528,11 @@ fun cc_discard_rate_limited_msg_ok() {
     cc_receive_token(&mut scenario, ADMIN, BOB, ALICE, 4000, &_clock);
 
     // discard msg#1 -> no minting
-    cc_discard_rate_limited_msg(&mut scenario, ADMIN, 1);
-    // 2 events: RateLimitedMsgRemovedEvent, RateLimitedMsgDiscardedEvent
+    cc_discard_rate_limited_msg(&mut scenario, ADMIN, 1, &_clock);
+    // 2 events: RateLimitedMsgRemovedEvent, DiscardRateLimitedMsgEffectedEvent
     assert_eq!(event::num_events(), 2);
     event::events_by_type<mtoken_rate_limiter::RateLimitedMsgRemovedEvent>().pop_back();
-    event::events_by_type<mtoken::RateLimitedMsgDiscardedEvent>().pop_back();
+    event::events_by_type<mtoken::DiscardRateLimitedMsgEffectedEvent>().pop_back();
 
     // msg#1 removed, msg#0 still queued; total_supply = 8000 only (nothing minted for discarded msg)
     check_has_rate_limited_msg(&mut scenario, 0, true);
@@ -490,27 +542,160 @@ fun cc_discard_rate_limited_msg_ok() {
     scenario.end();
 }
 
+// ===== delayed cc_process/cc_discard (non-zero delay) tests =====
+
 #[test]
-fun cc_batch_process_rate_limited_msgs_ok() {
-    let (mut scenario, _clock) = init_xagm();
+fun cc_process_rate_limited_msg_delayed_ok() {
+    let (mut scenario, mut _clock) = init_xagm();
+    add_rate_limiter(&mut scenario, ADMIN, 10000, 3600, &_clock);
+    raise_delay(&mut scenario, &mut _clock, MIN_DELAY);
+
+    // queue msg#0 (alice->bob 3000): 8000 fills capacity, 3000 overflows
+    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 8000, &_clock);
+    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 3000, &_clock);
+
+    // first call only registers a pending request; message stays queued, nothing minted
+    cc_process_rate_limited_msg(&mut scenario, ADMIN, 0, &_clock);
+    assert_eq!(event::num_events(), 1);
+    event::events_by_type<mtoken::ProcessRateLimitedMsgRequestEvent>().pop_back();
+    check_has_rate_limited_msg(&mut scenario, 0, true);
+
+    // advance past the delay; second call matures and executes
+    _clock.increment_for_testing(MIN_DELAY * 1000);
+    cc_process_rate_limited_msg(&mut scenario, ADMIN, 0, &_clock);
+    assert_eq!(event::num_events(), 3);
+    event::events_by_type<mtoken_rate_limiter::RateLimitedMsgRemovedEvent>().pop_back();
+    event::events_by_type<mtoken::CCReceiveTokenEvent>().pop_back();
+    event::events_by_type<mtoken::ProcessRateLimitedMsgEffectedEvent>().pop_back();
+    check_has_rate_limited_msg(&mut scenario, 0, false);
+
+    clock::destroy_for_testing(_clock);
+    scenario.end();
+}
+
+#[test]
+fun cc_process_rate_limited_msg_revoke_ok() {
+    let (mut scenario, mut _clock) = init_xagm();
+    add_rate_limiter(&mut scenario, ADMIN, 10000, 3600, &_clock);
+    raise_delay(&mut scenario, &mut _clock, MIN_DELAY);
+
+    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 8000, &_clock);
+    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 3000, &_clock); // queued as #0
+
+    cc_process_rate_limited_msg(&mut scenario, ADMIN, 0, &_clock); // creates a pending request
+    revoke_cc_process_rate_limited_msg(&mut scenario, ADMIN, 0);
+    // revoking only destroys the pending request; the queued message itself is untouched
+    check_has_rate_limited_msg(&mut scenario, 0, true);
+
+    clock::destroy_for_testing(_clock);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = mtoken::ENotOwnerOrRevoker)]
+fun cc_process_rate_limited_msg_revoke_err_not_owner_or_revoker() {
+    let (mut scenario, mut _clock) = init_xagm();
+    add_rate_limiter(&mut scenario, ADMIN, 10000, 3600, &_clock);
+    raise_delay(&mut scenario, &mut _clock, MIN_DELAY);
+    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 8000, &_clock);
+    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 3000, &_clock);
+    cc_process_rate_limited_msg(&mut scenario, ADMIN, 0, &_clock);
+    revoke_cc_process_rate_limited_msg(&mut scenario, ALICE, 0);
+    abort
+}
+
+#[test]
+fun cc_discard_rate_limited_msg_delayed_ok() {
+    let (mut scenario, mut _clock) = init_xagm();
+    add_rate_limiter(&mut scenario, ADMIN, 10000, 3600, &_clock);
+    raise_delay(&mut scenario, &mut _clock, MIN_DELAY);
+
+    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 8000, &_clock);
+    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 3000, &_clock); // queued as #0
+
+    // first call only registers a pending request; message stays queued
+    cc_discard_rate_limited_msg(&mut scenario, ADMIN, 0, &_clock);
+    assert_eq!(event::num_events(), 1);
+    event::events_by_type<mtoken::DiscardRateLimitedMsgRequestEvent>().pop_back();
+    check_has_rate_limited_msg(&mut scenario, 0, true);
+
+    // advance past the delay; second call matures and executes
+    _clock.increment_for_testing(MIN_DELAY * 1000);
+    cc_discard_rate_limited_msg(&mut scenario, ADMIN, 0, &_clock);
+    assert_eq!(event::num_events(), 2);
+    event::events_by_type<mtoken_rate_limiter::RateLimitedMsgRemovedEvent>().pop_back();
+    event::events_by_type<mtoken::DiscardRateLimitedMsgEffectedEvent>().pop_back();
+    check_has_rate_limited_msg(&mut scenario, 0, false);
+
+    clock::destroy_for_testing(_clock);
+    scenario.end();
+}
+
+#[test]
+fun cc_discard_rate_limited_msg_revoke_ok() {
+    let (mut scenario, mut _clock) = init_xagm();
+    add_rate_limiter(&mut scenario, ADMIN, 10000, 3600, &_clock);
+    raise_delay(&mut scenario, &mut _clock, MIN_DELAY);
+
+    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 8000, &_clock);
+    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 3000, &_clock); // queued as #0
+
+    cc_discard_rate_limited_msg(&mut scenario, ADMIN, 0, &_clock); // creates a pending request
+    revoke_cc_discard_rate_limited_msg(&mut scenario, ADMIN, 0);
+    check_has_rate_limited_msg(&mut scenario, 0, true);
+
+    clock::destroy_for_testing(_clock);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = mtoken::ENotOwnerOrRevoker)]
+fun cc_discard_rate_limited_msg_revoke_err_not_owner_or_revoker() {
+    let (mut scenario, mut _clock) = init_xagm();
+    add_rate_limiter(&mut scenario, ADMIN, 10000, 3600, &_clock);
+    raise_delay(&mut scenario, &mut _clock, MIN_DELAY);
+    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 8000, &_clock);
+    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 3000, &_clock);
+    cc_discard_rate_limited_msg(&mut scenario, ADMIN, 0, &_clock);
+    revoke_cc_discard_rate_limited_msg(&mut scenario, ALICE, 0);
+    abort
+}
+
+// closes the delay-bypass where a "process" request registered against a msg_id, but never
+// executed (the message is instead consumed via the independent "discard" path), would
+// otherwise survive as a stale-but-matured entry; if the rate limiter is later removed and
+// re-added (resetting msg_id numbering) and a brand new message reuses that same msg_id, the
+// stale request must not still be there to let it execute instantly with no delay applied.
+#[test]
+fun cc_process_rate_limited_msg_stale_request_cleared_by_discard() {
+    let (mut scenario, mut _clock) = init_xagm();
+    add_rate_limiter(&mut scenario, ADMIN, 10000, 3600, &_clock);
+    raise_delay(&mut scenario, &mut _clock, MIN_DELAY);
+
+    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 8000, &_clock);
+    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 3000, &_clock); // queued as #0
+
+    // register a "process" request for msg#0, but never let it mature/execute
+    cc_process_rate_limited_msg(&mut scenario, ADMIN, 0, &_clock);
+
+    // instead, msg#0 is consumed via the independent "discard" path
+    cc_discard_rate_limited_msg(&mut scenario, ADMIN, 0, &_clock); // registers a discard request
+    _clock.increment_for_testing(MIN_DELAY * 1000);
+    cc_discard_rate_limited_msg(&mut scenario, ADMIN, 0, &_clock); // matures & executes
+
+    // queue is now empty: the rate limiter can be removed and a fresh one added, which
+    // resets msg_id numbering back to 0
+    remove_rate_limiter(&mut scenario, ADMIN);
     add_rate_limiter(&mut scenario, ADMIN, 10000, 3600, &_clock);
 
-    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 8000, &_clock); // #0
-    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 3000, &_clock); // #1
-    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 4000, &_clock); // #2
-    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 5000, &_clock); // #3
-    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 6000, &_clock); // #4
-    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 7000, &_clock); // #5
+    // a brand new message reuses msg_id=0 in the fresh limiter
+    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 8000, &_clock);
+    cc_receive_token(&mut scenario, ADMIN, ALICE, BOB, 3000, &_clock); // queued as #0 again
 
-    cc_batch_process_rate_limited_msgs(&mut scenario, ADMIN, vector[1, 3]);
-    cc_batch_discard_rate_limited_msgs(&mut scenario, ADMIN, vector[2, 4]);
-
+    // if the stale "process" request had survived, this would execute instantly (et == 0);
+    // it must instead only register a fresh pending request
+    cc_process_rate_limited_msg(&mut scenario, ADMIN, 0, &_clock);
+    assert_eq!(event::num_events(), 1);
+    event::events_by_type<mtoken::ProcessRateLimitedMsgRequestEvent>().pop_back();
     check_has_rate_limited_msg(&mut scenario, 0, true);
-    check_has_rate_limited_msg(&mut scenario, 1, false);
-    check_has_rate_limited_msg(&mut scenario, 2, false);
-    check_has_rate_limited_msg(&mut scenario, 3, false);
-    check_has_rate_limited_msg(&mut scenario, 4, false);
-    check_has_rate_limited_msg(&mut scenario, 5, false);
 
     clock::destroy_for_testing(_clock);
     scenario.end();

@@ -42,6 +42,7 @@ const EDeprecated: u64 = 118;
 const ERequestArgsMismatch: u64 = 119;
 const ENotOwnerOrOperator: u64 = 120;
 const ECCSendDisabled: u64 = 121;
+const ERateLimitedMsgNotFound: u64 = 122;
 
 // === Constants ===
 
@@ -53,6 +54,12 @@ const MIN_GOV_DELAY: u64 = 3600 * 24; // 1 day
 // must stay in sync with mtoken_gov (constants are module-private in Move)
 const OP_UNPAUSE: u256 = 10;
 const OP_ENABLE_CC_SEND: u256 = 11;
+
+// Operator-initiated (unlike the OP_* constants above), no mtoken_gov counterpart needed.
+// Packed with msg_id (via left-shift) into ensure_delay's req_id so each queued message
+// gets its own independent pending-request slot instead of sharing one across all msg_ids.
+const OP_CC_PROCESS_RATE_LIMITED_MSG: u256 = 12;
+const OP_CC_DISCARD_RATE_LIMITED_MSG: u256 = 13;
 
 const SECONDS_PER_DAY: u64 = 24 * 3600; // ozPerTokenBaseTime are rounded to daily boundary
 const DAYS_PER_YEAR: u64 = 365; // dailyFeeRate is annualFeeRate / DAYS_PER_YEAR
@@ -162,11 +169,21 @@ public struct CCSendTokenEvent has copy, drop {
 
 public struct AddRateLimiterEvent has copy, drop {}
 
-public struct RateLimitedMsgProcessedEvent has copy, drop {
+public struct ProcessRateLimitedMsgRequestEvent has copy, drop {
+    msg_id: u64,
+    et: u64,
+}
+
+public struct ProcessRateLimitedMsgEffectedEvent has copy, drop {
     msg_id: u64,
 }
 
-public struct RateLimitedMsgDiscardedEvent has copy, drop {
+public struct DiscardRateLimitedMsgRequestEvent has copy, drop {
+    msg_id: u64,
+    et: u64,
+}
+
+public struct DiscardRateLimitedMsgEffectedEvent has copy, drop {
     msg_id: u64,
 }
 
@@ -284,6 +301,8 @@ init_annual_fee_rate               | Owner      | no       | no             | no
 update_annual_fee_rate             | Owner      | no       | no             | no
 update_oz_per_token_base           | Owner      | no       | no             | no
 mint_to                            | Operator   | delay    | Owner/Revoker  | Initiator
+cc_process_rate_limited_msg        | Operator   | delay    | Owner/Revoker  | Initiator
+cc_discard_rate_limited_msg        | Operator   | delay    | Owner/Revoker  | Initiator
 redeem                             | Operator   | no       | no             | no
 cc_send_mint_budget_manually       | Operator   | no       | no             | no
 cc_receive_mint_budget_manually    | Operator   | no       | no             | no
@@ -291,10 +310,6 @@ pause                              | Operator   | no       | no             | no
 disable_cc_send                    | Operator   | no       | no             | no
 add_to_blocked_list                | Operator   | no       | no             | no
 remove_from_blocked_list           | Operator   | no       | no             | no
-cc_batch_process_rate_limited_msg  | Operator   | no       | no             | no
-cc_batch_discard_rate_limited_msg  | Operator   | no       | no             | no
-cc_process_rate_limited_msg        | Operator   | no       | no             | no
-cc_discard_rate_limited_msg        | Operator   | no       | no             | no
 cc_send_mint_budget                | Messenger  | no       | no             | no
 cc_send_token                      | Messenger  | no       | no             | no
 cc_receive                         | Messenger  | no       | no             | no
@@ -768,65 +783,70 @@ public fun cc_receive_v2<T>(
     }
 }
 
-// process rate-limited messages in batch
-entry fun cc_batch_process_rate_limited_msgs<T>(
+// request (or, once matured, execute) delivery of a single queued rate-limited cross-chain
+// token message; delayed via the normal `delay` (same mechanism as unpause/enable_cc_send)
+entry fun cc_process_rate_limited_msg<T>(
     state: &mut State<T>,
-    mut msg_ids: vector<u64>,
+    msg_id: u64,
+    clock: &Clock,
     ctx: &mut TxContext,
 ) {
     check_version(state);
     check_operator(state, ctx);
-    while (!msg_ids.is_empty()) {
-        let msg_id = msg_ids.pop_back();
+    // requiring the message to exist at request time stops the operator from pre-registering
+    // a request for a not-yet-queued msg_id and letting it mature in advance, so a real message
+    // that later lands there gets delivered instantly with no delay ever having applied to it
+    assert!(has_rate_limited_msg(state, msg_id), ERateLimitedMsgNotFound);
+    let req_id = (OP_CC_PROCESS_RATE_LIMITED_MSG << 64) | (msg_id as u256);
+    let et = ensure_delay(state, req_id, 0u256, clock);
+    if (et > 0) {
+        event::emit(ProcessRateLimitedMsgRequestEvent { msg_id, et });
+    } else {
         process_rate_limited_msg(state, msg_id, ctx);
-    };
+    }
 }
 
-// process a single rate-limited message
-entry fun cc_process_rate_limited_msg<T>(state: &mut State<T>, msg_id: u64, ctx: &mut TxContext) {
-    check_version(state);
-    check_operator(state, ctx);
-    process_rate_limited_msg(state, msg_id, ctx);
-}
-
-// private function to process a single rate-limited message
-// put it here because it's only used by cc_batch_process_rate_limited_msgs and process_rate_limited_msg
-fun process_rate_limited_msg<T>(state: &mut State<T>, msg_id: u64, ctx: &mut TxContext) {
-    let rl = state.borrow_rate_limiter_mut();
-    let (sender, receiver, amount) = rl.remove_rate_limited_msg(msg_id);
-    let minted_coin = coin::mint<T>(state.borrow_treasury_cap_mut(), amount, ctx);
-    transfer::public_transfer(minted_coin, receiver);
-    event::emit(CCReceiveTokenEvent { sender, receiver, amount });
-    event::emit(RateLimitedMsgProcessedEvent { msg_id });
-}
-
-// discard rate-limited messages in batch
-entry fun cc_batch_discard_rate_limited_msgs<T>(
+entry fun revoke_cc_process_rate_limited_msg<T>(
     state: &mut State<T>,
-    mut msg_ids: vector<u64>,
+    msg_id: u64,
+    ctx: &TxContext,
+) {
+    check_version(state);
+    check_owner_or_revoker(state, ctx);
+    let req_id = (OP_CC_PROCESS_RATE_LIMITED_MSG << 64) | (msg_id as u256);
+    revoke_request(state, req_id);
+}
+
+// request (or, once matured, execute) permanent discard of a single queued rate-limited
+// cross-chain token message; delayed via the normal `delay`
+entry fun cc_discard_rate_limited_msg<T>(
+    state: &mut State<T>,
+    msg_id: u64,
+    clock: &Clock,
     ctx: &TxContext,
 ) {
     check_version(state);
     check_operator(state, ctx);
-    while (!msg_ids.is_empty()) {
-        let msg_id = msg_ids.pop_back();
+    // see cc_process_rate_limited_msg for why the message must exist at request time
+    assert!(has_rate_limited_msg(state, msg_id), ERateLimitedMsgNotFound);
+    let req_id = (OP_CC_DISCARD_RATE_LIMITED_MSG << 64) | (msg_id as u256);
+    let et = ensure_delay(state, req_id, 0u256, clock);
+    if (et > 0) {
+        event::emit(DiscardRateLimitedMsgRequestEvent { msg_id, et });
+    } else {
         discard_rate_limited_msg(state, msg_id);
-    };
+    }
 }
 
-// discard a single rate-limited message
-entry fun cc_discard_rate_limited_msg<T>(state: &mut State<T>, msg_id: u64, ctx: &TxContext) {
+entry fun revoke_cc_discard_rate_limited_msg<T>(
+    state: &mut State<T>,
+    msg_id: u64,
+    ctx: &TxContext,
+) {
     check_version(state);
-    check_operator(state, ctx);
-    discard_rate_limited_msg(state, msg_id);
-}
-
-// private function to discard a single rate-limited message
-// put it here because it's only used by cc_batch_discard_rate_limited_msgs and discard_rate_limited_msg
-fun discard_rate_limited_msg<T>(state: &mut State<T>, msg_id: u64) {
-    let rl = state.borrow_rate_limiter_mut();
-    let (_sender, _receiver, _amount) = rl.remove_rate_limited_msg(msg_id);
-    event::emit(RateLimitedMsgDiscardedEvent { msg_id });
+    check_owner_or_revoker(state, ctx);
+    let req_id = (OP_CC_DISCARD_RATE_LIMITED_MSG << 64) | (msg_id as u256);
+    revoke_request(state, req_id);
 }
 
 entry fun disable_cc_send<T>(state: &mut State<T>, ctx: &TxContext) {
@@ -1185,6 +1205,30 @@ fun ensure_delay_<T>(
     assert!(req_info.new_value == new_value, ERequestArgsMismatch);
     requests.remove(req_id);
     return 0
+}
+
+// private function to process a single rate-limited message
+fun process_rate_limited_msg<T>(state: &mut State<T>, msg_id: u64, ctx: &mut TxContext) {
+    let rl = state.borrow_rate_limiter_mut();
+    let (sender, receiver, amount) = rl.remove_rate_limited_msg(msg_id);
+    let minted_coin = coin::mint<T>(state.borrow_treasury_cap_mut(), amount, ctx);
+    transfer::public_transfer(minted_coin, receiver);
+    event::emit(CCReceiveTokenEvent { sender, receiver, amount });
+    event::emit(ProcessRateLimitedMsgEffectedEvent { msg_id });
+    // clear any pending discard request for the same msg_id: once this msg_id is consumed,
+    // a stale sibling request must not survive to be matched against a future message that
+    // reuses this msg_id after the rate limiter is removed and re-added (see
+    // cc_process_rate_limited_msg / cc_discard_rate_limited_msg)
+    revoke_request(state, (OP_CC_DISCARD_RATE_LIMITED_MSG << 64) | (msg_id as u256));
+}
+
+// private function to discard a single rate-limited message
+fun discard_rate_limited_msg<T>(state: &mut State<T>, msg_id: u64) {
+    let rl = state.borrow_rate_limiter_mut();
+    let (_sender, _receiver, _amount) = rl.remove_rate_limited_msg(msg_id);
+    event::emit(DiscardRateLimitedMsgEffectedEvent { msg_id });
+    // clear any pending process request for the same msg_id (see process_rate_limited_msg)
+    revoke_request(state, (OP_CC_PROCESS_RATE_LIMITED_MSG << 64) | (msg_id as u256));
 }
 
 // === Test Functions ===
