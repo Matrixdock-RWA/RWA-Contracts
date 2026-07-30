@@ -51,7 +51,9 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address _endpoint) OAppUpgradeable(_endpoint) {}
+    constructor(address _endpoint) OAppUpgradeable(_endpoint) {
+        _disableInitializers();
+    }
 
     function initialize(
         address _ccClient,

@@ -51,6 +51,7 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
     error NotNftOwner(uint, address);
     error SignatureExpired(uint);
     error InvalidSigner(address);
+    error ZeroValue();
 
     modifier onlyOperator() {
         if (msg.sender != IMToken(mtokenContract).operator()) {
@@ -95,6 +96,20 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
             revert NoSuchBullion(bullion);
         }
         return amount;
+    }
+
+    // packedCoins[bullion] == 0 doubles as the "no such bullion" sentinel, so a
+    // 0-amount pack must be rejected here — otherwise the minted NFT would be
+    // permanently stuck: unpack/unpackAndRedeem would treat it as nonexistent.
+    function _checkZeroValue(uint256 amount) private pure {
+        if (amount == 0) {
+            revert ZeroValue();
+        }
+    }
+
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
     }
 
     function initialize(
@@ -262,6 +277,7 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
         if (signer != packSigner) {
             revert InvalidSigner(signer);
         }
+        _checkZeroValue(amount);
         IMToken(mtokenContract).pack(msg.sender, amount);
         _ensureBullionNotExist(bullion);
         packedCoins[bullion] = amount;
@@ -274,6 +290,7 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
         uint bullion,
         uint nonce
     ) public onlyOperator {
+        _checkZeroValue(amount);
         _ensureBullionNotExist(bullion);
         bool executed = IMToken(mtokenContract).mintTo(
             address(this),
@@ -304,6 +321,7 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
 
     // pack 'amount' of MTokens from operator and mint a 'bullion' NFT
     function pack(uint amount, uint bullion) public onlyOperator {
+        _checkZeroValue(amount);
         IMToken(mtokenContract).pack(msg.sender, amount);
         _ensureBullionNotExist(bullion);
         packedCoins[bullion] = amount;
@@ -320,19 +338,6 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
         delete packedCoins[bullion];
         IMToken(mtokenContract).unpack(msg.sender, amount);
         _burn(bullion);
-    }
-
-    function batchMintAndPack(
-        uint[] calldata amounts,
-        uint[] calldata bullions,
-        uint nonce
-    ) public onlyOperator {
-        if (amounts.length != bullions.length) {
-            revert ArgsMismatch();
-        }
-        for (uint i = 0; i < bullions.length; i++) {
-            mintAndPack(amounts[i], bullions[i], nonce);
-        }
     }
 
     function batchUnpackAndRedeem(

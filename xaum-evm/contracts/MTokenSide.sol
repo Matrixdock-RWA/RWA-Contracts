@@ -5,6 +5,11 @@ import "./MToken.sol";
 
 // this contract will be deployed on L2s
 contract MTokenSide is MToken {
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize(
         string memory name,
         string memory symbol,

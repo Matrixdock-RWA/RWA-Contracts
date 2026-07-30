@@ -165,7 +165,6 @@ describe("BullionNFT", function () {
       nft.connect(alice).unpackAndRedeem(234, alice.address, "0x5678"),
       nft.connect(alice).pack(10000, 888),
       // nft.connect(alice).unpack(888),
-      nft.connect(alice).batchMintAndPack([100, 200, 300], [1, 2, 3], 0),
       nft.connect(alice).batchUnpackAndRedeem([1, 2, 3], alice.address, "0xABCD"),
       nft.connect(alice).batchPack([100, 200, 300], [1, 2, 3]),
       nft.connect(alice).batchUnpack([1, 2, 3]),
@@ -232,7 +231,6 @@ describe("BullionNFT", function () {
       nft.multiTransferFrom(bob.address, [alice.address], [1234, 5678]),
       nft.multiSafeTransferFrom(bob.address, [alice.address], [1234, 5678]),
       nft.multiSafeTransferFrom2(bob.address, [alice.address], [1234, 5678], "0x"),
-      nft.connect(operator).batchMintAndPack([100, 200, 300], [1, 2, 3, 4], 1),
       nft.connect(operator).batchPack([100, 200, 300], [1, 2, 3, 4]),
     ];
 
@@ -425,6 +423,37 @@ describe("BullionNFT", function () {
     await nft.connect(operator).pack(22000, 102);
   });
 
+  // fix repro: amount 0 used to leave packedCoins[bullion] at 0 after minting,
+  // which _getAmount/_ensureBullionNotExist treat as "no such bullion" — the NFT
+  // minted but could never be unpacked/redeemed again. pack/packWithSig/mintAndPack
+  // now reject amount == 0 upfront instead of minting a permanently stuck NFT.
+  it("error: pack(0, bullion) reverts instead of minting a zombie NFT", async function () {
+    const { mt, nft, operator } = await loadFixture(deployTestFixture);
+    await mt.setNFTContract(nft.target);
+
+    await expect(nft.connect(operator).pack(0, 101))
+      .to.be.revertedWithCustomError(nft, "ZeroValue");
+  });
+
+  it("error: mintAndPack(0, bullion, nonce) reverts instead of minting a zombie NFT", async function () {
+    const { mt, nft, operator } = await loadFixture(deployTestFixture);
+    await mt.setNFTContract(nft.target);
+
+    await expect(nft.connect(operator).mintAndPack(0, 202, 1))
+      .to.be.revertedWithCustomError(nft, "ZeroValue");
+  });
+
+  it("error: packWithSig with amount 0 reverts instead of minting a zombie NFT", async function () {
+    const { mt, nft, operator, alice } = await loadFixture(deployTestFixture);
+    await mt.setNFTContract(nft.target);
+    await nft.connect(operator).setPackSigner(alice.address);
+    await nft.connect(operator).setPackSigner(alice.address);
+
+    const [r, s, v] = await sign712Pack(alice, nft.target, alice.address, 0, 303, 9999999999);
+    await expect(nft.connect(alice).packWithSig(0, 303, 9999999999, v, r, s))
+      .to.be.revertedWithCustomError(nft, "ZeroValue");
+  });
+
   it("pack/unpack: batch", async function () {
     const { mt, nft, operator } = await loadFixture(deployTestFixture);
     await mt.setNFTContract(nft.target);
@@ -486,17 +515,15 @@ describe("BullionNFT", function () {
       .to.emit(nft, "Transfer").withArgs(operator, zeroAddr, 101);
   });
 
-  it("mint/redeem: batch", async function () {
+  it("unpackAndRedeem: batch", async function () {
     const { mt, nft, operator, alice } = await loadFixture(deployTestFixture);
     await mt.setNFTContract(nft.target);
     await mt.connect(operator).increaseMintBudget(2000000);
 
-    await nft.connect(operator).batchMintAndPack([10000, 20000], [100, 200], 1);
-    await expect(nft.connect(operator).batchMintAndPack([10000, 20000], [100, 200], 1))
-      .to.emit(mt, "Transfer").withArgs(zeroAddr, nft.target, 10000)
-      .to.emit(mt, "Transfer").withArgs(zeroAddr, nft.target, 20000)
-      .to.emit(nft, "Transfer").withArgs(zeroAddr, operator, 100)
-      .to.emit(nft, "Transfer").withArgs(zeroAddr, operator, 200);
+    await nft.connect(operator).mintAndPack(10000, 100, 1);
+    await nft.connect(operator).mintAndPack(10000, 100, 1);
+    await nft.connect(operator).mintAndPack(20000, 200, 2);
+    await nft.connect(operator).mintAndPack(20000, 200, 2);
 
     await expect(nft.connect(operator).batchUnpackAndRedeem([100, 200], alice.address, "0xda7a"))
       .to.emit(mt, "Transfer").withArgs(nft.target, operator, 10000)

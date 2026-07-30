@@ -18,6 +18,11 @@ contract MTokenMain is MToken {
 
     error ReserveNotEnough(int max, int amount);
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize(
         string memory name,
         string memory symbol,
