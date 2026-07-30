@@ -6,7 +6,7 @@ use crate::TokenClient;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
     testutils::{Address as _, Ledger},
-    map, Address, Bytes, BytesN, Env, IntoVal, String, Symbol, Val,
+    map, Address, Bytes, BytesN, Env, IntoVal, Map, String, Symbol, TryIntoVal, Val,
 };
 
 const START_TIME: u64 = 1_000_000;
@@ -1077,15 +1077,13 @@ fn test_revoke_next_upgrade_always_emits_event() {
         "revoke with pending upgrade must emit UpgradeRevoked (real hash payload)"
     );
     let (_, _, data) = e.events().all().last().unwrap();
-    let expected_data: Val = map![
+    // Val has no PartialEq; compare the event payload as the Map it actually is.
+    let data: Map<Symbol, Val> = data.try_into_val(&e).unwrap();
+    let expected_data: Map<Symbol, Val> = map![
         &e,
         (Symbol::new(&e, "caller"), revoker.clone().into_val(&e)),
-        (
-            Symbol::new(&e, "new_wasm_hash"),
-            hash.clone().into_val(&e)
-        ),
-    ]
-    .into_val(&e);
+        (Symbol::new(&e, "new_wasm_hash"), hash.clone().into_val(&e)),
+    ];
     assert_eq!(data, expected_data);
     assert!(token.et_next_upgrade().is_none());
 
@@ -1099,15 +1097,15 @@ fn test_revoke_next_upgrade_always_emits_event() {
         "revoke with no pending upgrade must still emit UpgradeRevoked (zero sentinel)"
     );
     let (_, _, data) = e.events().all().last().unwrap();
-    let expected_data: Val = map![
+    let data: Map<Symbol, Val> = data.try_into_val(&e).unwrap();
+    let expected_data: Map<Symbol, Val> = map![
         &e,
         (Symbol::new(&e, "caller"), owner.clone().into_val(&e)),
         (
             Symbol::new(&e, "new_wasm_hash"),
             BytesN::from_array(&e, &[0u8; 32]).into_val(&e)
         ),
-    ]
-    .into_val(&e);
+    ];
     assert_eq!(data, expected_data);
     assert!(token.et_next_upgrade().is_none());
 }
