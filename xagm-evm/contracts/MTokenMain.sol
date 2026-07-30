@@ -32,6 +32,11 @@ contract MTokenMain is MToken {
         _;
     }
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
     function initialize(
         string memory name,
         string memory symbol,

@@ -20,6 +20,11 @@ contract MTokenMinter is DelayedUpgradeable {
     uint8 public constant PREPRICE_DECIMAL = 6;
     uint8 public constant SLIPPAGE_DECIMAL = 6;
 
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers();
+    }
+
     function __Minter_init(
         address _owner,
         address _poolAccountA,
