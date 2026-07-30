@@ -450,10 +450,10 @@ pub fn revoke_forced_transfer(ctx: Context<OwnerOrRevokerOp>) -> Result<()> {
     let signer = ctx.accounts.signer.key();
     require_owner_or_revoker(&ctx.accounts.state, &signer)?;
     let state = &mut ctx.accounts.state;
+    let hash = state.next_forced_transfer_hash;
     state.next_forced_transfer_et = 0;
-    emit!(RevokeForcedTransfer {
-        nonce: state.next_forced_transfer_nonce,
-    });
+    state.next_forced_transfer_hash = [0; 32];
+    emit!(RevokeForcedTransfer { hash });
     Ok(())
 }
 

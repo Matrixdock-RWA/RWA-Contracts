@@ -172,7 +172,7 @@ pub struct ForcedTransferRequest {
 
 #[event]
 pub struct RevokeForcedTransfer {
-    pub nonce: [u8; 32],
+    pub hash: [u8; 32],
 }
 
 #[event]

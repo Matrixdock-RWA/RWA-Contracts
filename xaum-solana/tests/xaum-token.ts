@@ -732,7 +732,7 @@ describe("MToken", () => {
             // request (call 1)
             await forcedTransfer(owner, user1.publicKey, user2.publicKey, 100);
             let state = await getTokenState();
-            assert.equal(state.nextForcedTransferAmount.toNumber(), 100);
+            assert.isTrue(state.nextForcedTransferHash.some((b: number) => b !== 0));
             assert.isTrue(state.nextForcedTransferEt.toNumber() > 0);
 
             // revoke
@@ -763,7 +763,7 @@ describe("MToken", () => {
             // request to drain the full balance (idx=1 to use a distinct nonce)
             await forcedTransfer(owner, user1.publicKey, user2.publicKey, fullBal, 1);
             let state = await getTokenState();
-            assert.equal(state.nextForcedTransferAmount.toNumber(), fullBal);
+            assert.isTrue(state.nextForcedTransferHash.some((b: number) => b !== 0));
             assert.isTrue(state.nextForcedTransferEt.toNumber() > 0);
 
             // execute after delay — must fail because it would drain the sender to zero
@@ -776,6 +776,27 @@ describe("MToken", () => {
             // clean up: revoke the pending request
             await revokeForcedTransfer(revoker);
             state = await getTokenState();
+            assert.equal(state.nextForcedTransferEt.toNumber(), 0);
+        });
+
+        // The request hash pins the exact data/extra_data split, so Call 2 cannot
+        // re-split the same concatenated payload: (data=01, extra_data=0203) must
+        // not be executable as (data=0102, extra_data=03).
+        it("forced_transfer: RequestMismatch on re-split data/extra_data", async () => {
+            // user1 is still blocked from the previous test
+            await forcedTransfer(owner, user1.publicKey, user2.publicKey, 1, 2,
+                Buffer.from([0x01]), Buffer.from([0x02, 0x03]));
+            await increaseBlockTime(provider, initDelay);
+
+            await checkErrorCode(
+                forcedTransfer(owner, user1.publicKey, user2.publicKey, 1, 2,
+                    Buffer.from([0x01, 0x02]), Buffer.from([0x03])),
+                "RequestMismatch",
+            );
+
+            // clean up: revoke the pending request (no transfer happened)
+            await revokeForcedTransfer(revoker);
+            const state = await getTokenState();
             assert.equal(state.nextForcedTransferEt.toNumber(), 0);
         });
 
