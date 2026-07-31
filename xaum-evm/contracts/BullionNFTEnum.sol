@@ -310,6 +310,7 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
         bytes calldata data
     ) public onlyOperator {
         uint amount = _getAmount(bullion);
+        _checkLocked(bullion);
         if (ownerOf(bullion) != msg.sender) {
             revert NotNftOwner(bullion, msg.sender);
         }
@@ -332,6 +333,7 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
     function unpack(uint bullion) public {
         uint amount = _getAmount(bullion);
         _checkBlocked(msg.sender);
+        _checkLocked(bullion);
         if (ownerOf(bullion) != msg.sender) {
             revert NotNftOwner(bullion, msg.sender);
         }

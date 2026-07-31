@@ -211,6 +211,46 @@ describe("BullionNFT", function () {
     }
   });
 
+  it("error: TokenLocked blocks unpack (cannot bypass lock via unpack)", async function () {
+    const {mt, nft, operator, bob} = await loadFixture(deployTestFixture);
+    await mt.setNFTContract(nft.target);
+    await mt.connect(operator).increaseMintBudget(2000000);
+    await mt.connect(operator).mintTo(operator.address, 10000, 0);
+    await mt.connect(operator).mintTo(operator.address, 10000, 0);
+    await nft.connect(operator).pack(10000, 101);
+    await nft.connect(operator).transferFrom(operator.address, bob.address, 101);
+
+    await nft.connect(operator).addToLockedList(101, "0x1234");
+
+    await expect(nft.connect(bob).unpack(101))
+      .to.be.revertedWithCustomError(nft, "TokenLocked")
+      .withArgs(101);
+
+    await nft.connect(operator).removeFromLockedList(101);
+    await expect(nft.connect(bob).unpack(101))
+      .to.emit(mt, "Transfer").withArgs(nft.target, bob.address, 10000);
+  });
+
+  it("error: TokenLocked blocks unpackAndRedeem (cannot bypass lock via unpackAndRedeem)", async function () {
+    const {mt, nft, operator, alice} = await loadFixture(deployTestFixture);
+    await mt.setNFTContract(nft.target);
+    await mt.connect(operator).increaseMintBudget(2000000);
+    await mt.connect(operator).mintTo(operator.address, 10000, 0);
+    await mt.connect(operator).mintTo(operator.address, 10000, 0);
+    await nft.connect(operator).pack(10000, 101);
+
+    // NFT frozen while it already sits in operator's wallet
+    await nft.connect(operator).addToLockedList(101, "0x1234");
+
+    await expect(nft.connect(operator).unpackAndRedeem(101, alice.address, "0x1234"))
+      .to.be.revertedWithCustomError(nft, "TokenLocked")
+      .withArgs(101);
+
+    await nft.connect(operator).removeFromLockedList(101);
+    await expect(nft.connect(operator).unpackAndRedeem(101, alice.address, "0x1234"))
+      .to.emit(mt, "Redeem").withArgs(alice.address, 10000, "0x1234");
+  });
+
   it("error: TransferToContract", async function () {
     const {nft, bob} = await loadFixture(deployTestFixture);
 
