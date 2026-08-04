@@ -66,6 +66,25 @@ describe("MTokenRateLimiter", function () {
     expect(await rateLimiter.getRateLimit()).to.deep.equal([10000n, 3600n]);
   });
 
+  it("setRateLimit rejects out-of-range params", async function () {
+    const { rateLimiter } = await loadFixture(deployTestFixture);
+
+    // limit overflowing the uint128 half of the packed fingerprint
+    await expect(rateLimiter.setRateLimit(2n ** 128n, 3600))
+      .to.be.revertedWithCustomError(rateLimiter, "RateLimitTooLarge")
+      .withArgs(2n ** 128n, 3600);
+
+    // window overflowing the uint32 half of the packed fingerprint
+    await expect(rateLimiter.setRateLimit(10000, 2n ** 32n))
+      .to.be.revertedWithCustomError(rateLimiter, "RateLimitTooLarge")
+      .withArgs(10000, 2n ** 32n);
+
+    // max values on both sides are still accepted
+    await rateLimiter.setRateLimit(2n ** 128n - 1n, 2n ** 32n - 1n);
+    await rateLimiter.setRateLimit(2n ** 128n - 1n, 2n ** 32n - 1n);
+    expect(await rateLimiter.getRateLimit()).to.deep.equal([2n ** 128n - 1n, 2n ** 32n - 1n]);
+  });
+
   it("revokeSetRateLimit", async function () {
     const { rateLimiter, alice } = await loadFixture(deployTestFixture);
 
@@ -104,6 +123,20 @@ describe("MTokenRateLimiter", function () {
     await expect(rateLimiter.setSingleMsgLimit(1000))
       .to.emit(rateLimiter, "SetSingleMsgLimitEffected").withArgs(1000);
     expect(await rateLimiter.singleMsgLimit()).to.equal(1000);
+  });
+
+  it("setSingleMsgLimit rejects out-of-range param", async function () {
+    const { rateLimiter } = await loadFixture(deployTestFixture);
+
+    // limit overflowing the uint160 fingerprint slot
+    await expect(rateLimiter.setSingleMsgLimit(2n ** 160n))
+      .to.be.revertedWithCustomError(rateLimiter, "SingleMsgLimitTooLarge")
+      .withArgs(2n ** 160n);
+
+    // max value is still accepted
+    await rateLimiter.setSingleMsgLimit(2n ** 160n - 1n);
+    await rateLimiter.setSingleMsgLimit(2n ** 160n - 1n);
+    expect(await rateLimiter.singleMsgLimit()).to.equal(2n ** 160n - 1n);
   });
 
   it("revokeSetSingleMsgLimit", async function () {

@@ -58,6 +58,8 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter, DelayedRolesUpgra
     // errors
     error NotMToken(address sender);
     error RateLimitedMsgInvalid(uint256 index);
+    error RateLimitTooLarge(uint256 limit, uint256 window);
+    error SingleMsgLimitTooLarge(uint256 limit);
 
     modifier onlyMToken() {
         if (msg.sender != address(mToken)) {
@@ -102,8 +104,10 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter, DelayedRolesUpgra
     function setRateLimit(uint256 limit, uint256 window) public onlyOwner {
         // Packs (window, limit) into uint160: upper 32 bits = window, lower 128 bits = limit.
         // Assumes window < 2^32 (~136 years) and limit < 2^128. Both hold for any realistic
-        // rate-limit config, but values outside these ranges silently truncate and two distinct
-        // (limit, window) pairs could produce the same newVal, weakening the second-call check.
+        // rate-limit config.
+        if (limit > type(uint128).max || window > type(uint32).max) {
+            revert RateLimitTooLarge(limit, window);
+        }
         uint160 _newVal = uint160(window << 128 | limit);
         uint64 et = ensureDelay(OP_SET_RATE_LIMIT, _newVal, delay);
         if (et == 0) {
@@ -141,8 +145,11 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter, DelayedRolesUpgra
 
     // Configure the single message limit for incoming cross-chain token transfers.
     function setSingleMsgLimit(uint256 limit) public onlyOwner {
-        // Assumes limit < 2^160. Holds for any realistic token amount (18 decimals, 2^160 ≈ 1.46e30
-        // tokens), but values outside this range silently truncate and weaken the second-call check.
+        // Assumes limit < 2^160. Holds for any realistic token amount (18 decimals,
+        // 2^160 ≈ 1.46e30 tokens)
+        if (limit > type(uint160).max) {
+            revert SingleMsgLimitTooLarge(limit);
+        }
         uint64 et = ensureDelay(OP_SET_SINGLE_MSG_LIMIT, uint160(limit), delay);
         if (et == 0) {
             singleMsgLimit = limit;
