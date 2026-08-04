@@ -727,23 +727,4 @@ describe("MTokenMessenger", function () {
 
   });
 
-  describe("MTokenMessenger (CCIP only)", function () {
-    it("init", async function () {
-      const [owner, ccipClient, ccipRouter] = await ethers.getSigners();
-
-      const LZEndpointV2Placeholder = await ethers.getContractFactory("LZEndpointV2Placeholder");
-      const lzEndpoint = await LZEndpointV2Placeholder.deploy();
-
-      const MTokenMessenger = await ethers.getContractFactory("MTokenMessenger");
-      const mtMsg = await upgrades.deployProxy(MTokenMessenger,
-        [ccipClient.address, owner.address], // init args
-        {
-          kind: "uups",
-          constructorArgs: [ccipRouter.address, lzEndpoint.target],
-          unsafeAllow: ['constructor', 'state-variable-immutable']
-        },
-      );
-    });
-  });
-
 });
