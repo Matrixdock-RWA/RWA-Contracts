@@ -6,6 +6,7 @@ const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 const { expect } = require("chai");
 const {
   deployTestFixture, getTS, setupDelay,
+  OP, forcedTransferReqId,
   addrTo32Bytes, scaleUp,
   zeroAddr, fakeSolanaAddr, fakeSolanaAddr2,
 } = require("./MTokenTestUtils.js");
@@ -20,11 +21,7 @@ function calcMintToReqId(receiverAddr, amt, nonce) {
 }
 
 function calcForcedTransferReqId(from, to, value, data, extraData, nonce) {
-  const req = ethers.AbiCoder.defaultAbiCoder().encode(
-    ["address", "address", "uint256", "bytes", "bytes", "uint256"],
-    [from, to, value, data, extraData, nonce]
-  );
-  return ethers.keccak256(req);
+  return forcedTransferReqId(from, to, value, nonce, data, extraData).reqHash;
 }
 
 describe("MTokenFT", function () {
@@ -52,8 +49,6 @@ describe("MTokenFT", function () {
     for (const {field, initVal, newVal} of testCases) {
       const _Field = field[0].toUpperCase() + field.substring(1);
       const setter = 'set' + _Field;
-      const reqEvent = 'Set' + _Field + 'Request';
-      const eftEvent = 'Set' + _Field + 'Effected';
 
       it("mt." + setter, async function () {
         const { mt, reserveFeed, alice, bob } = await loadFixture(deployTestFixture);
@@ -80,7 +75,8 @@ describe("MTokenFT", function () {
         // first call: queues, emits Request event
         const tx1 = await mt[setter](newVal);
         const ts1 = await getTS(tx1);
-        await expect(tx1).to.emit(mt, reqEvent).withArgs(_initVal, newVal, anyValue);
+        await expect(tx1).to.emit(mt, "DelayedOpRequest")
+          .withArgs(reqId, BigInt(_initVal), BigInt(newVal), anyValue);
         expect(await mt[field]()).to.equal(_initVal);
         expect((await mt.requestMap(reqId)).effectiveTime).to.equal(BigInt(ts1 + delay));
 
@@ -91,7 +87,8 @@ describe("MTokenFT", function () {
 
         // execute after delay, requestMap entry is cleared
         await time.increase(delay + 1);
-        await expect(mt[setter](newVal)).to.emit(mt, eftEvent).withArgs(newVal);
+        await expect(mt[setter](newVal)).to.emit(mt, "DelayedOpEffected")
+          .withArgs(reqId, BigInt(newVal));
         expect(await mt[field]()).to.equal(newVal);
         expect((await mt.requestMap(reqId)).effectiveTime).to.equal(0n);
 
@@ -132,8 +129,7 @@ describe("MTokenFT", function () {
         setupFunc: "disableCcSend",
         actionFunc: "enableCcSend",
         reqId: ethers.keccak256(ethers.toUtf8Bytes("OP_ENABLE_CC_SEND")),
-        reqEvent: "EnableCCSendRequest",
-        eftEvent: "EnableCCSendEffected",
+        eftEvent: "EnableCcSend",
         stateGetter: "ccSendDisabled",
       },
       {
@@ -141,12 +137,11 @@ describe("MTokenFT", function () {
         setupFunc: "pause",
         actionFunc: "unpause",
         reqId: ethers.keccak256(ethers.toUtf8Bytes("OP_UNPAUSE")),
-        reqEvent: "UnpauseRequest",
         eftEvent: "Unpaused",
         stateGetter: "paused",
       },
     ];
-    for (const { name, setupFunc, actionFunc, reqId, reqEvent, eftEvent, stateGetter } of testCases) {
+    for (const { name, setupFunc, actionFunc, reqId, eftEvent, stateGetter } of testCases) {
       it(name, async function () {
         const { mt, operator, alice, bob } = await loadFixture(deployTestFixture);
 
@@ -163,7 +158,7 @@ describe("MTokenFT", function () {
         // first call: queues, emits Request event
         const tx1 = await mt[actionFunc]();
         const ts1 = await getTS(tx1);
-        await expect(tx1).to.emit(mt, reqEvent).withArgs(anyValue);
+        await expect(tx1).to.emit(mt, "DelayedOpRequest").withArgs(reqId, 0, 0, anyValue);
         expect(await mt[stateGetter]()).to.equal(true);
         expect((await mt.requestMap(reqId)).effectiveTime).to.equal(BigInt(ts1 + delay));
 
@@ -174,7 +169,8 @@ describe("MTokenFT", function () {
 
         // execute after delay
         await time.increase(delay + 1);
-        await expect(mt[actionFunc]()).to.emit(mt, eftEvent);
+        await expect(mt[actionFunc]()).to.emit(mt, eftEvent)
+          .and.to.emit(mt, "DelayedOpEffected").withArgs(reqId, 0);
         expect(await mt[stateGetter]()).to.equal(false);
         expect((await mt.requestMap(reqId)).effectiveTime).to.equal(0n);
 
@@ -335,7 +331,7 @@ describe("MTokenFT", function () {
       expect(await mt.paused()).to.equal(true);
 
       // delay=0: first call queues, second call executes
-      await expect(mt.unpause()).to.emit(mt, "UnpauseRequest").withArgs(anyValue);
+      await expect(mt.unpause()).to.emit(mt, "DelayedOpRequest").withArgs(OP("OP_UNPAUSE"), 0, 0, anyValue);
       expect(await mt.paused()).to.equal(true);
       await expect(mt.unpause()).to.emit(mt, "Unpaused");
       expect(await mt.paused()).to.equal(false);
@@ -355,7 +351,7 @@ describe("MTokenFT", function () {
 
       // defense 2: a new pause revokes any pending unpause request
       await mt.connect(operator).pause();
-      await expect(mt.unpause()).to.emit(mt, "UnpauseRequest").withArgs(anyValue);
+      await expect(mt.unpause()).to.emit(mt, "DelayedOpRequest").withArgs(OP("OP_UNPAUSE"), 0, 0, anyValue);
       await time.increase(delay + 1); // request matures but is not executed
 
       // operator pauses again (new incident) — the matured request must not survive
@@ -364,7 +360,7 @@ describe("MTokenFT", function () {
       expect((await mt.requestMap(reqId)).effectiveTime).to.equal(0n);
 
       // owner must go through the full delay again
-      await expect(mt.unpause()).to.emit(mt, "UnpauseRequest").withArgs(anyValue);
+      await expect(mt.unpause()).to.emit(mt, "DelayedOpRequest").withArgs(OP("OP_UNPAUSE"), 0, 0, anyValue);
       expect(await mt.paused()).to.equal(true);
       await expect(mt.unpause())
         .to.be.revertedWithCustomError(mt, "TooEarlyToExecute")
@@ -389,7 +385,7 @@ describe("MTokenFT", function () {
 
       // defense 2: a new disable revokes any pending enable request
       await mt.connect(operator).disableCcSend();
-      await expect(mt.enableCcSend()).to.emit(mt, "EnableCCSendRequest").withArgs(anyValue);
+      await expect(mt.enableCcSend()).to.emit(mt, "DelayedOpRequest").withArgs(OP("OP_ENABLE_CC_SEND"), 0, 0, anyValue);
       await time.increase(delay + 1); // request matures but is not executed
 
       // operator disables again (new incident) — the matured request must not survive
@@ -398,14 +394,14 @@ describe("MTokenFT", function () {
       expect((await mt.requestMap(reqId)).effectiveTime).to.equal(0n);
 
       // owner must go through the full delay again
-      await expect(mt.enableCcSend()).to.emit(mt, "EnableCCSendRequest").withArgs(anyValue);
+      await expect(mt.enableCcSend()).to.emit(mt, "DelayedOpRequest").withArgs(OP("OP_ENABLE_CC_SEND"), 0, 0, anyValue);
       expect(await mt.ccSendDisabled()).to.equal(true);
       await expect(mt.enableCcSend())
         .to.be.revertedWithCustomError(mt, "TooEarlyToExecute")
         .withArgs(reqId);
 
       await time.increase(delay + 1);
-      await expect(mt.enableCcSend()).to.emit(mt, "EnableCCSendEffected");
+      await expect(mt.enableCcSend()).to.emit(mt, "EnableCcSend");
       expect(await mt.ccSendDisabled()).to.equal(false);
     });
 
@@ -681,10 +677,13 @@ describe("MTokenFT", function () {
         .to.be.revertedWithCustomError(mt, "InvalidForcedTransferReceiver")
         .withArgs(owner.address);
 
-      // first call: stage the request
+      // first call: stage the request. The args no longer fit DelayedOpRequest's uint160
+      // slots, so they ride along in DelayedOpExtraData, keyed by the same reqHash.
+      const ft5 = forcedTransferReqId(alice.address, bob.address, 123, 5, "0x123456", "0x12345678");
       await expect(mt.connect(owner).forcedTransfer(alice.address, bob.address, 123, 5, "0x123456", "0x12345678"))
-        .to.emit(mt, "ForcedTransferRequest")
-        .withArgs(alice.address, bob.address, 123, "0x123456", "0x12345678");
+        .to.emit(mt, "DelayedOpExtraData")
+        .withArgs(ft5.reqHash, OP("OP_FORCED_TRANSFER"), ft5.payload)
+        .and.to.emit(mt, "DelayedOpRequest").withArgs(ft5.reqHash, 0, 0, anyValue);
 
       // too early to execute
       const reqHash5 = calcForcedTransferReqId(alice.address, bob.address, 123, "0x123456", "0x12345678", 5);

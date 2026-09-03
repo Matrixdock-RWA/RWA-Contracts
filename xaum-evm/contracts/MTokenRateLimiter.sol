@@ -26,8 +26,9 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter, DelayedRolesUpgra
     uint32 constant GLOBAL_DST_EID = 1;
 
     // delayed operation tags
-    bytes32 constant OP_SET_RATE_LIMIT = keccak256("OP_SET_RATE_LIMIT");
-    bytes32 constant OP_SET_SINGLE_MSG_LIMIT = keccak256("OP_SET_SINGLE_MSG_LIMIT");
+    bytes32 constant OP_SET_RATE_LIMIT       = keccak256("OP_SET_RATE_LIMIT");       // 0xc3c1a960abb6eac44af87be9ee46a080b15c0d3de70ca598dfae0c2e3949385c
+    bytes32 constant OP_SET_SINGLE_MSG_LIMIT = keccak256("OP_SET_SINGLE_MSG_LIMIT"); // 0xeefc3982fcb7ffebc2dc92613272f9999626ab7038977c9e8aa7c443e7e0de6d
+    bytes32 constant OP_ADD_TO_WHITELIST     = keccak256("OP_ADD_TO_WHITELIST");     // 0x10aa1371d861e2f58a9b1412ce604884daa18d7b10d56aced483182df1a2cf34
 
     // mToken address
     /// @custom:oz-upgrades-unsafe-allow state-variable-immutable
@@ -40,12 +41,7 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter, DelayedRolesUpgra
     uint256 public pendingMsgCount;
 
     // events
-    event SetRateLimitRequest(uint256 limit, uint256 window, uint64 et);
-    event SetRateLimitEffected(uint256 limit, uint256 window);
-    event SetSingleMsgLimitRequest(uint256 limit, uint64 et);
-    event SetSingleMsgLimitEffected(uint256 indexed newLimit);
-    event AddToWhitelistRequest(bytes sender, address indexed receiver, uint64 et);
-    event AddToWhitelistEffected(bytes sender, address indexed receiver);
+    event AddedToWhitelist(bytes sender, address indexed receiver);
     event RemovedFromWhitelist(bytes sender, address indexed receiver);
     event RateLimitedMsgRemoved(uint256 indexed index);
     event RateLimitedMsgAdded(
@@ -108,13 +104,11 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter, DelayedRolesUpgra
         if (limit > type(uint128).max || window > type(uint32).max) {
             revert RateLimitTooLarge(limit, window);
         }
+        RateLimiter.RateLimit storage rl = rateLimits[GLOBAL_DST_EID];
+        uint160 _oldVal = uint160(rl.window << 128 | rl.limit);
         uint160 _newVal = uint160(window << 128 | limit);
-        uint64 et = ensureDelay(OP_SET_RATE_LIMIT, _newVal, delay);
-        if (et == 0) {
+        if (ensureDelay(OP_SET_RATE_LIMIT, _oldVal, _newVal, delay)) {
             _setRateLimit(limit, window);
-            emit SetRateLimitEffected(limit, window);
-        } else {
-            emit SetRateLimitRequest(limit, window, et);
         }
     }
 
@@ -139,23 +133,19 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter, DelayedRolesUpgra
         view
         returns (uint256 limit, uint256 window)
     {
-        RateLimiter.RateLimit memory rl = rateLimits[GLOBAL_DST_EID];
+        RateLimiter.RateLimit storage rl = rateLimits[GLOBAL_DST_EID];
         return (rl.limit, rl.window);
     }
 
     // Configure the single message limit for incoming cross-chain token transfers.
     function setSingleMsgLimit(uint256 limit) public onlyOwner {
-        // Assumes limit < 2^160. Holds for any realistic token amount (18 decimals, 
+        // Assumes limit < 2^160. Holds for any realistic token amount (18 decimals,
         // 2^160 ≈ 1.46e30 tokens)
         if (limit > type(uint160).max) {
             revert SingleMsgLimitTooLarge(limit);
         }
-        uint64 et = ensureDelay(OP_SET_SINGLE_MSG_LIMIT, uint160(limit), delay);
-        if (et == 0) {
+        if (ensureDelay(OP_SET_SINGLE_MSG_LIMIT, uint160(singleMsgLimit), uint160(limit), delay)) {
             singleMsgLimit = limit;
-            emit SetSingleMsgLimitEffected(limit);
-        } else {
-            emit SetSingleMsgLimitRequest(limit, et);
         }
     }
 
@@ -168,13 +158,13 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter, DelayedRolesUpgra
         bytes calldata sender,
         address receiver
     ) public onlyOwner {
-        bytes32 reqHash = keccak256(abi.encode(sender, receiver));
-        uint64 et = ensureGovDelay(reqHash, 0);
-        if (et == 0) {
+        bytes32 reqHash = _addToWhitelistReqHash(sender, receiver);
+        if (ensureGovDelay(reqHash, 0, 0)) {
             whitelist[getWhitelistKey(sender, receiver)] = true;
-            emit AddToWhitelistEffected(sender, receiver);
+            emit AddedToWhitelist(sender, receiver);
         } else {
-            emit AddToWhitelistRequest(sender, receiver, et);
+            emit DelayedOpExtraData(reqHash, OP_ADD_TO_WHITELIST,
+                abi.encode(sender, receiver));
         }
     }
 
@@ -182,7 +172,14 @@ contract MTokenRateLimiter is RateLimiter, IMTokenRateLimiter, DelayedRolesUpgra
         bytes calldata sender,
         address receiver
     ) public onlyOwnerOrRevoker {
-        revoke(keccak256(abi.encode(sender, receiver)));
+        revoke(_addToWhitelistReqHash(sender, receiver));
+    }
+
+    function _addToWhitelistReqHash(
+        bytes calldata sender,
+        address receiver
+    ) private pure returns (bytes32) {
+        return keccak256(abi.encode(OP_ADD_TO_WHITELIST, sender, receiver));
     }
 
     // Remove a (sender, receiver) pair from the whitelist immediately.

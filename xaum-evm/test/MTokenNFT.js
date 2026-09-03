@@ -91,10 +91,11 @@ describe("BullionNFT", function () {
       expect(await nft.packSigner()).to.equal(initVal);
       expect(await getEt()).to.equal(0n);
 
-      // first call: queues, emits SetPackSignerRequest
+      // first call: queues, emits the generic DelayedOpRequest
       const tx1 = await _c.setPackSigner(newVal);
       const ts1 = await getTS(tx1);
-      await expect(tx1).to.emit(nft, "SetPackSignerRequest").withArgs(initVal, newVal, anyValue);
+      await expect(tx1).to.emit(nft, "DelayedOpRequest")
+        .withArgs(OP_SET_PACK_SIGNER, BigInt(initVal), BigInt(newVal), anyValue);
       expect(await nft.packSigner()).to.equal(initVal);
       expect(await getEt()).to.equal(ts1 + delay);
 
@@ -105,7 +106,8 @@ describe("BullionNFT", function () {
 
       // execute after delay — entry deleted after execution
       await time.increase(delay + 1);
-      await expect(_c.setPackSigner(newVal)).to.emit(nft, "SetPackSignerEffected").withArgs(newVal);
+      await expect(_c.setPackSigner(newVal)).to.emit(nft, "DelayedOpEffected")
+        .withArgs(OP_SET_PACK_SIGNER, BigInt(newVal));
       expect(await nft.packSigner()).to.equal(newVal);
       expect(await getEt()).to.equal(0n);
 

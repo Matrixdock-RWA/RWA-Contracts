@@ -425,6 +425,7 @@ describe("BullionMinter", function () {
         it("setGovDelay works with the zero operational delay", async function () {
             const { minter, alice } = await loadFixture(deployTestFixture);
             const DAY = 24 * 3600;
+            const OP_SET_GOV_DELAY = ethers.keccak256(ethers.toUtf8Bytes("OP_SET_GOV_DELAY"));
 
             await expect(minter.connect(alice).setGovDelay(DAY))
                 .to.be.revertedWithCustomError(minter, "OwnableUnauthorizedAccount")
@@ -432,12 +433,12 @@ describe("BullionMinter", function () {
 
             // first call requests (govDelay currently 0)
             await expect(minter.setGovDelay(DAY))
-                .to.emit(minter, "SetGovDelayRequest").withArgs(0, DAY, anyValue);
+                .to.emit(minter, "DelayedOpRequest").withArgs(OP_SET_GOV_DELAY, 0, DAY, anyValue);
             expect(await minter.getGovDelay()).to.equal(0);
 
             // second call effects it
             await expect(minter.setGovDelay(DAY))
-                .to.emit(minter, "SetGovDelayEffected").withArgs(DAY);
+                .to.emit(minter, "DelayedOpEffected").withArgs(OP_SET_GOV_DELAY, DAY);
             expect(await minter.getGovDelay()).to.equal(DAY);
         });
     });

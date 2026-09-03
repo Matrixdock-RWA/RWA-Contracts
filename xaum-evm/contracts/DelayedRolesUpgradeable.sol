@@ -51,12 +51,8 @@ abstract contract DelayedRolesUpgradeable is DelayedUpgradeable {
 
     function setDelay(uint64 _delay) public onlyOwner {
         checkDelay(_delay);
-        uint64 et = ensureDelay(OP_SET_DELAY, _delay, delay);
-        if (et == 0) {
+        if (ensureDelay(OP_SET_DELAY, delay, _delay, delay)) {
             delay = _delay;
-            emit SetDelayEffected(_delay);
-        } else {
-            emit SetDelayRequest(delay, _delay, et);
         }
     }
 
@@ -66,21 +62,18 @@ abstract contract DelayedRolesUpgradeable is DelayedUpgradeable {
 
     function setRevoker(address _revoker) public onlyOwner {
         _checkZeroAddress(_revoker);
-        uint64 et = ensureGovDelay(OP_SET_REVOKER, uint160(_revoker));
-        if (et == 0) {
+        if (ensureGovDelay(OP_SET_REVOKER, uint160(revoker), uint160(_revoker))) {
             revert NotNewRevoker(msg.sender);
         }
-        emit SetRevokerRequest(revoker, _revoker, et);
     }
 
     function acceptRevoker() public {
         address newRevoker = msg.sender;
-        uint64 et = ensureGovDelay(OP_SET_REVOKER, uint160(newRevoker));
-        if (et > 0) {
+        if (ensureGovDelay(OP_SET_REVOKER, uint160(revoker), uint160(newRevoker))) {
+            revoker = newRevoker;
+        } else {
             revert NoPendingRequest(OP_SET_REVOKER);
         }
-        revoker = newRevoker;
-        emit SetRevokerEffected(newRevoker);
     }
 
     function revokeNextRevoker() public onlyOwner {
@@ -89,12 +82,8 @@ abstract contract DelayedRolesUpgradeable is DelayedUpgradeable {
 
     function setOperator(address _operator) public onlyOwner {
         _checkZeroAddress(_operator);
-        uint64 et = ensureDelay(OP_SET_OPERATOR, uint160(_operator), delay);
-        if (et == 0) {
+        if (ensureDelay(OP_SET_OPERATOR, uint160(operator), uint160(_operator), delay)) {
             operator = _operator;
-            emit SetOperatorEffected(_operator);
-        } else {
-            emit SetOperatorRequest(operator, _operator, et);
         }
     }
 

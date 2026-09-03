@@ -115,20 +115,8 @@ contract MToken is MTokenBase, ICCClient {
     bytes32 constant OP_UNPAUSE                      = keccak256("OP_UNPAUSE");                      // 0x19aebff3bbcef323e5c760a3ed420922e4d158f9d2c6e69bda4f540960d86e97
     bytes32 constant OP_CC_PROCESS_RATE_LIMITED_MSG  = keccak256("OP_CC_PROCESS_RATE_LIMITED_MSG");  // 0x81e6015855d4c8f939048e3993d674969d59fa69958ee3faff23afeb0e5ce58d
     bytes32 constant OP_CC_DISCARD_RATE_LIMITED_MSG  = keccak256("OP_CC_DISCARD_RATE_LIMITED_MSG");  // 0x22b4483527e4f6d017f96b7dbe00af387783d2ee104e87c1aaadeb61728b5ade
+    bytes32 constant OP_FORCED_TRANSFER              = keccak256("OP_FORCED_TRANSFER");              // 0xf7167abf85ccefccadcb37f4a49a61eb06a3d3f90974234c173883e381affde5
 
-    event SetMessengerRequest(address oldAddr, address newAddr, uint64 et);
-    event SetMessengerEffected(address newAddr);
-    event SetRateLimiterRequest(address oldAddr, address newAddr, uint64 et);
-    event SetRateLimiterEffected(address newAddr);
-    event SetForcedTransferReceiverRequest(address oldAddr, address newAddr, uint64 et);
-    event SetForcedTransferReceiverEffected(address newAddr);
-    event EnableCCSendRequest(uint64 et);
-    event EnableCCSendEffected();
-    event RateLimitedMsgProcessRequest(uint256 index, uint64 et);
-    event RateLimitedMsgProcessEffected(uint256 index);
-    event RateLimitedMsgDiscardRequest(uint256 index, uint64 et);
-    event RateLimitedMsgDiscardEffected(uint256 index);
-    event UnpauseRequest(uint64 et);
     event BlockPlaced(address indexed _user);
     event BlockReleased(address indexed _user);
     event CCSendToken(address indexed sender, bytes receiver, uint256 value);
@@ -140,14 +128,8 @@ contract MToken is MTokenBase, ICCClient {
     event Paused(address indexed _userAddress);
     event Unpaused(address indexed _userAddress); // intentionally named Unpaused (not UnpauseEffected) to match ERC3643
     event DisableCcSend();
+    event EnableCcSend();
     event SetNFTContract(address nft);
-    event ForcedTransferRequest(
-        address indexed _from, 
-        address indexed _to, 
-        uint256 _value, 
-        bytes _data, 
-        bytes _operatorData
-    );
     event ForcedTransfer(
         address indexed _from,
         address indexed _to,
@@ -287,12 +269,9 @@ contract MToken is MTokenBase, ICCClient {
         if (!ccSendDisabled) {
             revert CcSendNotDisabled();
         }
-        uint64 et = ensureDelay(OP_ENABLE_CC_SEND, 0, delay);
-        if (et == 0) {
+        if (ensureDelay(OP_ENABLE_CC_SEND, 0, 0, delay)) {
             ccSendDisabled = false;
-            emit EnableCCSendEffected();
-        } else {
-            emit EnableCCSendRequest(et);
+            emit EnableCcSend();
         }
     }
 
@@ -313,42 +292,30 @@ contract MToken is MTokenBase, ICCClient {
         if (!paused) {
             revert NotPaused();
         }
-        uint64 et = ensureDelay(OP_UNPAUSE, 0, delay);
-        if (et == 0) {
+        if (ensureDelay(OP_UNPAUSE, 0, 0, delay)) {
             paused = false;
             emit Unpaused(msg.sender);
-        } else {
-            emit UnpauseRequest(et);
         }
     }
 
     function setDelay(uint64 _delay) public onlyOwner {
         checkDelay(_delay);
-        uint64 et = ensureGovDelay(OP_SET_DELAY, _delay);
-        if (et == 0) {
+        if (ensureGovDelay(OP_SET_DELAY, delay, _delay)) {
             delay = _delay;
-            emit SetDelayEffected(_delay);
-        } else {
-            emit SetDelayRequest(delay, _delay, et);
         }
     }
 
     function setMessenger(address _messenger) public onlyOwner {
         _checkZeroAddress(_messenger);
-        uint64 et = ensureGovDelay(OP_SET_MESSENGER, uint160(_messenger));
-        if (et == 0) {
+        if (ensureGovDelay(OP_SET_MESSENGER, uint160(messenger), uint160(_messenger))) {
             messenger = _messenger;
-            emit SetMessengerEffected(_messenger);
-        } else {
-            emit SetMessengerRequest(messenger, _messenger, et);
         }
     }
 
     // note: allows setting rateLimiter to zero address by design
     function setRateLimiter(address _rateLimiter) public onlyOwner {
         // _checkZeroAddress(_rateLimiter);
-        uint64 et = ensureGovDelay(OP_SET_RATE_LIMITER, uint160(_rateLimiter));
-        if (et == 0) {
+        if (ensureGovDelay(OP_SET_RATE_LIMITER, uint160(rateLimiter), uint160(_rateLimiter))) {
             // The old rate limiter's queue can only be drained through this MToken
             // (removeRateLimitedMsg is onlyMToken). Refuse to detach/replace it while
             // messages are still queued, otherwise those tokens would be orphaned.
@@ -358,9 +325,6 @@ contract MToken is MTokenBase, ICCClient {
                 revert PendingRateLimitedMsgsExist();
             }
             rateLimiter = _rateLimiter;
-            emit SetRateLimiterEffected(_rateLimiter);
-        } else {
-            emit SetRateLimiterRequest(rateLimiter, _rateLimiter, et);
         }
     }
 
@@ -375,42 +339,31 @@ contract MToken is MTokenBase, ICCClient {
 
     function setRevoker(address _revoker) public onlyOwner {
         _checkZeroAddress(_revoker);
-        uint64 et = ensureGovDelay(OP_SET_REVOKER, uint160(_revoker));
-        if (et == 0) {
+        if (ensureGovDelay(OP_SET_REVOKER, uint160(revoker), uint160(_revoker))) {
             revert NotNewRevoker(msg.sender);
         }
-        emit SetRevokerRequest(revoker, _revoker, et);
     }
 
     function acceptRevoker() public {
         address newRevoker = msg.sender;
-        uint64 et = ensureGovDelay(OP_SET_REVOKER, uint160(newRevoker));
-        if (et > 0) {
+        if (ensureGovDelay(OP_SET_REVOKER, uint160(revoker), uint160(newRevoker))) {
+            revoker = newRevoker;
+        } else {
             revert NoPendingRequest(OP_SET_REVOKER);
         }
-        revoker = newRevoker;
-        emit SetRevokerEffected(newRevoker);
     }
 
     function setOperator(address _operator) public onlyOwner {
         _checkZeroAddress(_operator);
-        uint64 et = ensureDelay(OP_SET_OPERATOR, uint160(_operator), delay);
-        if (et == 0) {
+        if (ensureDelay(OP_SET_OPERATOR, uint160(operator), uint160(_operator), delay)) {
             operator = _operator;
-            emit SetOperatorEffected(_operator);
-        } else {
-            emit SetOperatorRequest(operator, _operator, et);
         }
     }
 
     function setForcedTransferReceiver(address _receiver) public onlyOwner {
         _checkZeroAddress(_receiver);
-        uint64 et = ensureGovDelay(OP_SET_FORCED_TRANSFER_RECEIVER, uint160(_receiver));
-        if (et == 0) {
+        if (ensureGovDelay(OP_SET_FORCED_TRANSFER_RECEIVER, uint160(forcedTransferReceiver), uint160(_receiver))) {
             forcedTransferReceiver = _receiver;
-            emit SetForcedTransferReceiverEffected(_receiver);
-        } else {
-            emit SetForcedTransferReceiverRequest(forcedTransferReceiver, _receiver, et);
         }
     }
 
@@ -476,8 +429,7 @@ contract MToken is MTokenBase, ICCClient {
         uint256 nonce
     ) public onlyOperatorAndNft whenNotPaused returns (bool) {
         bytes32 reqHash = keccak256(abi.encode(receiver, amount, nonce));
-        uint64 et = ensureDelay(reqHash, 0, delay);
-        if (et == 0) {
+        if (ensureDelay(reqHash, 0, 0, delay)) {
             _checkMintBudget(amount);
             mintBudget = (mintBudget - amount).toUint112();
             _mint(receiver, amount);
@@ -553,13 +505,13 @@ contract MToken is MTokenBase, ICCClient {
             revert InvalidForcedTransferReceiver(_to);
         }
 
-        bytes32 reqHash = keccak256(abi.encode(_from, _to, _value, _data, _extraData, _nonce));
-        uint64 et = ensureDelay(reqHash, 0, delay);
-        if (et == 0) {
+        bytes memory data = abi.encode(_from, _to, _value, _nonce, _data, _extraData);
+        bytes32 reqHash = keccak256(abi.encode(OP_FORCED_TRANSFER, data));
+        if (ensureDelay(reqHash, 0, 0, delay)) {
             _transfer(_from, _to, _value);
             emit ForcedTransfer(_from, _to, _value, _data, _extraData);
         } else {
-            emit ForcedTransferRequest(_from, _to, _value, _data, _extraData);
+            emit DelayedOpExtraData(reqHash, OP_FORCED_TRANSFER, data);
         }
     }
 
@@ -647,7 +599,7 @@ contract MToken is MTokenBase, ICCClient {
         }
         address receiver = address(bytes20(receiverBytes));
         value = convertToLocalDecimals(value);
-        if (rateLimiter == address(0) || 
+        if (rateLimiter == address(0) ||
                 IMTokenRateLimiter(rateLimiter).checkAndUpdateRateLimit(receiver, value, senderBytes)) {
 
             _mint(receiver, value);
@@ -677,31 +629,17 @@ contract MToken is MTokenBase, ICCClient {
         }
     }
 
-    // manually deliver a queued rate-limited cross-chain token message
-    // note: allows minting to blocked receiver by design (same as ccReceiveToken)
-    // delayed via the normal `delay` (two-call pattern, same as mintTo)
-    //
-    // reqHash is bound to both `rateLimiter` and the message's current existence:
-    // binding to `rateLimiter` stops a request from a since-replaced rate limiter
-    // (see setRateLimiter) from being matured against a same-numbered message in a
-    // new one; requiring the message to exist at request time stops the operator
-    // from pre-registering a request for a not-yet-queued index and letting it
-    // mature in advance, then instantly delivering whatever real message eventually
-    // lands there with the delay never having actually applied to it. Once queued,
-    // a message's content at a given index never changes before it's removed (only
-    // `removeRateLimitedMsg` mutates a slot, and removed slots are never reused), so
-    // no further binding to the message content itself is needed.
+    // manually deliver a queued rate-limited message; delayed via `delay`, and mints to a
+    // blocked receiver by design (same as ccReceiveToken). reqHash binds `rateLimiter` so a
+    // request can't mature against a same-numbered message in a replacement one, and the
+    // existence check stops pre-maturing a request for an index nothing has queued yet.
     function ccProcessRateLimitedMsg(uint256 index) public onlyOperator whenNotPaused {
         IMTokenRateLimiter(rateLimiter).checkRateLimitedMsg(index);
         bytes32 reqHash = keccak256(abi.encode(OP_CC_PROCESS_RATE_LIMITED_MSG, rateLimiter, index));
-        uint64 et = ensureDelay(reqHash, 0, delay);
-        if (et == 0) {
+        if (ensureDelay(reqHash, 0, uint160(index), delay)) {
             (address receiver, uint256 value, bytes memory sender) = IMTokenRateLimiter(rateLimiter).removeRateLimitedMsg(index);
             _mint(receiver, value);
             emit CCReceiveToken(sender, receiver, value);
-            emit RateLimitedMsgProcessEffected(index);
-        } else {
-            emit RateLimitedMsgProcessRequest(index, et);
         }
     }
 
@@ -713,12 +651,8 @@ contract MToken is MTokenBase, ICCClient {
     function ccDiscardRateLimitedMsg(uint256 index) public onlyOperator {
         IMTokenRateLimiter(rateLimiter).checkRateLimitedMsg(index);
         bytes32 reqHash = keccak256(abi.encode(OP_CC_DISCARD_RATE_LIMITED_MSG, rateLimiter, index));
-        uint64 et = ensureDelay(reqHash, 0, delay);
-        if (et == 0) {
+        if (ensureDelay(reqHash, 0, uint160(index), delay)) {
             IMTokenRateLimiter(rateLimiter).removeRateLimitedMsg(index);
-            emit RateLimitedMsgDiscardEffected(index);
-        } else {
-            emit RateLimitedMsgDiscardRequest(index, et);
         }
     }
 

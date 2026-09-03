@@ -40,8 +40,6 @@ contract XAUMSwapPool is DelayedRolesUpgradeable {
     mapping(address => bool) public tokenWhiteList;
 
     event Swap(address indexed user, address tokenIn, uint amountIn, uint amountOut);
-    event SetTokenHolderEffected(address newAddr);
-    event SetTokenHolderRequest(address oldAddr, address newAddr, uint64 et);
     event Withdraw(address indexed token, address receiver, uint amount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -91,12 +89,8 @@ contract XAUMSwapPool is DelayedRolesUpgradeable {
 
     function setTokenHolder(address newHolder) public onlyOwner {
         _checkZeroAddress(newHolder);
-        uint64 et = ensureDelay(OP_SET_TOKEN_HOLDER, uint160(newHolder), delay);
-        if (et == 0) {
+        if (ensureDelay(OP_SET_TOKEN_HOLDER, uint160(tokenHolder), uint160(newHolder), delay)) {
             tokenHolder = newHolder;
-            emit SetTokenHolderEffected(newHolder);
-        } else {
-            emit SetTokenHolderRequest(tokenHolder, newHolder, et);
         }
     }
 

@@ -54,19 +54,13 @@ abstract contract TimeLockerUpgradeable is Initializable, OwnableUpgradeable {
         }
     }
 
-    event RequestRevoked(bytes32 indexed reqHash);
     event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner, uint64 etNextOwner);
     event OwnershipTransferRevoked(address indexed pendingOwner);
-    event SetGovDelayRequest(uint64 oldDelay, uint64 newDelay, uint64 et);
-    event SetGovDelayEffected(uint64 newDelay);
 
-    // some common events used by sub-contracts
-    event SetDelayRequest(uint64 oldDelay, uint64 newDelay, uint64 et);
-    event SetDelayEffected(uint64 newDelay);
-    event SetRevokerRequest(address oldAddr, address newAddr, uint64 et);
-    event SetRevokerEffected(address newAddr);
-    event SetOperatorRequest(address oldAddr, address newAddr, uint64 et);
-    event SetOperatorEffected(address newAddr);
+    event DelayedOpRequest(bytes32 indexed reqHash, uint160 oldVal, uint160 newVal, uint64 et);
+    event DelayedOpEffected(bytes32 indexed reqHash, uint160 newVal);
+    event DelayedOpExtraData(bytes32 indexed reqHash, bytes32 indexed opId, bytes data);
+    event RequestRevoked(bytes32 indexed reqHash);
 
     error TooEarlyToExecute(bytes32 reqHash);
     error RequestArgsMismatch(bytes32 reqHash);
@@ -115,37 +109,41 @@ abstract contract TimeLockerUpgradeable is Initializable, OwnableUpgradeable {
 
     function ensureDelay(
         bytes32 reqHash,
+        uint160 oldVal,
         uint160 newVal,
         uint64 delay
-    ) internal returns (uint64 et) {
+    ) internal returns (bool effected) {
         TimeLockerStorage storage $ = _getTimeLockerStorage();
-        return _ensureDelay($._requestMap, reqHash, newVal, delay);
+        return _ensureDelay($._requestMap, reqHash, oldVal, newVal, delay);
     }
 
     function ensureGovDelay(
         bytes32 reqHash,
+        uint160 oldVal,
         uint160 newVal
-    ) internal returns (uint64 et) {
+    ) internal returns (bool effected) {
         TimeLockerStorage storage $ = _getTimeLockerStorage();
-        return _ensureDelay($._requestMap, reqHash, newVal, $._delay);
+        return _ensureDelay($._requestMap, reqHash, oldVal, newVal, $._delay);
     }
 
     function _ensureDelay(
         mapping(bytes32 requestHash => RequestInfo requestInfo) storage _requestMap,
         bytes32 reqHash,
+        uint160 oldVal,
         uint160 newVal,
         uint64 delay
-    ) private returns (uint64 et) {
+    ) private returns (bool effected) {
         RequestInfo storage reqInfo = _requestMap[reqHash];
         uint64 storedEt = reqInfo.effectiveTime;
         uint160 storedVal = reqInfo.newValue; // same slot as storedEt, one SLOAD
 
         if (storedEt == 0) {
             // add a new record
-            et = uint64(block.timestamp) + delay;
+            uint64 et = uint64(block.timestamp) + delay;
             reqInfo.effectiveTime = et;
             reqInfo.newValue = newVal;
-            return et;
+            emit DelayedOpRequest(reqHash, oldVal, newVal, et);
+            return false;
         }
 
         // check delay & newValue
@@ -157,7 +155,8 @@ abstract contract TimeLockerUpgradeable is Initializable, OwnableUpgradeable {
         }
 
         delete _requestMap[reqHash];
-        // et stays 0 -> effected
+        emit DelayedOpEffected(reqHash, newVal);
+        return true;
     }
 
     // Idempotent on purpose: revoking is a safety action, so it must never fail —
@@ -233,12 +232,8 @@ abstract contract TimeLockerUpgradeable is Initializable, OwnableUpgradeable {
         TimeLockerStorage storage $ = _getTimeLockerStorage();
         uint64 oldGovDelay = $._delay;
 
-        uint64 et = _ensureDelay($._requestMap, OP_SET_GOV_DELAY, newGovDelay, oldGovDelay);
-        if (et == 0) {
+        if (_ensureDelay($._requestMap, OP_SET_GOV_DELAY, oldGovDelay, newGovDelay, oldGovDelay)) {
             $._delay = newGovDelay;
-            emit SetGovDelayEffected(newGovDelay);
-        } else {
-            emit SetGovDelayRequest(oldGovDelay, newGovDelay, et);
         }
     }
 

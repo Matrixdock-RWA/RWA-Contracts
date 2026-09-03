@@ -66,10 +66,10 @@ describe("MTokenRoles", function () {
 
         // govDelay=0: first call requests, second call executes
         await expect(_c.setGovDelay(DAY))
-          .to.emit(_c, "SetGovDelayRequest").withArgs(0, DAY, anyValue);
+          .to.emit(_c, "DelayedOpRequest").withArgs(OP.govDelay, 0, DAY, anyValue);
         expect(await _c.getGovDelay()).to.equal(0);
         await expect(_c.setGovDelay(DAY))
-          .to.emit(_c, "SetGovDelayEffected").withArgs(DAY);
+          .to.emit(_c, "DelayedOpEffected").withArgs(OP.govDelay, DAY);
         expect(await _c.getGovDelay()).to.equal(DAY);
 
         // now time-locked: second call while pending reverts
@@ -91,14 +91,14 @@ describe("MTokenRoles", function () {
         await _c.setGovDelay(2 * DAY);
         await time.increase(DAY + 1);
         await expect(_c.setGovDelay(2 * DAY))
-          .to.emit(_c, "SetGovDelayEffected").withArgs(2 * DAY);
+          .to.emit(_c, "DelayedOpEffected").withArgs(OP.govDelay, 2 * DAY);
         expect(await _c.getGovDelay()).to.equal(2 * DAY);
 
         // exactly MAX_GOV_DELAY (7d) is allowed
         await _c.setGovDelay(WEEK);
         await time.increase(2 * DAY + 1);
         await expect(_c.setGovDelay(WEEK))
-          .to.emit(_c, "SetGovDelayEffected").withArgs(WEEK);
+          .to.emit(_c, "DelayedOpEffected").withArgs(OP.govDelay, WEEK);
         expect(await _c.getGovDelay()).to.equal(WEEK);
 
         // make the operational delay nonzero (1h) so a govDelay/delay mix-up
@@ -114,7 +114,7 @@ describe("MTokenRoles", function () {
         // neither the operational delay (1h) nor the new value (2d) opens the lock
         const tx2 = await _c.setGovDelay(2 * DAY);
         const ts2 = await getTS(tx2);
-        await expect(tx2).to.emit(_c, "SetGovDelayRequest").withArgs(WEEK, 2 * DAY, ts2 + WEEK);
+        await expect(tx2).to.emit(_c, "DelayedOpRequest").withArgs(OP.govDelay, WEEK, 2 * DAY, ts2 + WEEK);
         expect((await _c.requestMap(OP.govDelay)).effectiveTime).to.equal(BigInt(ts2 + WEEK));
 
         await time.increase(HOUR + 1); // past the operational delay
@@ -125,7 +125,7 @@ describe("MTokenRoles", function () {
           .to.be.revertedWithCustomError(_c, "TooEarlyToExecute").withArgs(OP.govDelay);
         await time.increase(WEEK); // past the old govDelay
         await expect(_c.setGovDelay(2 * DAY))
-          .to.emit(_c, "SetGovDelayEffected").withArgs(2 * DAY);
+          .to.emit(_c, "DelayedOpEffected").withArgs(OP.govDelay, 2 * DAY);
         expect(await _c.getGovDelay()).to.equal(2 * DAY);
       });
 
@@ -158,19 +158,19 @@ describe("MTokenRoles", function () {
         // delay=0: two calls execute (mt waits out govDelay in between)
         const gate = isMToken ? DAY : HOUR;
         await expect(_c.setDelay(HOUR))
-          .to.emit(_c, "SetDelayRequest").withArgs(0, HOUR, anyValue);
+          .to.emit(_c, "DelayedOpRequest").withArgs(OP.delay, 0, HOUR, anyValue);
         expect(await _c.delay()).to.equal(0);
         if (isMToken) {
           await time.increase(DAY + 1);
         }
         await expect(_c.setDelay(HOUR))
-          .to.emit(_c, "SetDelayEffected").withArgs(HOUR);
+          .to.emit(_c, "DelayedOpEffected").withArgs(OP.delay, HOUR);
         expect(await _c.delay()).to.equal(HOUR);
 
         // now time-locked: request, value not yet applied
         const tx1 = await _c.setDelay(2 * HOUR);
         const ts1 = await getTS(tx1);
-        await expect(tx1).to.emit(_c, "SetDelayRequest").withArgs(HOUR, 2 * HOUR, anyValue);
+        await expect(tx1).to.emit(_c, "DelayedOpRequest").withArgs(OP.delay, HOUR, 2 * HOUR, anyValue);
         expect(await _c.delay()).to.equal(HOUR);
         expect((await _c.requestMap(OP.delay)).effectiveTime).to.equal(BigInt(ts1 + gate));
 
@@ -189,7 +189,7 @@ describe("MTokenRoles", function () {
         await _c.setDelay(2 * HOUR);
         await time.increase(gate + 1);
         await expect(_c.setDelay(2 * HOUR))
-          .to.emit(_c, "SetDelayEffected").withArgs(2 * HOUR);
+          .to.emit(_c, "DelayedOpEffected").withArgs(OP.delay, 2 * HOUR);
         expect(await _c.delay()).to.equal(2 * HOUR);
 
         // isolate the MAX_DELAY branch: with govDelay at 3d the govDelay
@@ -234,10 +234,10 @@ describe("MTokenRoles", function () {
 
         // delay=0: first call requests, second call executes
         await expect(_c.setOperator(bob.address))
-          .to.emit(_c, "SetOperatorRequest").withArgs(initOperator, bob.address, anyValue);
+          .to.emit(_c, "DelayedOpRequest").withArgs(OP.operator, BigInt(initOperator), BigInt(bob.address), anyValue);
         expect(await _c.operator()).to.equal(initOperator);
         await expect(_c.setOperator(bob.address))
-          .to.emit(_c, "SetOperatorEffected").withArgs(bob.address);
+          .to.emit(_c, "DelayedOpEffected").withArgs(OP.operator, BigInt(bob.address));
         expect(await _c.operator()).to.equal(bob.address);
 
         // activate the time-lock (operator changes are gated by delay;
@@ -253,7 +253,7 @@ describe("MTokenRoles", function () {
         // now time-locked: request, value not yet applied
         const tx1 = await _c.setOperator(alice.address);
         const ts1 = await getTS(tx1);
-        await expect(tx1).to.emit(_c, "SetOperatorRequest").withArgs(bob.address, alice.address, anyValue);
+        await expect(tx1).to.emit(_c, "DelayedOpRequest").withArgs(OP.operator, BigInt(bob.address), BigInt(alice.address), anyValue);
         expect(await _c.operator()).to.equal(bob.address);
         expect((await _c.requestMap(OP.operator)).effectiveTime).to.equal(BigInt(ts1 + HOUR));
 
@@ -271,7 +271,7 @@ describe("MTokenRoles", function () {
         await _c.setOperator(alice.address);
         await time.increase(HOUR + 1);
         await expect(_c.setOperator(alice.address))
-          .to.emit(_c, "SetOperatorEffected").withArgs(alice.address);
+          .to.emit(_c, "DelayedOpEffected").withArgs(OP.operator, BigInt(alice.address));
         expect(await _c.operator()).to.equal(alice.address);
       });
 
@@ -305,7 +305,7 @@ describe("MTokenRoles", function () {
         // request: ok, emits Request event, value not yet applied
         const tx1 = await _c.setRevoker(bob.address);
         const ts1 = await getTS(tx1);
-        await expect(tx1).to.emit(_c, "SetRevokerRequest").withArgs(initRevoker, bob.address, anyValue);
+        await expect(tx1).to.emit(_c, "DelayedOpRequest").withArgs(OP.revoker, BigInt(initRevoker), BigInt(bob.address), anyValue);
         expect(await _c.revoker()).to.equal(initRevoker);
         expect(await getEt()).to.equal(BigInt(ts1 + DAY));
 
@@ -331,8 +331,8 @@ describe("MTokenRoles", function () {
 
         // accept: takes effect, entry deleted after execution
         await expect(_c.connect(bob).acceptRevoker())
-          .to.emit(_c, "SetRevokerEffected")
-          .withArgs(bob.address);
+          .to.emit(_c, "DelayedOpEffected")
+          .withArgs(OP.revoker, BigInt(bob.address));
         expect(await _c.revoker()).to.equal(bob.address);
         expect(await getEt()).to.equal(0n);
 

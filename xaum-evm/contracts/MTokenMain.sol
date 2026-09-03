@@ -11,11 +11,6 @@ contract MTokenMain is MToken {
 
     uint256 constant ORACLE_OFFLINE_THRESHOLD = 2 days;
 
-    event SetReserveFeedRequest(address oldAddr, address newAddr, uint64 et);
-    event SetReserveFeedEffected(address newAddr);
-    event SetFallbackFeedRequest(address oldAddr, address newAddr, uint64 et);
-    event SetFallbackFeedEffected(address newAddr);
-
     error ReserveNotEnough(int max, int amount);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
@@ -46,23 +41,15 @@ contract MTokenMain is MToken {
 
     function setReserveFeed(address addr) public onlyOwner {
         _checkZeroAddress(addr);
-        uint64 et = ensureGovDelay(OP_SET_RESERVE_FEED, uint160(addr));
-        if (et == 0) {
+        if (ensureGovDelay(OP_SET_RESERVE_FEED, uint160(reserveFeed), uint160(addr))) {
             reserveFeed = addr;
-            emit SetReserveFeedEffected(addr);
-        } else {
-            emit SetReserveFeedRequest(reserveFeed, addr, et);
         }
     }
 
     function setFallbackFeed(address addr) public onlyOwner {
         _checkZeroAddress(addr);
-        uint64 et = ensureGovDelay(OP_SET_FALLBACK_FEED, uint160(addr));
-        if (et == 0) {
+        if (ensureGovDelay(OP_SET_FALLBACK_FEED, uint160(fallbackFeed), uint160(addr))) {
             fallbackFeed = addr;
-            emit SetFallbackFeedEffected(addr);
-        } else {
-            emit SetFallbackFeedRequest(fallbackFeed, addr, et);
         }
     }
 

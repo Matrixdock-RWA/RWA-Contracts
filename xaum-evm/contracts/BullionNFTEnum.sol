@@ -37,8 +37,6 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
             "Pack(address owner,uint256 amount,uint256 bullion,uint256 deadline)"
         );
 
-    event SetPackSignerRequest(address oldAddr, address newAddr, uint64 et);
-    event SetPackSignerEffected(address newAddr);
     event LockPlaced(uint indexed _user, bytes reason);
     event LockReleased(uint indexed _user);
 
@@ -148,12 +146,8 @@ contract BullionEnumerableNFT is BullionEnumerableNFTBase {
     function setPackSigner(address addr) public onlyOperator {
         _checkZeroAddress(addr);
         uint64 delay = IMToken(mtokenContract).delay();
-        uint64 et = ensureDelay(OP_SET_PACK_SIGNER, uint160(addr), delay);
-        if (et == 0) {
+        if (ensureDelay(OP_SET_PACK_SIGNER, uint160(packSigner), uint160(addr), delay)) {
             packSigner = addr;
-            emit SetPackSignerEffected(addr);
-        } else {
-            emit SetPackSignerRequest(packSigner, addr, et);
         }
     }
 
