@@ -677,23 +677,6 @@ describe("MTokenFT", function () {
         .withArgs(alice.address, owner.address, 1234);
     });
 
-    it("multiTransfer", async function () {
-      const { mt, operator, alice } = await loadFixture(deployTestFixture);
-      await mt.connect(operator).increaseMintBudget(50000);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-      await mt.connect(operator).mintTo(alice.address, 20000, 0);
-
-      const a1 = "0x00000000000000000000000000000000000000a1";
-      const a2 = "0x00000000000000000000000000000000000000a2";
-      const a3 = "0x00000000000000000000000000000000000000a3";
-
-      await expect(mt.connect(alice).multiTransfer([a1, a2, a3], [1, 2, 3, 4]))
-        .to.be.revertedWithCustomError(mt, "ArgsMismatch");
-
-      await expect(mt.connect(alice).multiTransfer([a1, a2, a3], [123, 234, 345]))
-        .to.changeTokenBalances(mt, [alice.address, a1, a2, a3], [-702, 123, 234, 345])
-    });
-
     it("forcedTransfer", async function () {
       const { mt, owner, operator, alice, bob } = await loadFixture(deployTestFixture);
       const delay = 10000;

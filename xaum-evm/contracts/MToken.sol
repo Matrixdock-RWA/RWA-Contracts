@@ -171,7 +171,6 @@ contract MToken is MTokenBase, ICCClient {
     error InvalidSrcTxHash(uint256 length);
     error TransferToContract();
     error ZeroValue();
-    error ArgsMismatch();
     error CcSendDisabled();
     error CcSendNotDisabled();
     error InvalidMsg(uint256 tag);
@@ -559,19 +558,6 @@ contract MToken is MTokenBase, ICCClient {
         }
         _checkBlocked(_sender);
         return super.transferFrom(_sender, _recipient, _amount);
-    }
-
-    // note: allows transfer to blocked recipient by design
-    function multiTransfer(
-        address[] calldata _recipients,
-        uint256[] calldata _values
-    ) public {
-        if (_recipients.length != _values.length) {
-            revert ArgsMismatch();
-        }
-        for (uint256 i = 0; i < _recipients.length; i++) {
-            transfer(_recipients[i], _values[i]);
-        }
     }
 
     // forced transfer by owner; two-call delayed pattern (same as mintTo)
