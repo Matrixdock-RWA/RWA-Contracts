@@ -187,7 +187,7 @@ fun test_revoke_then_rerequest() {
     ts.end();
 }
 
-// a second request while one is pending must revert (PRD §5.2: PendingOwnerExist).
+// a second request while one is pending must revert.
 #[test, expected_failure(abort_code = minter::EPendingOwnerExist)]
 fun request_transfer_ownership_err_pending_exist() {
     let mut ts = ts::begin(@0x0);

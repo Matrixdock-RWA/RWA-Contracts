@@ -37,26 +37,6 @@ fun new_messenger_cap(scenario: &mut test_scenario::Scenario, caller: address, h
     };
 }
 
-fun set_mint_budget(scenario: &mut test_scenario::Scenario, caller: address, amount: u64) {
-    scenario.next_tx(caller);
-    {
-        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
-        state.set_mint_budget(amount);
-        test_scenario::return_shared(state);
-    };
-}
-
-fun send_mint_budget(scenario: &mut test_scenario::Scenario, caller: address, amount: u64) {
-    scenario.next_tx(caller);
-    {
-        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
-        let msg_cap = scenario.take_from_sender<MessengerCap>();
-        state.cc_send_mint_budget(&msg_cap, amount, scenario.ctx());
-        scenario.return_to_sender(msg_cap);
-        test_scenario::return_shared(state);
-    };
-}
-
 fun receive_msg(
     scenario: &mut test_scenario::Scenario,
     caller: address,
@@ -113,46 +93,19 @@ fun cc_new_messenger_cap_ok() {
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = mtoken::ENotOperator)]
-fun cc_send_mint_budget_err_not_operator() {
-    let mut scenario = init_xaum();
-    new_messenger_cap(&mut scenario, ADMIN, ALICE);
-    send_mint_budget(&mut scenario, ALICE, 100);
-    abort
-}
-
-#[test, expected_failure(abort_code = mtoken::EInvalidMessengerCap)]
-fun cc_send_mint_budget_err_invalid_messenger_cap() {
+#[test, expected_failure(abort_code = mtoken::EDeprecated)]
+fun cc_send_mint_budget_err_deprecated() {
     let mut scenario = init_xaum();
     new_messenger_cap(&mut scenario, ADMIN, ADMIN);
-    new_messenger_cap(&mut scenario, ADMIN, ALICE); // issue a new messenger cap
-    send_mint_budget(&mut scenario, ADMIN, 100);
+    scenario.next_tx(ADMIN);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAUM>>();
+        let msg_cap = scenario.take_from_sender<MessengerCap>();
+        state.cc_send_mint_budget(&msg_cap, 100, scenario.ctx());
+        scenario.return_to_sender(msg_cap);
+        test_scenario::return_shared(state);
+    };
     abort
-}
-
-#[test, expected_failure(abort_code = mtoken::EMintBudgetNotEnough)]
-fun cc_send_mint_budget_err_not_enough() {
-    let mut scenario = init_xaum();
-    new_messenger_cap(&mut scenario, ADMIN, ADMIN);
-    send_mint_budget(&mut scenario, ADMIN, 100);
-    abort
-}
-
-#[test, expected_failure(abort_code = mtoken::EZeroValue)]
-fun cc_send_mint_budget_err_zero_value() {
-    let mut scenario = init_xaum();
-    new_messenger_cap(&mut scenario, ADMIN, ADMIN);
-    send_mint_budget(&mut scenario, ADMIN, 0);
-    abort
-}
-
-#[test]
-fun cc_send_mint_budget_ok() {
-    let mut scenario = init_xaum();
-    new_messenger_cap(&mut scenario, ADMIN, ADMIN);
-    set_mint_budget(&mut scenario, ADMIN, 10000);
-    send_mint_budget(&mut scenario, ADMIN, 100);
-    scenario.end();
 }
 
 #[test, expected_failure(abort_code = mtoken::EInvalidMessengerCap)]
@@ -278,17 +231,6 @@ fun cc_send_token_err_disabled() {
     abort
 }
 
-// disable_cc_send only gates cc_send_token; mint budget transfers stay enabled
-#[test]
-fun cc_send_mint_budget_ok_when_cc_send_disabled() {
-    let mut scenario = init_xaum();
-    new_messenger_cap(&mut scenario, ADMIN, ADMIN);
-    set_mint_budget(&mut scenario, ADMIN, 10000);
-    disable_cc_send(&mut scenario, ADMIN);
-    send_mint_budget(&mut scenario, ADMIN, 100);
-    scenario.end();
-}
-
 #[test, expected_failure(abort_code = mtoken::EInvalidMessengerCap)]
 fun cc_receive_err_invalid_messenger_cap() {
     let mut scenario = init_xaum();
@@ -366,8 +308,8 @@ fun cc_receive_blocked_token_ok() {
     scenario.end();
 }
 
-#[test]
-fun cc_receive_mint_budget_ok() {
+#[test, expected_failure(abort_code = message_codec::EInvalidMessageTag)]
+fun cc_receive_err_mint_budget_tag_rejected() {
     // prettier-ignore
     let msg = vector[
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x03,
@@ -378,7 +320,6 @@ fun cc_receive_mint_budget_ok() {
 
     let mut scenario = init_xaum();
     new_messenger_cap(&mut scenario, ADMIN, ADMIN);
-    let (_receiver, opt) = receive_msg(&mut scenario, ADMIN, msg);
-    opt.destroy_none();
-    scenario.end();
+    let (_receiver, _opt) = receive_msg(&mut scenario, ADMIN, msg);
+    abort
 }

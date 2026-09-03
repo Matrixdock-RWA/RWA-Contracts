@@ -26,6 +26,7 @@ const OP_REMOVE_RATE_LIMITER: u256 = 8;
 const OP_ADD_TO_WHITELIST: u256 = 9;
 const OP_UNPAUSE: u256 = 10;
 const OP_ENABLE_CC_SEND: u256 = 11;
+const OP_SET_MINT_BUDGET_SUBMITTER: u256 = 12;
 
 // === Errors ===
 
@@ -36,6 +37,8 @@ const ENotNewRevoker: u64 = 203;
 const ENoPendingRequest: u64 = 204;
 const ENotPaused: u64 = 205;
 const ECCSendNotDisabled: u64 = 206;
+const EZeroAddress: u64 = 207;
+const EOperatorSubmitterConflict: u64 = 208;
 
 // === Events ===
 
@@ -77,6 +80,16 @@ public struct SetRevokerRequestEvent has copy, drop {
 
 public struct SetRevokerEffectedEvent has copy, drop {
     new_revoker: address,
+}
+
+public struct SetMintBudgetSubmitterRequestEvent has copy, drop {
+    old_mint_budget_submitter: address,
+    new_mint_budget_submitter: address,
+    et: u64,
+}
+
+public struct SetMintBudgetSubmitterEffectedEvent has copy, drop {
+    new_mint_budget_submitter: address,
 }
 
 public struct SetRateLimitRequestEvent has copy, drop {
@@ -201,6 +214,9 @@ entry fun revoke_set_delay<T>(state: &mut State<T>, ctx: &TxContext) {
     state.revoke_request(OP_SET_DELAY);
 }
 
+// Must differ from the mint budget submitter — see set_mint_budget_submitter below.
+// The check runs on both the request call and the execute call, since the submitter
+// may have changed inside the delay window.
 entry fun set_operator<T>(
     state: &mut State<T>,
     new_operator: address,
@@ -209,6 +225,8 @@ entry fun set_operator<T>(
 ) {
     state.check_version();
     state.check_owner(ctx);
+    assert!(new_operator != state.mint_budget_submitter(), EOperatorSubmitterConflict);
+
     let et = state.ensure_delay(OP_SET_OPERATOR, address::to_u256(new_operator), clock);
     if (et > 0) {
         let old_operator = state.operator();
@@ -260,6 +278,45 @@ entry fun revoke_set_revoker<T>(state: &mut State<T>, ctx: &TxContext) {
     state.check_version();
     state.check_owner_or_operator(ctx);
     state.revoke_request(OP_SET_REVOKER);
+}
+
+// the sole address authorized to call claim_mint_budget_from_eth. Must differ from operator:
+// the submitter raises this chain's mint capacity and the operator consumes it via mint_to, so
+// one key holding both could walk the whole path alone. Both setters check the split on the
+// request call and again on the execute call, since the other role may change in between.
+entry fun set_mint_budget_submitter<T>(
+    state: &mut State<T>,
+    new_mint_budget_submitter: address,
+    clock: &Clock,
+    ctx: &TxContext,
+) {
+    state.check_version();
+    state.check_owner(ctx);
+    assert!(new_mint_budget_submitter != @0x0, EZeroAddress);
+    assert!(new_mint_budget_submitter != state.operator(), EOperatorSubmitterConflict);
+
+    let et = state.ensure_gov_delay(
+        OP_SET_MINT_BUDGET_SUBMITTER,
+        address::to_u256(new_mint_budget_submitter),
+        clock,
+    );
+    if (et > 0) {
+        let old_mint_budget_submitter = state.mint_budget_submitter();
+        event::emit(SetMintBudgetSubmitterRequestEvent {
+            old_mint_budget_submitter,
+            new_mint_budget_submitter,
+            et,
+        });
+    } else {
+        state.set_mint_budget_submitter(new_mint_budget_submitter);
+        event::emit(SetMintBudgetSubmitterEffectedEvent { new_mint_budget_submitter });
+    }
+}
+
+entry fun revoke_set_mint_budget_submitter<T>(state: &mut State<T>, ctx: &TxContext) {
+    state.check_version();
+    state.check_owner_or_revoker(ctx);
+    state.revoke_request(OP_SET_MINT_BUDGET_SUBMITTER);
 }
 
 entry fun unpause<T>(

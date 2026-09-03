@@ -38,10 +38,21 @@ const ERequestArgsMismatch: u64 = 119;
 const ENotOwnerOrOperator: u64 = 120;
 const ECCSendDisabled: u64 = 121;
 const ERateLimitedMsgNotFound: u64 = 122;
+const ENotMintBudgetSubmitter: u64 = 123;
+const EPaused: u64 = 124;
+const EStaleMintBudgetSubmission: u64 = 125;
+const EInvalidSrcTxHash: u64 = 126;
+const EWrongTargetChain: u64 = 127;
+const ELocalEidNotSet: u64 = 128;
+const ELocalEidLocked: u64 = 129;
 
 // === Constants ===
 
 const VERSION: u64 = 3;
+
+// generous upper bound: the longest tx identifier in use is Solana's 64-byte signature,
+// and the check only exists to keep an unbounded blob out of the transaction payload
+const MAX_SRC_TX_HASH_LEN: u64 = 128;
 
 const REQ_TTL: u64 = 3600 * 12; // 12 hours, time to live after effective
 const MIN_GOV_DELAY: u64 = 3600 * 24; // 1 day
@@ -116,6 +127,9 @@ public struct UnblockEvent has copy, drop {
     user_address: address,
 }
 
+// cross-chain mint-budget transfers are no longer supported; kept for upgrade
+// compatibility (see cc_send_mint_budget). No longer emitted.
+#[allow(unused_field)]
 public struct CCReceiveMintBudgetEvent has copy, drop {
     amount: u64,
 }
@@ -132,6 +146,9 @@ public struct CCBlockedTokenEvent has copy, drop {
     amount: u64,
 }
 
+// cross-chain mint-budget transfers are no longer supported; kept for upgrade
+// compatibility (see cc_send_mint_budget). No longer emitted.
+#[allow(unused_field)]
 public struct CCSendMintBudgetEvent has copy, drop {
     amount: u64,
 }
@@ -140,6 +157,29 @@ public struct CCSendTokenEvent has copy, drop {
     sender: address,
     receiver: vector<u8>,
     amount: u64,
+}
+
+// mirrors MTokenSide.ClaimMintBudgetFromEth (EVM): delta_amount is what this call credited and
+// total_allocated_amount the cumulative total after it — both must be readable off a single
+// event so off-chain reconciliation never needs to replay history
+public struct ClaimMintBudgetFromEthEvent has copy, drop {
+    caller: address,
+    dst_eid: u32, // always this chain's own eid; carried so the two ends reconcile field for field
+    delta_amount: u64,
+    total_allocated_amount: u64,
+    src_tx_hash: vector<u8>, // recorded as given; the contract does not verify it
+}
+
+// mirrors MTokenSide.ReturnMintBudgetToEth (EVM)
+public struct ReturnMintBudgetToEthEvent has copy, drop {
+    caller: address,
+    local_eid: u32,
+    delta_amount: u64,
+    total_returned_amount: u64,
+}
+
+public struct SetLocalEidEvent has copy, drop {
+    local_eid: u32,
 }
 
 public struct AddRateLimiterEvent has copy, drop {}
@@ -222,6 +262,17 @@ public struct RateLimiterKey() has copy, drop, store;
 public struct GovDelayKey() has copy, drop, store;
 public struct RequestsKey() has copy, drop, store;
 public struct CCSendDisabledKey() has copy, drop, store;
+public struct MintBudgetInfoKey() has copy, drop, store;
+
+// all mintBudget state in one dynamic field, keeping State<T>'s layout append-only across
+// upgrades. The two total_* fields are cumulative and match EVM's MintBudgetInfo field for
+// field — not per-call deltas: each entry point diffs against them, so a replay aborts.
+public struct MintBudgetInfo has drop, store {
+    total_allocated_amount: u64,
+    total_returned_amount: u64,
+    local_eid: u32,
+    submitter: address,
+}
 
 public struct State<phantom T> has key, store {
     id: UID,
@@ -254,6 +305,7 @@ new_messenger_cap                  | Owner      | govDelay | Owner/Revoker  | In
 remove_rate_limiter                | Owner      | govDelay | Owner/Revoker  | Initiator
 add_to_rate_limiter_whitelist      | Owner      | govDelay | Owner/Revoker  | Initiator
 set_revoker                        | Owner      | govDelay | Owner/Operator | NewRevoker
+set_mint_budget_submitter          | Owner      | govDelay | Owner/Revoker  | Initiator
 set_operator                       | Owner      | delay    | Owner/Revoker  | Initiator
 set_rate_limit                     | Owner      | delay    | Owner/Revoker  | Initiator
 set_single_msg_limit               | Owner      | delay    | Owner/Revoker  | Initiator
@@ -261,6 +313,7 @@ unpause                            | Owner      | delay    | Owner/Revoker  | In
 enable_cc_send                     | Owner      | delay    | Owner/Revoker  | Initiator
 init_upgrade_cap_id                | Owner      | no       | no             | no
 migrate                            | Owner      | no       | no             | no
+set_local_eid                      | Owner      | no       | no             | no
 update_description                 | Owner      | no       | no             | no
 update_icon_url                    | Owner      | no       | no             | no
 add_rate_limiter                   | Owner      | no       | no             | no
@@ -273,9 +326,12 @@ pause                              | Operator   | no       | no             | no
 disable_cc_send                    | Operator   | no       | no             | no
 add_to_blocked_list                | Operator   | no       | no             | no
 remove_from_blocked_list           | Operator   | no       | no             | no
-cc_send_mint_budget                | Messenger  | no       | no             | no
+return_mint_budget_to_eth          | Operator   | no       | no             | no
+cc_send_mint_budget                | Messenger  | no       | no             | no (deprecated)
 cc_send_token                      | Messenger  | no       | no             | no
-cc_receive                         | Messenger  | no       | no             | no
+cc_receive                         | Messenger  | no       | no             | no (deprecated)
+cc_receive_v2                      | Messenger  | no       | no             | no
+claim_mint_budget_from_eth         | Submitter  | no       | no             | no
 
 */
 
@@ -323,6 +379,7 @@ public fun create_coin<T: drop>(
     dof::add(&mut state.id, TreasuryCapKey(), treasury_cap);
     dof::add(&mut state.id, DenyCapKey(), deny_cap);
     state.init_requests(ctx);
+    state.init_mint_budget_info();
 
     // https://docs.sui.io/concepts/object-ownership/shared
     transfer::public_share_object(metadata);
@@ -346,6 +403,7 @@ entry fun migrate<T>(state: &mut State<T>, ctx: &mut TxContext) {
         df::add(&mut state.id, CCSendDisabledKey(), false);
     };
     state.init_requests(ctx);
+    state.init_mint_budget_info();
     state.version = VERSION;
 }
 
@@ -556,23 +614,22 @@ entry fun remove_from_blocked_list<T>(
     event::emit(UnblockEvent { user_address });
 }
 
+// keep for upgrade compatibility; cross-chain mint-budget transfers are no longer
+// supported, superseded by cc_send_token-only cross-chain messaging.
 public fun cc_send_mint_budget<T>(
-    state: &mut State<T>,
-    msg_cap: &MessengerCap,
-    amount: u64,
-    ctx: &mut TxContext,
+    _state: &mut State<T>,
+    _msg_cap: &MessengerCap,
+    _amount: u64,
+    _ctx: &mut TxContext,
 ): vector<u8> {
-    check_version(state);
-    check_operator(state, ctx);
-    check_messenger_cap(state, msg_cap);
-    check_non_zero(amount);
-    deduct_mint_budget(state, amount);
-    event::emit(CCSendMintBudgetEvent { amount });
-    msg_of_cc_send_mint_budget(amount)
+    abort EDeprecated
 }
 
-public fun msg_of_cc_send_mint_budget(amount: u64): vector<u8> {
-    message_codec::encode_cc_mint_budget_message(amount)
+// same as cc_send_mint_budget: signature kept, body disabled. The encoder it used to call
+// (message_codec::encode_cc_mint_budget_message) is disabled too, and the inbound path no
+// longer decodes the mint-budget tag at all — it is rejected as an unknown tag.
+public fun msg_of_cc_send_mint_budget(_amount: u64): vector<u8> {
+    abort EDeprecated
 }
 
 public fun cc_send_token<T>(
@@ -622,12 +679,6 @@ public fun cc_receive_v2<T>(
     check_messenger_cap(state, msg_cap);
 
     let decoded_msg = message_codec::decode_cc_message(msg);
-    if (decoded_msg.is_mint_budget()) {
-        let amount = decoded_msg.extract_mint_budget();
-        state.mint_budget = state.mint_budget + amount;
-        event::emit(CCReceiveMintBudgetEvent { amount });
-        return (@0x0, option::none())
-    };
 
     // handle token message
     assert!(decoded_msg.is_token(), EInvalidMessageType);
@@ -733,6 +784,87 @@ entry fun disable_cc_send<T>(state: &mut State<T>, ctx: &TxContext) {
     event::emit(DisableCCSendEvent {});
 }
 
+// declares this chain's own eid; changeable only until mintBudget has moved under it
+entry fun set_local_eid<T>(state: &mut State<T>, new_local_eid: u32, ctx: &TxContext) {
+    check_version(state);
+    check_owner(state, ctx);
+    check_non_zero(new_local_eid as u64);
+
+    let info = state.borrow_mint_budget_info_mut();
+    if (new_local_eid != info.local_eid) {
+        assert!(
+            info.total_allocated_amount == 0 && info.total_returned_amount == 0,
+            ELocalEidLocked,
+        );
+    };
+
+    info.local_eid = new_local_eid;
+    event::emit(SetLocalEidEvent { local_eid: new_local_eid });
+}
+
+// credits mintBudget granted by Ethereum, by the new cumulative total's delta; mirrors
+// MTokenSide.claimMintBudgetFromEth (EVM). dst_eid is misdelivery protection, not routing: a
+// submission meant for another branch chain carries that chain's eid and aborts here. The pause
+// check is load-bearing — this moves no Coin<T>, so nothing else here answers to the pause.
+entry fun claim_mint_budget_from_eth<T>(
+    state: &mut State<T>,
+    dst_eid: u32,
+    new_total_allocated_amount: u64,
+    src_tx_hash: vector<u8>,
+    deny_list: &DenyList,
+    ctx: &TxContext,
+) {
+    check_version(state);
+    check_mint_budget_submitter(state, ctx);
+    check_not_paused<T>(deny_list);
+
+    let local_eid = get_local_eid(state);
+    assert!(dst_eid == local_eid, EWrongTargetChain);
+    check_src_tx_hash(&src_tx_hash);
+
+    let info = state.borrow_mint_budget_info_mut();
+    let delta_amount = advance_watermark(
+        &mut info.total_allocated_amount,
+        new_total_allocated_amount,
+    );
+    state.mint_budget = state.mint_budget + delta_amount;
+
+    event::emit(ClaimMintBudgetFromEthEvent {
+        caller: ctx.sender(),
+        dst_eid: local_eid,
+        delta_amount,
+        total_allocated_amount: new_total_allocated_amount,
+        src_tx_hash,
+    });
+}
+
+// returns mintBudget to Ethereum, by the new cumulative total's delta; mirrors
+// MTokenSide.returnMintBudgetToEth (EVM). Deliberately not pause-gated: it only ever shrinks
+// this chain's mint_budget, and pausing must not block the one path that lowers mint capacity.
+entry fun return_mint_budget_to_eth<T>(
+    state: &mut State<T>,
+    new_total_returned_amount: u64,
+    ctx: &TxContext,
+) {
+    check_version(state);
+    check_operator(state, ctx);
+
+    let local_eid = get_local_eid(state);
+    let info = state.borrow_mint_budget_info_mut();
+    let delta_amount = advance_watermark(
+        &mut info.total_returned_amount,
+        new_total_returned_amount,
+    );
+    deduct_mint_budget(state, delta_amount);
+
+    event::emit(ReturnMintBudgetToEthEvent {
+        caller: ctx.sender(),
+        local_eid,
+        delta_amount,
+        total_returned_amount: new_total_returned_amount,
+    });
+}
+
 // === View Functions ===
 
 public fun version<T>(state: &State<T>): u64 {
@@ -820,6 +952,26 @@ public fun is_in_whitelist<T>(state: &State<T>, sender: vector<u8>, receiver: ad
     rl.is_in_whitelist(sender, receiver)
 }
 
+public fun mint_budget_submitter<T>(state: &State<T>): address {
+    state.borrow_mint_budget_info().submitter
+}
+
+// this chain's own eid, 0 until set_local_eid has run
+public fun local_eid<T>(state: &State<T>): u32 {
+    state.borrow_mint_budget_info().local_eid
+}
+
+// cumulative amount granted by Ethereum and claimed via claim_mint_budget_from_eth
+// (never decreases)
+public fun mint_budget_total_allocated_amount<T>(state: &State<T>): u64 {
+    state.borrow_mint_budget_info().total_allocated_amount
+}
+
+// cumulative amount returned to Ethereum via return_mint_budget_to_eth (never decreases)
+public fun mint_budget_total_returned_amount<T>(state: &State<T>): u64 {
+    state.borrow_mint_budget_info().total_returned_amount
+}
+
 // === Package Functions ===
 
 public(package) fun check_version<T>(state: &State<T>) {
@@ -856,6 +1008,13 @@ public(package) fun set_operator<T>(state: &mut State<T>, new_operator: address)
 
 public(package) fun set_revoker<T>(state: &mut State<T>, new_revoker: address) {
     state.revoker = new_revoker;
+}
+
+public(package) fun set_mint_budget_submitter<T>(
+    state: &mut State<T>,
+    new_mint_budget_submitter: address,
+) {
+    state.borrow_mint_budget_info_mut().submitter = new_mint_budget_submitter;
 }
 
 public(package) fun unpause<T>(
@@ -961,6 +1120,14 @@ fun check_operator<T>(state: &State<T>, ctx: &TxContext) {
     assert!(ctx.sender() == state.operator, ENotOperator);
 }
 
+fun check_mint_budget_submitter<T>(state: &State<T>, ctx: &TxContext) {
+    assert!(ctx.sender() == state.mint_budget_submitter(), ENotMintBudgetSubmitter);
+}
+
+fun check_not_paused<T>(deny_list: &DenyList) {
+    assert!(!coin::deny_list_v2_is_global_pause_enabled_next_epoch<T>(deny_list), EPaused);
+}
+
 fun check_messenger_cap<T>(state: &State<T>, cap: &MessengerCap) {
     let valid_capId = df::borrow(&state.id, MessengerCapKey());
     let cap_id = object::id(cap);
@@ -974,6 +1141,31 @@ fun check_req<T>(state: &State<T>, req_id: &UID) {
 
 fun check_non_zero(amount: u64) {
     assert!(amount > 0, EZeroValue);
+}
+
+// the source-chain tx that authorized a mintBudget submission: variable-length because chains
+// disagree on tx id size (32 bytes on EVM/Sui/Stellar, 64 on Solana), and only recorded — the
+// contract cannot read another chain, so verification is off-chain.
+fun check_src_tx_hash(src_tx_hash: &vector<u8>) {
+    let len = src_tx_hash.length();
+    assert!(len > 0 && len <= MAX_SRC_TX_HASH_LEN, EInvalidSrcTxHash);
+}
+
+// reads this chain's own eid, aborting if it has not been set yet
+fun get_local_eid<T>(state: &State<T>): u32 {
+    let local_eid = state.local_eid();
+    assert!(local_eid != 0, ELocalEidNotSet);
+    local_eid
+}
+
+// monotonic advance of one watermark, shared by both mintBudget entry points: a submission must
+// state a total strictly above what is already recorded, so a replay aborts instead of applying
+// twice. The write precedes the callers' later checks — an abort undoes it.
+fun advance_watermark(curr: &mut u64, new_total: u64): u64 {
+    assert!(*curr < new_total, EStaleMintBudgetSubmission);
+    let delta_amount = new_total - *curr;
+    *curr = new_total;
+    delta_amount
 }
 
 fun deduct_mint_budget<T>(state: &mut State<T>, amount: u64) {
@@ -1001,10 +1193,33 @@ fun borrow_rate_limiter_mut<T>(state: &mut State<T>): &mut MTokenRateLimiter {
     df::borrow_mut(&mut state.id, RateLimiterKey())
 }
 
+fun borrow_mint_budget_info<T>(state: &State<T>): &MintBudgetInfo {
+    df::borrow(&state.id, MintBudgetInfoKey())
+}
+
+fun borrow_mint_budget_info_mut<T>(state: &mut State<T>): &mut MintBudgetInfo {
+    df::borrow_mut(&mut state.id, MintBudgetInfoKey())
+}
+
 fun init_requests<T>(state: &mut State<T>, ctx: &mut TxContext) {
     if (!dof::exists(&state.id, RequestsKey())) {
         let requests = table::new<u256, RequestInfo>(ctx);
         dof::add(&mut state.id, RequestsKey(), requests);
+    }
+}
+
+fun init_mint_budget_info<T>(state: &mut State<T>) {
+    if (!df::exists(&state.id, MintBudgetInfoKey())) {
+        df::add(
+            &mut state.id,
+            MintBudgetInfoKey(),
+            MintBudgetInfo {
+                total_allocated_amount: 0,
+                total_returned_amount: 0,
+                local_eid: 0,
+                submitter: @0x0,
+            },
+        );
     }
 }
 
@@ -1092,6 +1307,38 @@ public(package) fun new_block_event(user_address: address): BlockEvent {
 #[test_only]
 public(package) fun new_unblock_event(user_address: address): UnblockEvent {
     UnblockEvent { user_address }
+}
+
+#[test_only]
+public(package) fun new_claim_mint_budget_from_eth_event(
+    caller: address,
+    dst_eid: u32,
+    delta_amount: u64,
+    total_allocated_amount: u64,
+    src_tx_hash: vector<u8>,
+): ClaimMintBudgetFromEthEvent {
+    ClaimMintBudgetFromEthEvent {
+        caller,
+        dst_eid,
+        delta_amount,
+        total_allocated_amount,
+        src_tx_hash,
+    }
+}
+
+#[test_only]
+public(package) fun new_return_mint_budget_to_eth_event(
+    caller: address,
+    local_eid: u32,
+    delta_amount: u64,
+    total_returned_amount: u64,
+): ReturnMintBudgetToEthEvent {
+    ReturnMintBudgetToEthEvent { caller, local_eid, delta_amount, total_returned_amount }
+}
+
+#[test_only]
+public(package) fun new_set_local_eid_event(local_eid: u32): SetLocalEidEvent {
+    SetLocalEidEvent { local_eid }
 }
 
 #[test_only]

@@ -6,12 +6,6 @@ use sui::address;
 
 /*
 
-format of send_mint_budget message:
-0x00: 0000000000000000000000000000000000000000000000000000000000000003 // (fixed) tag
-0x20: 0000000000000000000000000000000000000000000000000000000000000040 // (fixed) payload offset
-0x40: 0000000000000000000000000000000000000000000000000000000000000020 // (fixed) payload length
-0x60: 0000000000000000000000000000000000000000000000000000000000012345 // amount
-
 format of send_token message:
 0x00: 0000000000000000000000000000000000000000000000000000000000000002 // (fixed) tag
 0x20: 0000000000000000000000000000000000000000000000000000000000000040 // (fixed) payload offset
@@ -33,10 +27,7 @@ format of send_token payload:
 const SUI_ADDR_LENGTH: u64 = 32;
 const HEADER_LENGTH: u64 = 96u64;
 const TAG_SEND_TOKEN: u256 = 2u256;
-const TAG_SEND_MINT_BUDGET: u256 = 3u256;
 const PAYLOAD_OFFSET: u256 = 64u256; // 0x40
-const MINT_BUDGET_MSG_LENGTH: u64 = 128u64; // 0x80
-const MINT_BUDGET_PAYLOAD_LENGTH: u256 = 32u256; // 0x20
 const OUTBOUND_SENDER_OFFSET: u256 = 0x60u256;
 const OUTBOUND_RECEIVER_OFFSET: u256 = 0xa0u256;
 // const SHARED_DECIMALS: u8 = 9;
@@ -51,9 +42,10 @@ const EInvalidPayloadLength: u64 = 4;
 const EInvalidSenderOffset: u64 = 5;
 const EInvalidReceiverOffset: u64 = 6;
 const EInvalidReceiverLength: u64 = 7;
+const EDeprecated: u64 = 8;
 
 public enum CCInboundMessage {
-    MintBudget(u64),
+    MintBudget(u64), // no longer used
     Token(CCInboundToken),
 }
 
@@ -73,21 +65,17 @@ public fun to_local_decimals(amount: u256): u64 {
 
 // === CCInboundMessage ===
 
-public fun is_mint_budget(msg: &CCInboundMessage): bool {
-    match (msg) {
-        CCInboundMessage::MintBudget(_) => true,
-        _ => false,
-    }
+// decode_cc_message no longer builds the MintBudget variant, so this is always false.
+// It stays a total predicate on purpose: aborting here would break callers that merely
+// ask the question, and it could not reject anything a decoded message still carries.
+public fun is_mint_budget(_msg: &CCInboundMessage): bool {
+    false
 }
 
-public fun extract_mint_budget(msg: CCInboundMessage): u64 {
-    match (msg) {
-        CCInboundMessage::MintBudget(amount) => amount,
-        CCInboundMessage::Token(token) => {
-            let CCInboundToken { .. } = token;
-            abort
-        },
-    }
+// signature kept for upgrade compatibility; unlike is_mint_budget it has no truthful value
+// to return now that no decoded message can be a mint-budget one.
+public fun extract_mint_budget(_msg: CCInboundMessage): u64 {
+    abort EDeprecated
 }
 
 public fun is_token(msg: &CCInboundMessage): bool {
@@ -109,13 +97,10 @@ public fun extract_token_info(msg: CCInboundMessage): (vector<u8>, address, u64)
 
 // === Encoding ===
 
-public fun encode_cc_mint_budget_message(amount: u64): vector<u8> {
-    let mut writer = message_writer::new();
-    writer.write_u256(TAG_SEND_MINT_BUDGET);
-    writer.write_u256(PAYLOAD_OFFSET);
-    writer.write_u256(MINT_BUDGET_PAYLOAD_LENGTH as u256);
-    writer.write_u256(to_shared_decimals(amount));
-    writer.extract_message()
+// signature kept for upgrade compatibility; cross-chain mint-budget transfers are no longer
+// sent (see mtoken::cc_send_mint_budget), so this must not hand out an encodable message.
+public fun encode_cc_mint_budget_message(_amount: u64): vector<u8> {
+    abort EDeprecated
 }
 
 public fun encode_cc_token_message(sender: address, receiver: vector<u8>, amount: u64): vector<u8> {
@@ -145,24 +130,8 @@ fun encode_cc_token_payload(sender: address, receiver: vector<u8>, amount: u64):
 public fun decode_cc_message(msg: vector<u8>): CCInboundMessage {
     assert!(msg.length() > HEADER_LENGTH, EInvalidMessageLength);
     let tag = msg[31] as u256;
-    if (tag == TAG_SEND_MINT_BUDGET) {
-        CCInboundMessage::MintBudget(decode_cc_mint_budget_message(msg))
-    } else if (tag == TAG_SEND_TOKEN) {
-        CCInboundMessage::Token(decode_cc_token_message(msg))
-    } else {
-        assert!(false, EInvalidMessageTag);
-        abort // unreachable
-    }
-}
-
-fun decode_cc_mint_budget_message(message: vector<u8>): u64 {
-    assert!(message.length() == MINT_BUDGET_MSG_LENGTH, EInvalidMessageLength);
-    let mut reader = message_reader::new(message);
-    assert!(reader.read_u256() == TAG_SEND_MINT_BUDGET, EInvalidMessageTag);
-    assert!(reader.read_u256() == PAYLOAD_OFFSET, EInvalidPayloadOffset);
-    assert!(reader.read_u256() == MINT_BUDGET_PAYLOAD_LENGTH, EInvalidPayloadLength);
-    let amount = reader.read_u256();
-    to_local_decimals(amount)
+    assert!(tag == TAG_SEND_TOKEN, EInvalidMessageTag);
+    CCInboundMessage::Token(decode_cc_token_message(msg))
 }
 
 fun decode_cc_token_message(message: vector<u8>): CCInboundToken {
