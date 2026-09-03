@@ -35,7 +35,7 @@ const VERSION: u64 = 1;
 // const SLIPPAGE_DECIMAL: u8 = 6; // 6 decimal places for slippage
 const DELAY_MAX: u64 = 59; // 59 seconds, max delay for requests
 
-// Governance-level timelock bounds (see PRD §3). gov_delay guards control-plane
+// Governance-level timelock bounds. gov_delay guards control-plane
 // operations (transfer_ownership, set_gov_delay). It is deliberately initialized to 0
 // on a fresh deploy (timelock disarmed) so the deployer can finish wiring and hand over
 // ownership without waiting; once armed via set_gov_delay it is bounded to [24h, 7d].
@@ -145,7 +145,7 @@ fun init(ctx: &mut TxContext) {
         next_owner_et: 0,
         pending_upgrade_cap: option::none(),
         // gov_delay starts disarmed (0) so the deployer can complete wiring and ownership
-        // handover without waiting (PRD §3, invariant 3).
+        // handover without waiting.
         gov_delay: 0,
         next_gov_delay: option::none(),
         next_gov_delay_et: 0,
@@ -188,7 +188,7 @@ entry fun set_gov_delay(state: &mut State, new_gov_delay: u64, clock: &Clock, ct
     }
 }
 
-// Cancel a pending gov_delay change. Immediate and idempotent (PRD §4.2).
+// Cancel a pending gov_delay change. Immediate and idempotent.
 entry fun revoke_set_gov_delay(state: &mut State, ctx: &TxContext) {
     check_version(state);
     check_owner(state, ctx);

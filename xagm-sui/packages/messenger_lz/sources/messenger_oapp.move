@@ -44,7 +44,6 @@ const VERSION: u64 = 2;
 
 /// Message type for basic token transfers
 const SEND_TOKEN_TYPE: u16 = 1;
-const SEND_MINT_BUDGET_TYPE: u16 = 2;
 
 // === Events ===
 
@@ -66,6 +65,9 @@ public struct CCSendTokenEvent has copy, drop {
     msg_data: vector<u8>,
 }
 
+// cross-chain mint-budget transfers are no longer supported; kept for upgrade
+// compatibility (see send_mint_budget). No longer emitted.
+#[allow(unused_field)]
 public struct CCSendMintBudgetEvent has copy, drop {
     guid: Bytes32, // Unique identifier for this cross-chain message, used for tracking and correlation
     dst_eid: u32, // Destination endpoint ID where tokens are being sent
@@ -402,24 +404,16 @@ entry fun set_paused(state: &mut State, paused: bool, ctx: &TxContext) {
 
 // === Calculate Fees ===
 
+// keep for upgrade compatibility; cross-chain mint-budget transfers are no longer supported.
 public fun quote_send_mint_budget(
-    state: &State,
-    my_oapp: &OApp,
-    dst_eid: u32,
-    options: vector<u8>,
-    amount: u64,
-    ctx: &mut TxContext,
+    _state: &State,
+    _my_oapp: &OApp,
+    _dst_eid: u32,
+    _options: vector<u8>,
+    _amount: u64,
+    _ctx: &mut TxContext,
 ): Call<QuoteParam, MessagingFee> {
-    state.check_version();
-    let mst_data = mtoken::msg_of_cc_send_mint_budget(amount);
-    my_oapp.quote(
-        &state.oapp_call_cap,
-        dst_eid,
-        mst_data,
-        options,
-        false, // pay_in_zro,
-        ctx,
-    )
+    abort EDeprecated
 }
 
 public fun quote_send_token(
@@ -457,35 +451,18 @@ public fun confirm_quote_send(
 // === Send Functions ===
 // https://docs.layerzero.network/v2/developers/sui/oapp/overview#sending-messages-the-call-pattern
 
+// keep for upgrade compatibility; cross-chain mint-budget transfers are no longer supported.
 public fun send_mint_budget(
-    state: &State,
-    mt_state: &mut MtState<XAGM>,
-    my_oapp: &mut OApp,
-    dst_eid: u32,
-    extra_options: vector<u8>,
-    native_token_fee: Coin<SUI>,
-    amount: u64,
-    ctx: &mut TxContext,
+    _state: &State,
+    _mt_state: &mut MtState<XAGM>,
+    _my_oapp: &mut OApp,
+    _dst_eid: u32,
+    _extra_options: vector<u8>,
+    _native_token_fee: Coin<SUI>,
+    _amount: u64,
+    _ctx: &mut TxContext,
 ): (Call<SendParam, MessagingReceipt>, SendContext) {
-    state.check_version();
-    state.check_paused();
-
-    let msg_cap = state.borrow_messenger_cap();
-    let msg_data = mt_state.cc_send_mint_budget(msg_cap, amount, ctx);
-    let options = my_oapp.combine_options(dst_eid, SEND_MINT_BUDGET_TYPE, extra_options);
-    let lz_call = my_oapp.lz_send(
-        &state.oapp_call_cap,
-        dst_eid,
-        msg_data,
-        options,
-        native_token_fee,
-        option::none(), // zro_token_fee
-        option::some(ctx.sender()),
-        ctx,
-    );
-    let send_ctx = SendContext { is_token: false, msg_data: msg_data, call_id: lz_call.id() };
-
-    (lz_call, send_ctx)
+    abort EDeprecated
 }
 
 public fun send_token(
@@ -528,27 +505,19 @@ public fun confirm_send(
     send_ctx: SendContext,
 ): (MessagingReceipt, Option<Coin<SUI>>) {
     state.check_version();
-    // TODO: more checks?
 
     let SendContext { is_token, msg_data, call_id } = send_ctx;
     assert!(lz_call.id() == call_id, EInvalidSendContext);
+    assert!(is_token, EInvalidSendContext);
 
     let (param, messaging_receipt) = my_oapp.confirm_lz_send(&state.oapp_call_cap, lz_call);
 
     // emit events
-    if (is_token) {
-        event::emit(CCSendTokenEvent {
-            guid: messaging_receipt.guid(),
-            dst_eid: param.dst_eid(),
-            msg_data: msg_data,
-        });
-    } else {
-        event::emit(CCSendMintBudgetEvent {
-            guid: messaging_receipt.guid(),
-            dst_eid: param.dst_eid(),
-            msg_data: msg_data,
-        });
-    };
+    event::emit(CCSendTokenEvent {
+        guid: messaging_receipt.guid(),
+        dst_eid: param.dst_eid(),
+        msg_data: msg_data,
+    });
 
     // refund
     let native_token = if (param.refund_address().is_some()) {

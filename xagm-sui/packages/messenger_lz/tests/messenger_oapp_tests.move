@@ -183,33 +183,6 @@ fun init_messenger_cap(scenario: &mut test_scenario::Scenario, caller: address) 
     };
 }
 
-fun send_mint_budget(
-    scenario: &mut test_scenario::Scenario,
-    caller: address,
-    dst_eid: u32,
-    amount: u64,
-): (Call<SendParam, MessagingReceipt>, SendContext) {
-    scenario.next_tx(caller);
-    {
-        let state = scenario.take_shared<State>();
-        let mut mt_state = scenario.take_shared<MtState<XAGM>>();
-        let mut my_oapp = scenario.take_shared<OApp>();
-        let (_call, _send_ctx) = state.send_mint_budget(
-            &mut mt_state,
-            &mut my_oapp,
-            dst_eid,
-            vector[],
-            coin::zero<SUI>(scenario.ctx()),
-            amount,
-            scenario.ctx(),
-        );
-        test_scenario::return_shared(state);
-        test_scenario::return_shared(mt_state);
-        test_scenario::return_shared(my_oapp);
-        (_call, _send_ctx)
-    }
-}
-
 fun send_token(
     scenario: &mut test_scenario::Scenario,
     caller: address,
@@ -432,27 +405,8 @@ fun set_paused_ok() {
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = mtoken::ENotOperator)]
-fun send_mint_budget_not_operator() {
-    let mut scenario = init_messenger_oapp();
-    create_new_messenger_cap(&mut scenario, ADMIN, ADMIN);
-    init_messenger_cap(&mut scenario, ADMIN);
-    let (_call, _send_ctx) = send_mint_budget(&mut scenario, ALICE, 123, 100);
-    abort
-}
-
-#[test, expected_failure(abort_code = messenger_oapp::EPaused)]
-fun send_mint_budget_err_paused() {
-    let mut scenario = init_messenger_oapp();
-    create_new_messenger_cap(&mut scenario, ADMIN, ADMIN);
-    init_messenger_cap(&mut scenario, ADMIN);
-    set_paused(&mut scenario, ADMIN, true);
-    let (_call, _send_ctx) = send_mint_budget(&mut scenario, ALICE, 123, 100);
-    abort
-}
-
-#[test]
-fun send_mint_budget_ok() {
+#[test, expected_failure(abort_code = messenger_oapp::EDeprecated)]
+fun send_mint_budget_err_deprecated() {
     let mut scenario = init_messenger_oapp();
     create_new_messenger_cap(&mut scenario, ADMIN, ADMIN);
     init_messenger_cap(&mut scenario, ADMIN);
@@ -461,15 +415,23 @@ fun send_mint_budget_ok() {
 
     scenario.next_tx(ADMIN);
     {
+        let state = scenario.take_shared<State>();
         let mut mt_state = scenario.take_shared<MtState<XAGM>>();
-        mt_state.set_mint_budget(10000);
+        let mut my_oapp = scenario.take_shared<OApp>();
+        let (_call, _send_ctx) = state.send_mint_budget(
+            &mut mt_state,
+            &mut my_oapp,
+            123,
+            vector[],
+            coin::zero<SUI>(scenario.ctx()),
+            100,
+            scenario.ctx(),
+        );
+        test_scenario::return_shared(state);
         test_scenario::return_shared(mt_state);
+        test_scenario::return_shared(my_oapp);
     };
-
-    let (_call, _send_ctx) = send_mint_budget(&mut scenario, ADMIN, 123, 100);
-    destroy(_call);
-    destroy(_send_ctx);
-    scenario.end();
+    abort
 }
 
 #[test]
@@ -568,9 +530,13 @@ fun lz_receive_info_ok() {
     scenario.end();
 }
 
-// TODO: fix this test
+// TODO: asserts nothing today — lz_receive aborts on a missing payload hash before reaching
+// cc_receive_v2, and the bare expected_failure accepts that. Enabling the line below needs a
+// receive library registered so endpoint.verify can record the hash first.
+// Real coverage: mtoken_cc_tests::cc_receive_err_mint_budget_tag_rejected.
+// #[test, expected_failure(abort_code = mtoken::message_codec::EInvalidMessageTag)]
 #[test, expected_failure]
-fun lz_receive_mint_budget_ok() {
+fun lz_receive_mint_budget_err_invalid_message_tag() {
     let eid = 123;
     let peer = b"peer_peer_peer_peer_peer_peer_pe";
     let guid = b"guid_guid_guid_guid_guid_guid_gu";
@@ -600,25 +566,6 @@ fun lz_receive_mint_budget_ok() {
         let endpoint = scenario.take_shared<EndpointV2>();
         let executor_cap = call_cap::new_individual_cap(scenario.ctx());
         let mut msg_channel = scenario.take_shared<MessagingChannel>();
-
-        // endpoint.set_receive_library(
-        //     state.call_cap(),
-        //     @0x1234, // receiver
-        //     eid, // src_eid
-        //     @0x5678, // new_lib
-        //     0, // grace_period
-        //     &_clock,
-        // );
-
-        // endpoint.verify(
-        //     &executor_cap,
-        //     &mut msg_channel,
-        //     eid,
-        //     bytes32::from_bytes(peer), // sender
-        //     nonce, // nonce
-        //     bytes32::from_bytes(guid), // payload_hash
-        //     &_clock,
-        // );
 
         let receive_call = endpoint.lz_receive(
             &executor_cap,

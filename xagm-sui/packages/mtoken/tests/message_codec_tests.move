@@ -9,25 +9,9 @@ fun to_local_decimals_underflow() {
     message_codec::to_local_decimals(2u256.pow(80));
 }
 
-#[test]
-fun cc_mint_budget_message() {
-    // prettier-ignore
-    let exptcted_data = vector[
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x03,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x40,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x20,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x23, 0x45,
-    ];
-
-    // encode
-    let msg = message_codec::encode_cc_mint_budget_message(0x12345);
-    assert_eq!(msg, exptcted_data);
-
-    // decode
-    let decoded_msg = message_codec::decode_cc_message(exptcted_data);
-    assert_eq!(decoded_msg.is_token(), false);
-    assert_eq!(decoded_msg.is_mint_budget(), true);
-    assert_eq!(decoded_msg.extract_mint_budget(), 0x12345);
+#[test, expected_failure(abort_code = message_codec::EDeprecated)]
+fun encode_cc_mint_budget_message_err_deprecated() {
+    message_codec::encode_cc_mint_budget_message(0x12345);
 }
 
 #[test]
@@ -187,51 +171,16 @@ fun decode_cc_message_err_invalid_message_tag() {
     abort
 }
 
-#[test, expected_failure(abort_code = message_codec::EInvalidMessageLength)]
-fun decode_cc_mint_budget_err_invalid_message_length() {
-    // prettier-ignore
-    let _msg = message_codec::decode_cc_message(vector[
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, // tag
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ]);
-    abort
-}
-
+// mint-budget messages are rejected on the tag alone now, so the rest of the message is
+// never looked at — one case covers what used to be four (bad length/offset/payload length).
 #[test, expected_failure(abort_code = message_codec::EInvalidMessageTag)]
-fun decode_cc_mint_budget_err_invalid_message_tag() {
-    // prettier-ignore
-    let _msg = message_codec::decode_cc_message(vector[
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 3, // tag
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ]);
-    abort
-}
-
-#[test, expected_failure(abort_code = message_codec::EInvalidPayloadOffset)]
-fun decode_cc_mint_budget_err_invalid_payload_offset() {
-    // prettier-ignore
-    let _msg = message_codec::decode_cc_message(vector[
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, // tag
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x45, // payload offset
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    ]);
-    abort
-}
-
-#[test, expected_failure(abort_code = message_codec::EInvalidPayloadLength)]
-fun decode_cc_mint_budget_err_invalid_payload_length() {
+fun decode_cc_message_err_mint_budget_tag() {
     // prettier-ignore
     let _msg = message_codec::decode_cc_message(vector[
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, // tag
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x40, // payload offset
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x56, // payload length
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x20, // payload length
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x23, 0x45, // amount
     ]);
     abort
 }
@@ -329,20 +278,12 @@ fun decode_cc_token_err_invalid_receiver_length() {
     abort
 }
 
-#[test, expected_failure]
-fun extract_token_info_err() {
-    // prettier-ignore
-    let msg = message_codec::decode_cc_message(vector[
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, // tag
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x40, // payload offset
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x20, // payload length
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x78,
-    ]);
-    msg.extract_token_info();
-}
+// extract_token_info's MintBudget arm is unreachable: decode_cc_message only ever returns
+// Token now, so the message that used to exercise it is rejected on the tag instead
+// (decode_cc_message_err_mint_budget_tag).
 
-#[test, expected_failure]
-fun extract_mint_budget_err() {
+#[test, expected_failure(abort_code = message_codec::EDeprecated)]
+fun extract_mint_budget_err_deprecated() {
     // prettier-ignore
     let msg = message_codec::decode_cc_message(vector[
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x02,

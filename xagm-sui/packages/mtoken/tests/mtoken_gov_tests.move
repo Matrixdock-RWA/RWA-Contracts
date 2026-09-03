@@ -302,6 +302,39 @@ fun check_messenger_cap(scenario: &mut test_scenario::Scenario, holder: address)
     };
 }
 
+fun set_mint_budget_submitter(
+    scenario: &mut test_scenario::Scenario,
+    _clock: &Clock,
+    caller: address,
+    new_mint_budget_submitter: address,
+) {
+    scenario.next_tx(caller);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
+        mtoken_gov::set_mint_budget_submitter(&mut state, new_mint_budget_submitter, _clock, scenario.ctx());
+        assert_eq!(event::num_events(), 1);
+        test_scenario::return_shared(state);
+    };
+}
+
+fun revoke_set_mint_budget_submitter(scenario: &mut test_scenario::Scenario, caller: address) {
+    scenario.next_tx(caller);
+    {
+        let mut state = scenario.take_shared<mtoken::State<XAGM>>();
+        mtoken_gov::revoke_set_mint_budget_submitter(&mut state, scenario.ctx());
+        test_scenario::return_shared(state);
+    };
+}
+
+fun check_mint_budget_submitter(scenario: &mut test_scenario::Scenario, mint_budget_submitter: address) {
+    scenario.next_tx(ADMIN);
+    {
+        let state = scenario.take_shared<mtoken::State<XAGM>>();
+        assert_eq!(state.mint_budget_submitter(), mint_budget_submitter);
+        test_scenario::return_shared(state);
+    };
+}
+
 fun setup_rate_limiter(
     scenario: &mut test_scenario::Scenario,
     amount: u64,
@@ -706,6 +739,31 @@ fun set_operator_ok() {
     check_operator(&mut scenario, ALICE);
     clock::destroy_for_testing(_clock);
     scenario.end();
+}
+
+#[test, expected_failure(abort_code = mtoken_gov::EOperatorSubmitterConflict)]
+fun set_operator_err_is_mint_budget_submitter() {
+    let (mut scenario, mut _clock) = init_xagm();
+    set_mint_budget_submitter(&mut scenario, &_clock, ADMIN, ALICE);
+    _clock.increment_for_testing(INIT_GOV_DELAY * 1000);
+    set_mint_budget_submitter(&mut scenario, &_clock, ADMIN, ALICE);
+    check_mint_budget_submitter(&mut scenario, ALICE);
+    set_operator(&mut scenario, &_clock, ADMIN, ALICE);
+    abort
+}
+
+// mirror of set_mint_budget_submitter_err_conflict_in_delay_window: this time the
+// submitter seat changes first, so the matured operator request is the one blocked
+#[test, expected_failure(abort_code = mtoken_gov::EOperatorSubmitterConflict)]
+fun set_operator_err_conflict_in_delay_window() {
+    let (mut scenario, mut _clock) = init_xagm();
+    set_operator(&mut scenario, &_clock, ADMIN, BOB);
+    set_mint_budget_submitter(&mut scenario, &_clock, ADMIN, BOB);
+    _clock.increment_for_testing(INIT_GOV_DELAY * 1000);
+    set_mint_budget_submitter(&mut scenario, &_clock, ADMIN, BOB);
+    check_mint_budget_submitter(&mut scenario, BOB);
+    set_operator(&mut scenario, &_clock, ADMIN, BOB);
+    abort
 }
 
 #[test, expected_failure(abort_code = mtoken::ENotOwnerOrRevoker)]
@@ -1471,6 +1529,107 @@ fun set_single_msg_limit_revoke_by_revoker_ok() {
     setup_rate_limiter(&mut scenario, 100, 3600, &_clock);
     set_single_msg_limit(&mut scenario, &_clock, ADMIN, 5000);
     revoke_set_single_msg_limit(&mut scenario, REVOKER);
+    clock::destroy_for_testing(_clock);
+    scenario.end();
+}
+
+// === set_mint_budget_submitter tests ===
+
+#[test, expected_failure(abort_code = mtoken::ENotOwner)]
+fun set_mint_budget_submitter_err_not_owner() {
+    let (mut scenario, _clock) = init_xagm();
+    set_mint_budget_submitter(&mut scenario, &_clock, ALICE, BOB);
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken_gov::EZeroAddress)]
+fun set_mint_budget_submitter_err_zero_address() {
+    let (mut scenario, _clock) = init_xagm();
+    set_mint_budget_submitter(&mut scenario, &_clock, ADMIN, @0x0);
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken_gov::EOperatorSubmitterConflict)]
+fun set_mint_budget_submitter_err_is_operator() {
+    let (mut scenario, _clock) = init_xagm();
+    set_mint_budget_submitter(&mut scenario, &_clock, ADMIN, OPERATOR);
+    abort
+}
+
+// the request was legal when queued (BOB was neither role), but the operator seat
+// changed hands inside the delay window — the matured request must not slip through
+#[test, expected_failure(abort_code = mtoken_gov::EOperatorSubmitterConflict)]
+fun set_mint_budget_submitter_err_conflict_in_delay_window() {
+    let (mut scenario, mut _clock) = init_xagm();
+    set_mint_budget_submitter(&mut scenario, &_clock, ADMIN, BOB);
+    set_operator(&mut scenario, &_clock, ADMIN, BOB);
+    _clock.increment_for_testing(INIT_GOV_DELAY * 1000);
+    set_operator(&mut scenario, &_clock, ADMIN, BOB);
+    check_operator(&mut scenario, BOB);
+    set_mint_budget_submitter(&mut scenario, &_clock, ADMIN, BOB);
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::ENotEffective)]
+fun set_mint_budget_submitter_err_not_effective() {
+    let (mut scenario, mut _clock) = init_xagm();
+    set_mint_budget_submitter(&mut scenario, &_clock, ADMIN, ALICE);
+    _clock.increment_for_testing(INIT_GOV_DELAY * 500);
+    set_mint_budget_submitter(&mut scenario, &_clock, ADMIN, ALICE);
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::ERequestArgsMismatch)]
+fun set_mint_budget_submitter_err_args_mismatch() {
+    let (mut scenario, mut _clock) = init_xagm();
+    set_mint_budget_submitter(&mut scenario, &_clock, ADMIN, ALICE);
+    _clock.increment_for_testing(INIT_GOV_DELAY * 1000);
+    set_mint_budget_submitter(&mut scenario, &_clock, ADMIN, BOB);
+    abort
+}
+
+#[test]
+fun set_mint_budget_submitter_ok() {
+    let (mut scenario, mut _clock) = init_xagm();
+    set_mint_budget_submitter(&mut scenario, &_clock, ADMIN, ALICE);
+    _clock.increment_for_testing(INIT_GOV_DELAY * 1000);
+    set_mint_budget_submitter(&mut scenario, &_clock, ADMIN, ALICE);
+    check_mint_budget_submitter(&mut scenario, ALICE);
+    clock::destroy_for_testing(_clock);
+    scenario.end();
+}
+
+#[test, expected_failure(abort_code = mtoken::ENotOwnerOrRevoker)]
+fun set_mint_budget_submitter_revoke_err_not_owner_or_revoker() {
+    let (mut scenario, _clock) = init_xagm();
+    set_mint_budget_submitter(&mut scenario, &_clock, ADMIN, ALICE);
+    revoke_set_mint_budget_submitter(&mut scenario, ALICE);
+    abort
+}
+
+#[test]
+fun set_mint_budget_submitter_revoke_no_req_ok() {
+    let (mut scenario, _clock) = init_xagm();
+    revoke_set_mint_budget_submitter(&mut scenario, ADMIN);
+    revoke_set_mint_budget_submitter(&mut scenario, ADMIN);
+    clock::destroy_for_testing(_clock);
+    scenario.end();
+}
+
+#[test]
+fun set_mint_budget_submitter_revoke_by_owner_ok() {
+    let (mut scenario, _clock) = init_xagm();
+    set_mint_budget_submitter(&mut scenario, &_clock, ADMIN, ALICE);
+    revoke_set_mint_budget_submitter(&mut scenario, ADMIN);
+    clock::destroy_for_testing(_clock);
+    scenario.end();
+}
+
+#[test]
+fun set_mint_budget_submitter_revoke_by_revoker_ok() {
+    let (mut scenario, _clock) = init_xagm();
+    set_mint_budget_submitter(&mut scenario, &_clock, ADMIN, ALICE);
+    revoke_set_mint_budget_submitter(&mut scenario, REVOKER);
     clock::destroy_for_testing(_clock);
     scenario.end();
 }

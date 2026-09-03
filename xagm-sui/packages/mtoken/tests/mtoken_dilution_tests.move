@@ -230,88 +230,21 @@ fun update_annual_fee_rate_ok() {
     scenario.end();
 }
 
-#[test, expected_failure(abort_code = mtoken::ENotOperator)]
-fun cc_send_mint_budget_manually_err_not_operator() {
+// manual mint-budget bookkeeping is disabled: budget now moves only through the watermark
+// relay (see mtoken_mint_budget_tests), so both entry points abort regardless of caller or
+// amount — the access-control and amount cases they used to cover no longer exist.
+#[test, expected_failure(abort_code = mtoken::EDeprecated)]
+fun cc_send_mint_budget_manually_err_deprecated() {
     let (mut scenario, _clock) = init_xagm();
-    cc_send_mint_budget_manually(&mut scenario, ALICE, 123);
-    abort
-}
-
-#[test, expected_failure(abort_code = mtoken::EZeroValue)]
-fun cc_send_mint_budget_manually_err_zero_value() {
-    let (mut scenario, _clock) = init_xagm();
-    cc_send_mint_budget_manually(&mut scenario, ADMIN, 0);
-    abort
-}
-
-#[test, expected_failure(abort_code = mtoken::EMintBudgetNotEnough)]
-fun cc_send_mint_budget_manually_err_not_enough() {
-    let (mut scenario, _clock) = init_xagm();
-    cc_send_mint_budget_manually(&mut scenario, ADMIN, 10000);
-    abort
-}
-
-#[test]
-fun cc_send_mint_budget_manually_ok() {
-    let (mut scenario, _clock) = init_xagm();
-    cc_receive_mint_budget_manually(&mut scenario, ADMIN, 10000);
     cc_send_mint_budget_manually(&mut scenario, ADMIN, 6000);
-
-    // check event
-    assert_eq!(event::num_events(), 1);
-    assert_eq!(
-        event::events_by_type<mtoken::CCSendMintBudgetManuallyEvent>().pop_back(),
-        mtoken::new_cc_send_mint_budget_manually_event(6000),
-    );
-
-    // check state
-    scenario.next_tx(ADMIN);
-    {
-        let state = scenario.take_shared<mtoken::State<XAGM>>();
-        assert_eq!(state.mint_budget(), 4000);
-        test_scenario::return_shared(state);
-    };
-
-    clock::destroy_for_testing(_clock);
-    scenario.end();
-}
-
-#[test, expected_failure(abort_code = mtoken::ENotOperator)]
-fun cc_receive_mint_budget_manually_err_not_operator() {
-    let (mut scenario, _clock) = init_xagm();
-    cc_receive_mint_budget_manually(&mut scenario, ALICE, 10000);
     abort
 }
 
-#[test, expected_failure(abort_code = mtoken::EZeroValue)]
-fun cc_receive_mint_budget_manually_err_zero_value() {
-    let (mut scenario, _clock) = init_xagm();
-    cc_receive_mint_budget_manually(&mut scenario, ADMIN, 0);
-    abort
-}
-
-#[test]
-fun cc_receive_mint_budget_manually_ok() {
+#[test, expected_failure(abort_code = mtoken::EDeprecated)]
+fun cc_receive_mint_budget_manually_err_deprecated() {
     let (mut scenario, _clock) = init_xagm();
     cc_receive_mint_budget_manually(&mut scenario, ADMIN, 10000);
-
-    // check event
-    assert_eq!(event::num_events(), 1);
-    assert_eq!(
-        event::events_by_type<mtoken::CCReceiveMintBudgetManuallyEvent>().pop_back(),
-        mtoken::new_cc_receive_mint_budget_manually_event(10000),
-    );
-
-    // check state
-    scenario.next_tx(ADMIN);
-    {
-        let state = scenario.take_shared<mtoken::State<XAGM>>();
-        assert_eq!(state.mint_budget(), 10000);
-        test_scenario::return_shared(state);
-    };
-
-    clock::destroy_for_testing(_clock);
-    scenario.end();
+    abort
 }
 
 #[test, expected_failure(abort_code = mtoken::EAnnualFeeRateNotInitialized)]
