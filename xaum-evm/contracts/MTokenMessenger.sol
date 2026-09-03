@@ -15,9 +15,7 @@ import {ICCClient} from "./interfaces/ICCClient.sol";
 ---------------------------------------+--------------------------------
 addAllowedPeer / removeAllowedPeer     | lzAddPeer / lzRemovePeer
 sendTokenToChain                       | lzSendTokenToChain
-sendMintBudgetToChain                  | lzSendMintBudgetToChain
 calculateCCSendTokenFeeAndMessage      | lzCalculateSendTokenFee
-calculateCcSendMintBudgetFeeAndMessage | lzCalculateSendMintBudgetFee
 
 */
 
@@ -41,7 +39,6 @@ contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
     event AllowedPeerRemoved(uint64 chainSelector, bytes messenger);
     event CCReceive(bytes32 indexed messageID, bytes messageData);
     event CCSendToken(bytes32 indexed messageID, bytes messageData);
-    event CCSendMintBudget(bytes32 indexed messageID, bytes messageData);
 
     error NotInAllowListed(uint64 chainSelector, bytes messenger);
     error InsufficientFee(uint256 required, uint256 actual);
@@ -145,25 +142,6 @@ contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
         );
     }
 
-    function calculateCcSendMintBudgetFeeAndMessage(
-        uint64 destinationChainSelector,
-        bytes calldata messageReceiver,
-        uint112 value,
-        bytes calldata extraArgs
-    )
-        public
-        view
-        returns (uint256 fee, Client.EVM2AnyMessage memory evm2AnyMessage)
-    {
-        bytes memory data = ICCClient(ccClient).msgOfCcSendMintBudget(value);
-        (fee, evm2AnyMessage) = getFeeAndMessage(
-            destinationChainSelector,
-            messageReceiver,
-            extraArgs,
-            data
-        );
-    }
-
     // note: unlike LayerZero component, there is no way to specifically pause CCIP
     // send transactions. To pause CCIP requires enabling disableCcSend which will
     // pause both CCIP & LayerZero send txns. We are gradually deprecating CCIP
@@ -193,25 +171,6 @@ contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
             data
         );
         emit CCSendToken(messageId, data);
-    }
-
-    function sendMintBudgetToChain(
-        uint64 destinationChainSelector,
-        bytes calldata messageReceiver,
-        uint112 value,
-        bytes calldata extraArgs
-    ) external payable returns (bytes32 messageId) {
-        if (!allowedPeer[destinationChainSelector][messageReceiver].allowed) {
-            revert NotInAllowListed(destinationChainSelector, messageReceiver);
-        }
-        bytes memory data = ICCClient(ccClient).ccSendMintBudget(value, msg.sender);
-        messageId = sendDataToChain(
-            destinationChainSelector,
-            messageReceiver,
-            extraArgs,
-            data
-        );
-        emit CCSendMintBudget(messageId, data);
     }
 
     function getFeeAndMessage(

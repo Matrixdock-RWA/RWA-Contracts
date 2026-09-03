@@ -15,13 +15,4 @@ interface ICCClient {
         bytes calldata receiver,
         uint256 value
     ) external returns (bytes memory message);
-
-    function msgOfCcSendMintBudget(
-        uint112 value
-    ) external view returns (bytes memory message);
-
-    function ccSendMintBudget(
-        uint112 value,
-        address caller
-    ) external returns (bytes memory message);
 }

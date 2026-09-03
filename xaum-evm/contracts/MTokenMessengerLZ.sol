@@ -32,7 +32,6 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
 
     event CCReceiveLZ(bytes32 indexed messageID, bytes messageData);
     event CCSendTokenLZ(bytes32 indexed messageID, bytes messageData);
-    event CCSendMintBudgetLZ(bytes32 indexed messageID, bytes messageData);
     event LZPaused();
     event LZUnpaused();
 
@@ -200,16 +199,6 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
         emit CCSendTokenLZ(messageId, _data);
     }
 
-    function lzSendMintBudgetToChain(
-        uint32 _dstEid,
-        uint112 value,
-        bytes calldata _options
-    ) external payable onlyLZNotPaused returns (bytes32 messageId) {
-        bytes memory _data = ICCClient(ccClient).ccSendMintBudget(value, msg.sender);
-        messageId = sendThroughLZ(_dstEid, _data, _options, msg.value);
-        emit CCSendMintBudgetLZ(messageId, _data);
-    }
-
     // lz OApp send implementation
     function sendThroughLZ(
         uint32 _dstEid,
@@ -247,13 +236,4 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
         return fee.nativeFee;
     }
 
-    function lzCalculateSendMintBudgetFee(
-        uint32 _dstEid, // Destination chain's endpoint ID.
-        uint112 value,
-        bytes calldata _options
-    ) public view returns (uint256 nativeFee) {
-        bytes memory _data = ICCClient(ccClient).msgOfCcSendMintBudget(value);
-        MessagingFee memory fee = _quote(_dstEid, _data, _options, false);
-        return fee.nativeFee;
-    }
 }

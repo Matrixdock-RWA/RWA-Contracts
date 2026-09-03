@@ -162,10 +162,6 @@ describe("MTokenMessenger", function () {
         .to.be.revertedWithCustomError(mtMsg, "NotInAllowListed")
         .withArgs(123, mtMsg.target.toLowerCase());
 
-      await expect(mtMsg.connect(alice).sendMintBudgetToChain(123, mtMsg.target, 10000, "0x34"))
-        .to.be.revertedWithCustomError(mtMsg, "NotInAllowListed")
-        .withArgs(123, mtMsg.target.toLowerCase());
-
       const msgId = ethers.keccak256("0x1234");
       await expect(ccipRouter.callCcipReceive(mtMsg, [msgId, 123, mtMsg.target, "0xda7a", []]))
         .to.be.revertedWithCustomError(mtMsg, "NotInAllowListed")
@@ -188,11 +184,6 @@ describe("MTokenMessenger", function () {
           123, messageReceiver, alice.address, tokenReceiver, scaleUp(20000), "0x0e472a");
         expect(fee1).to.deep.equal(3200000n);
         expect(msg1[1]).to.include("0x0000000000000000000000000000000000000000000000000000000000000002");
-
-        const [fee2, msg2] = await mtMsg.calculateCcSendMintBudgetFeeAndMessage(
-          123, messageReceiver, scaleUp(50000), "0x0e472a");
-        expect(fee2).to.deep.equal(1280000n);
-        expect(msg2[1]).to.include("0x0000000000000000000000000000000000000000000000000000000000000003");
       }
     });
 
@@ -292,57 +283,6 @@ describe("MTokenMessenger", function () {
         await expect(tx).to.emit(mt, "CCSendToken")
           .withArgs(alice.address, receiverAddr.toLowerCase(), scaleUp(2000));
       }
-    });
-
-    it("sendMintBudgetToChain", async function () {
-      const {mt, mtSide, mtMsg, mtMsgSide, ccipRouter, reserveFeed,
-        operator} = await loadFixture(deployTestFixture);
-      await mtMsg.addAllowedPeer(123, mtMsgSide.target, 20);
-      await mtMsg.addAllowedPeer(123, mtMsgSide.target, 20);
-      await mtMsgSide.addAllowedPeer(100, mtMsg.target, 20);
-      await mtMsgSide.addAllowedPeer(100, mtMsg.target, 20);
-      await mtSide.setMessenger(mtMsgSide.target);
-      await mtSide.setMessenger(mtMsgSide.target);
-      await mt.setMessenger(mtMsg.target);
-      await mt.setMessenger(mtMsg.target);
-      await reserveFeed.setReserve(scaleUp(100000));
-      await mt.connect(operator).increaseMintBudget(scaleUp(50000));
-
-      // ok
-      await expect(
-        mtMsg.connect(operator).sendMintBudgetToChain(
-          123, mtMsgSide.target, scaleUp(5000), "0x0e472a",
-          {value: 1280000}
-        )
-      ).to.emit(mt, "CCSendMintBudget").withArgs(scaleUp(5000))
-        .to.emit(mtMsg, "CCSendMintBudget");
-      const msgId = await ccipRouter.lastMsgId();
-      // console.log('msgId:', msgId);
-
-      // return extra ether
-      await expect(
-        mtMsg.connect(operator).sendMintBudgetToChain(
-          123, mtMsgSide.target, scaleUp(6000), "0x0e472a",
-          {value: 2000000}
-        )
-      ).to.changeEtherBalances(
-        [operator.address, ccipRouter.target], 
-        [-1280000, 1280000]);
-    
-      // fee not enough
-      await expect(
-        mtMsg.connect(operator).sendMintBudgetToChain(
-          123, mtMsgSide.target, scaleUp(7000), "0x0e472a",
-          {value: 1270000}
-        )
-      ).to.be.revertedWithCustomError(mtMsg, "InsufficientFee")
-        .withArgs(1280000, 1270000);
-    
-      // other side
-      await expect(ccipRouter.callCcipReceiveByMsgId(msgId))
-        .to.emit(mtSide, "CCReceiveMintBudget")
-        .withArgs(scaleUp(5000));
-      expect(await mtSide.mintBudget()).to.equal(scaleUp(5000));
     });
 
   });
@@ -496,9 +436,6 @@ describe("MTokenMessenger", function () {
       await expect(mtMsg.connect(alice).lzSendTokenToChain(123, bob.address, scaleUp(10000), "0x12"))
         .to.be.revertedWithCustomError(mtMsg, "NoPeer").withArgs(123);
 
-      await expect(mtMsg.connect(operator).lzSendMintBudgetToChain(123, scaleUp(10000), "0x34"))
-        .to.be.revertedWithCustomError(mtMsg, "NoPeer").withArgs(123);
-
       const callLzReceiveArgs = [
         mtMsg,
         [123, addrToBytes32(alice.address), 888], // Origin
@@ -525,10 +462,6 @@ describe("MTokenMessenger", function () {
       await mt.connect(operator).mintTo(alice.address, scaleUp(20000), 0);
       await mtMsg.lzAddPeer(123, addrToBytes32(mtMsgSide.target), 0);
       await mtMsg.lzAddPeer(123, addrToBytes32(mtMsgSide.target), 0);
-
-      const nativeFee2 = await mtMsg.lzCalculateSendMintBudgetFee(
-        123, scaleUp(50000), "0x0e472a");
-      expect(nativeFee2).to.deep.equal(1280000n);
 
       const testCases = [bob.address, fakeSolanaAddr, "0x123456"];
       for (const receiverAddr of testCases) {
@@ -630,60 +563,8 @@ describe("MTokenMessenger", function () {
       }
     });
 
-    it("sendMintBudgetToChain", async function () {
-      const {mt, mtSide, mtMsg, mtMsgSide, lzEndpoint, reserveFeed,
-        operator, alice} = await loadFixture(deployTestFixture);
-      await mtMsg.lzAddPeer(123, addrToBytes32(mtMsgSide.target), 0);
-      await mtMsg.lzAddPeer(123, addrToBytes32(mtMsgSide.target), 0);
-      await mtMsgSide.lzAddPeer(100, addrToBytes32(mtMsg.target), 0);
-      await mtMsgSide.lzAddPeer(100, addrToBytes32(mtMsg.target), 0);
-      await mtSide.setMessenger(mtMsgSide.target);
-      await mtSide.setMessenger(mtMsgSide.target);
-      await mt.setMessenger(mtMsg.target);
-      await mt.setMessenger(mtMsg.target);
-      await reserveFeed.setReserve(scaleUp(100000));
-      await mt.connect(operator).increaseMintBudget(scaleUp(50000));
-      await mt.connect(operator).mintTo(alice.address, scaleUp(20000), 0);
-      await mt.connect(operator).mintTo(alice.address, scaleUp(20000), 0);
-
-      // ok
-      await expect(
-        mtMsg.connect(operator).lzSendMintBudgetToChain(
-          123, scaleUp(5000), "0x0e472a",
-          {value: 1280000}
-        )
-      ).to.emit(mt, "CCSendMintBudget").withArgs(scaleUp(5000))
-        .to.emit(mtMsg, "CCSendMintBudgetLZ");
-      const msgId = await lzEndpoint.lastMsgId();
-      // console.log('msgId:', msgId);
-
-      // do not return extra ether
-      await expect(
-        mtMsg.connect(operator).lzSendMintBudgetToChain(
-          123, scaleUp(6000), "0x0e472a",
-          {value: 4000000}
-        )
-      ).to.changeEtherBalances(
-        [operator.address, lzEndpoint.target], 
-        [-4000000, 4000000]);
-    
-      // fee not enough
-      await expect(
-        mtMsg.connect(operator).lzSendMintBudgetToChain(
-          123, scaleUp(7000), "0x0e472a",
-          {value: 1270000}
-        )
-      ).to.be.revertedWith("LZ_INSUFFICIENT_FEE");
-    
-      // other side
-      await expect(lzEndpoint.callLzReceiveByMsgId(msgId))
-        .to.emit(mtSide, "CCReceiveMintBudget")
-        .withArgs(scaleUp(5000));
-      expect(await mtSide.mintBudget()).to.equal(scaleUp(5000));
-    });
-
     it("pause", async function () {
-      const {mtMsg, owner, operator, alice, bob} = await loadFixture(deployTestFixture);
+      const {mtMsg, owner, alice, bob} = await loadFixture(deployTestFixture);
 
       expect(await mtMsg.lzPaused()).to.equal(false);
       await expect(mtMsg.connect(alice).lzPause())
@@ -697,13 +578,6 @@ describe("MTokenMessenger", function () {
         mtMsg.connect(alice).lzSendTokenToChain(
           123, bob.address, 4000, "0x0e472a",
           {value: 1900000}
-        )
-      ).to.be.revertedWith("LZ_PAUSED");
-
-      await expect(
-        mtMsg.connect(operator).lzSendMintBudgetToChain(
-          123, 7000, "0x0e472a",
-          {value: 1270000}
         )
       ).to.be.revertedWith("LZ_PAUSED");
     });

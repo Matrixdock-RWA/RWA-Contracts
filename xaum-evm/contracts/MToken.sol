@@ -10,6 +10,18 @@ import {IMTokenRateLimiter} from "./interfaces/IMTokenRateLimiter.sol";
 
 abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
 
+    // per-chain watermarks for cross-chain mintBudget moves: cumulative totals, so a call
+    // states the new total and the contract diffs out the delta — a replay reverts instead
+    // of applying twice. MTokenMain keys these by the peer chain's eid and so holds one entry
+    // per peer; MTokenSide keys them by its own eid and so holds exactly one. Both name the
+    // same quantity identically, so the two ends reconcile field to field. The enabled flag
+    // is MTokenMain's peer allowlist and is never read on MTokenSide.
+    struct MintBudgetInfo {
+        bool enabled;
+        uint112 totalAllocatedAmount; // in shared decimals (9)
+        uint112 totalReturnedAmount; // in shared decimals (9)
+    }
+
     // every chain has its own mintBudget, operator can move mintBudget from one chain to another
     uint112 public mintBudget;
 
@@ -65,6 +77,11 @@ abstract contract MTokenBase is ERC20PermitUpgradeable, DelayedUpgradeable {
     // the designated receiver for forced transfers of blocked accounts
     address public forcedTransferReceiver;
 
+    // global mintBudget management
+    address public mintBudgetSubmitter;
+    mapping(uint32 eid => MintBudgetInfo) public mintBudgetMap;
+    uint32 public localEid; // this chain's own eid, configured via setLocalEid
+
 }
 
 /*
@@ -79,6 +96,7 @@ setReserveFeed            | Owner      | govDelay | Owner/Revoker  | Initiator
 setFallbackFeed           | Owner      | govDelay | Owner/Revoker  | Initiator
 setRateLimiter            | Owner      | govDelay | Owner/Revoker  | Initiator
 setForcedTransferReceiver | Owner      | govDelay | Owner/Revoker  | Initiator
+setMintBudgetSubmitter    | Owner      | govDelay | Owner/Revoker  | Initiator
 setRevoker                | Owner      | govDelay | Owner/Operator | NewRevoker
 setOperator               | Owner      | delay    | Owner/Revoker  | Initiator
 unpause                   | Owner      | delay    | Owner/Revoker  | Initiator
@@ -87,6 +105,7 @@ forcedTransfer            | Owner      | delay    | Owner/Revoker  | Initiator
 mintTo                    | Operator   | delay    | Owner/Revoker  | Initiator
 ccProcessRateLimitedMsg   | Operator   | delay    | Owner/Revoker  | Initiator
 ccDiscardRateLimitedMsg   | Operator   | delay    | Owner/Revoker  | Initiator
+setLocalEid               | Owner      | no       | no             | no
 pause                     | Operator   | no       | no             | no
 disableCcSend             | Operator   | no       | no             | no
 addToBlockedList          | Operator   | no       | no             | no
@@ -98,7 +117,10 @@ contract MToken is MTokenBase, ICCClient {
     using SafeCast for uint256;
 
     uint256 constant TAG_SEND_TOKEN = 2;
-    uint256 constant TAG_SEND_MINT_BUDGET = 3;
+
+    // generous upper bound: the longest tx identifier in use is Solana's 64-byte
+    // signature, and the check only exists to keep an unbounded blob out of calldata
+    uint256 constant MAX_SRC_TX_HASH_LEN = 128;
 
     uint8 constant LOCAL_DECIMALS = 18;
     uint8 constant SHARED_DECIMALS = 9;
@@ -111,6 +133,7 @@ contract MToken is MTokenBase, ICCClient {
     bytes32 constant OP_SET_FALLBACK_FEED            = keccak256("OP_SET_FALLBACK_FEED");            // 0x833af6d22eb8d2c5cf1ffbc6fc7167919d127fcfcb1200cc8d10a71b91c52212
     bytes32 constant OP_SET_RATE_LIMITER             = keccak256("OP_SET_RATE_LIMITER");             // 0xed798457379d2f20a4c7977521ad2c86cb7507c8854b8ed957ce4eefdb54d695
     bytes32 constant OP_SET_FORCED_TRANSFER_RECEIVER = keccak256("OP_SET_FORCED_TRANSFER_RECEIVER"); // 0x85fa3f3a2a8a9e215053c0fa81064c17bba62c8bc75114f1c6efebbc809b9395
+    bytes32 constant OP_SET_MINT_BUDGET_SUBMITTER    = keccak256("OP_SET_MINT_BUDGET_SUBMITTER");    // 0xf37c63085900270b58e5528f9f20f93604548843368d6de8a65f3e5fe290d1b8
     bytes32 constant OP_ENABLE_CC_SEND               = keccak256("OP_ENABLE_CC_SEND");               // 0x55c10731fa798db7b348dc2a315fbefd2f566460cff39a69411ef19b2c82a5e7
     bytes32 constant OP_UNPAUSE                      = keccak256("OP_UNPAUSE");                      // 0x19aebff3bbcef323e5c760a3ed420922e4d158f9d2c6e69bda4f540960d86e97
     bytes32 constant OP_CC_PROCESS_RATE_LIMITED_MSG  = keccak256("OP_CC_PROCESS_RATE_LIMITED_MSG");  // 0x81e6015855d4c8f939048e3993d674969d59fa69958ee3faff23afeb0e5ce58d
@@ -120,9 +143,7 @@ contract MToken is MTokenBase, ICCClient {
     event BlockPlaced(address indexed _user);
     event BlockReleased(address indexed _user);
     event CCSendToken(address indexed sender, bytes receiver, uint256 value);
-    event CCSendMintBudget(uint112 value);
     event CCReceiveToken(bytes sender, address indexed receiver, uint256 value);
-    event CCReceiveMintBudget(uint112 value);
     event Redeem(address indexed customer, uint256 amount, bytes data);
     event MintRequest(address indexed receiver, uint256 amount, uint256 nonce);
     event Paused(address indexed _userAddress);
@@ -143,7 +164,11 @@ contract MToken is MTokenBase, ICCClient {
     error NotNftContract(address);
     error NotMessenger(address);
     error NotOperatorNorNft(address);
+    error NotMintBudgetSubmitter(address);
+    error OperatorSubmitterConflict(address);
     error MintBudgetNotEnough(uint256 budget, uint256 amount);
+    error StaleMintBudgetSubmission(uint112 recorded, uint112 submitted);
+    error InvalidSrcTxHash(uint256 length);
     error TransferToContract();
     error ZeroValue();
     error ArgsMismatch();
@@ -209,6 +234,13 @@ contract MToken is MTokenBase, ICCClient {
         _;
     }
 
+    modifier onlyMintBudgetSubmitter() {
+        if (msg.sender != mintBudgetSubmitter) {
+            revert NotMintBudgetSubmitter(msg.sender);
+        }
+        _;
+    }
+
     function _checkBlocked(address addr) private view {
         if (isBlocked[addr]) {
             revert BlockedAccount(addr);
@@ -221,13 +253,57 @@ contract MToken is MTokenBase, ICCClient {
         }
     }
 
-    function _checkMintBudget(uint256 amount) private view {
+    function _checkMintBudget(uint256 amount) internal view {
         if (amount > mintBudget) {
             revert MintBudgetNotEnough(mintBudget, amount);
         }
     }
 
-    function _checkZeroValue(uint256 value) private pure {
+    // the submitter credits mintBudget and the operator spends it, so one key holding both
+    // roles could walk credit -> mint alone; both setters enforce the split, on each call.
+    function _checkOperatorSubmitterDistinct(address _operator, address _submitter) private pure {
+        if (_operator == _submitter) {
+            revert OperatorSubmitterConflict(_operator);
+        }
+    }
+
+    // the source-chain tx that authorized a mintBudget submission: variable-length because
+    // chains disagree on tx id size (32 bytes on EVM/Sui/Stellar, 64 on Solana), and only
+    // recorded — the contract can't read another chain, so verification is off-chain.
+    function _checkSrcTxHash(bytes calldata srcTxHash) internal pure {
+        if (srcTxHash.length == 0 || srcTxHash.length > MAX_SRC_TX_HASH_LEN) {
+            revert InvalidSrcTxHash(srcTxHash.length);
+        }
+    }
+
+    // monotonic advance of one watermark, shared by the four mintBudget entry points. Two
+    // functions because Solidity has no storage pointer to a value-type member, so the field
+    // can't be parameterised. The write precedes the callers' later checks — a revert undoes it.
+    function _advanceAllocated(
+        MintBudgetInfo storage mbInfo,
+        uint112 newTotal
+    ) internal returns (uint112 deltaAmount) {
+        uint112 curr = mbInfo.totalAllocatedAmount;
+        if (curr >= newTotal) {
+            revert StaleMintBudgetSubmission(curr, newTotal);
+        }
+        mbInfo.totalAllocatedAmount = newTotal;
+        return newTotal - curr;
+    }
+
+    function _advanceReturned(
+        MintBudgetInfo storage mbInfo,
+        uint112 newTotal
+    ) internal returns (uint112 deltaAmount) {
+        uint112 curr = mbInfo.totalReturnedAmount;
+        if (curr >= newTotal) {
+            revert StaleMintBudgetSubmission(curr, newTotal);
+        }
+        mbInfo.totalReturnedAmount = newTotal;
+        return newTotal - curr;
+    }
+
+    function _checkZeroValue(uint256 value) internal pure {
         if (value == 0) {
             revert ZeroValue();
         }
@@ -355,6 +431,7 @@ contract MToken is MTokenBase, ICCClient {
 
     function setOperator(address _operator) public onlyOwner {
         _checkZeroAddress(_operator);
+        _checkOperatorSubmitterDistinct(_operator, mintBudgetSubmitter);
         if (ensureDelay(OP_SET_OPERATOR, uint160(operator), uint160(_operator), delay)) {
             operator = _operator;
         }
@@ -364,6 +441,14 @@ contract MToken is MTokenBase, ICCClient {
         _checkZeroAddress(_receiver);
         if (ensureGovDelay(OP_SET_FORCED_TRANSFER_RECEIVER, uint160(forcedTransferReceiver), uint160(_receiver))) {
             forcedTransferReceiver = _receiver;
+        }
+    }
+
+    function setMintBudgetSubmitter(address _submitter) public onlyOwner {
+        _checkZeroAddress(_submitter);
+        _checkOperatorSubmitterDistinct(operator, _submitter);
+        if (ensureGovDelay(OP_SET_MINT_BUDGET_SUBMITTER, uint160(mintBudgetSubmitter), uint160(_submitter))) {
+            mintBudgetSubmitter = _submitter;
         }
     }
 
@@ -519,7 +604,7 @@ contract MToken is MTokenBase, ICCClient {
 
     function convertToSharedDecimals(
         uint256 value
-    ) private pure returns (uint256) {
+    ) internal pure returns (uint256) {
         if (value % DECIMALS_SCALE_FACTOR != 0) {
             revert PrecisionLost();
         }
@@ -528,7 +613,7 @@ contract MToken is MTokenBase, ICCClient {
 
     function convertToLocalDecimals(
         uint256 value
-    ) private pure returns (uint256) {
+    ) internal pure returns (uint256) {
         return value * DECIMALS_SCALE_FACTOR;
     }
 
@@ -565,28 +650,6 @@ contract MToken is MTokenBase, ICCClient {
         return msgOfCcSendToken(sender, receiver, value);
     }
 
-    function msgOfCcSendMintBudget(
-        uint112 value
-    ) public view returns (bytes memory message) {
-        _checkMintBudget(value);
-        value = convertToSharedDecimals(value).toUint112();
-        return abi.encode(TAG_SEND_MINT_BUDGET, abi.encode(value));
-    }
-
-    // called by the messenger contract to initialize a cross-chain mint-budget transfer
-    // caller is passed explicitly by the messenger (its own msg.sender) so the operator
-    // check avoids tx.origin, which breaks account-abstraction and is phishing-prone
-    function ccSendMintBudget(
-        uint112 value,
-        address caller
-    ) public onlyMessenger whenNotPaused returns (bytes memory message) {
-        _checkOperator(caller);
-        _checkZeroValue(value);
-        message = msgOfCcSendMintBudget(value);
-        mintBudget -= value;
-        emit CCSendMintBudget(value);
-    }
-
     // finish a cross-chain token transfer
     // note: mints tokens without checking chain's mintBudget; it is by design
     // that a chain's totalSupply can exceed its mintBudget via cross-chain transfers
@@ -609,21 +672,11 @@ contract MToken is MTokenBase, ICCClient {
         }
     }
 
-    // finish a cross-chain mint-budget transfer
-    function ccReceiveMintBudget(bytes memory message) internal {
-        uint112 value = abi.decode(message, (uint112));
-        value = convertToLocalDecimals(value).toUint112();
-        mintBudget += value;
-        emit CCReceiveMintBudget(value);
-    }
-
     // called by the messenger contract to handle a received cross-chain message
     function ccReceive(bytes calldata message) public onlyMessenger {
         (uint256 tag, bytes memory data) = abi.decode(message, (uint256, bytes));
         if (tag == TAG_SEND_TOKEN) {
             ccReceiveToken(data);
-        } else if (tag == TAG_SEND_MINT_BUDGET) {
-            ccReceiveMintBudget(data);
         } else {
             revert InvalidMsg(tag);
         }
