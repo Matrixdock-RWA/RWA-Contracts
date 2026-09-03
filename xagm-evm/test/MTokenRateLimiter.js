@@ -6,11 +6,17 @@ const { expect } = require("chai");
 const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 const {
   deployTestFixture,
+  OP, rateLimitedMsgReqId, addToWhitelistReqId,
   addrTo32Bytes,
   zeroAddr,
 } = require("./MTokenTestUtils.js");
 
 const FAKE_DST_EID = 1;
+
+// setRateLimit packs (window, limit) into the single uint160 request slot
+const packRateLimit = (limit, window) => (BigInt(window) << 128n) | BigInt(limit);
+const procReqId = (rl, i) => rateLimitedMsgReqId("OP_CC_PROCESS_RATE_LIMITED_MSG", rl, i);
+const discardReqId = (rl, i) => rateLimitedMsgReqId("OP_CC_DISCARD_RATE_LIMITED_MSG", rl, i);
 
 function makeCcSendTokenMsg(sender, receiver, amount) {
   return '0x'
@@ -55,15 +61,28 @@ describe("MTokenRateLimiter", function () {
 
     // first call: request (rate limit unchanged)
     await expect(rateLimiter.setRateLimit(10000, 3600))
-      .to.emit(rateLimiter, "SetRateLimitRequest")
-      .withArgs(10000, 3600, anyArg => anyArg > 0n);
+      .to.emit(rateLimiter, "DelayedOpRequest")
+      .withArgs(OP("OP_SET_RATE_LIMIT"), 0, packRateLimit(10000, 3600), anyArg => anyArg > 0n);
     expect(await rateLimiter.getRateLimit()).to.deep.equal([0n, 0n]);
 
     // second call: execute
     await expect(rateLimiter.setRateLimit(10000, 3600))
-      .to.emit(rateLimiter, "SetRateLimitEffected").withArgs(10000, 3600)
+      .to.emit(rateLimiter, "DelayedOpEffected")
+      .withArgs(OP("OP_SET_RATE_LIMIT"), packRateLimit(10000, 3600))
       .to.emit(rateLimiter, "RateLimitsChanged").withArgs([[FAKE_DST_EID, 10000, 3600]]);
     expect(await rateLimiter.getRateLimit()).to.deep.equal([10000n, 3600n]);
+
+    // replacing a non-zero configuration reports both packed values
+    await expect(rateLimiter.setRateLimit(20000, 7200))
+      .to.emit(rateLimiter, "DelayedOpRequest")
+      .withArgs(
+        OP("OP_SET_RATE_LIMIT"),
+        packRateLimit(10000, 3600),
+        packRateLimit(20000, 7200),
+        anyValue
+      );
+    await rateLimiter.setRateLimit(20000, 7200);
+    expect(await rateLimiter.getRateLimit()).to.deep.equal([20000n, 7200n]);
   });
 
   it("setRateLimit rejects out-of-range params", async function () {
@@ -116,13 +135,21 @@ describe("MTokenRateLimiter", function () {
 
     // first call: request (limit unchanged)
     await expect(rateLimiter.setSingleMsgLimit(1000))
-      .to.emit(rateLimiter, "SetSingleMsgLimitRequest");
+      .to.emit(rateLimiter, "DelayedOpRequest")
+      .withArgs(OP("OP_SET_SINGLE_MSG_LIMIT"), 0, 1000, anyValue);
     expect(await rateLimiter.singleMsgLimit()).to.equal(0);
 
     // second call: execute
     await expect(rateLimiter.setSingleMsgLimit(1000))
-      .to.emit(rateLimiter, "SetSingleMsgLimitEffected").withArgs(1000);
+      .to.emit(rateLimiter, "DelayedOpEffected").withArgs(OP("OP_SET_SINGLE_MSG_LIMIT"), 1000);
     expect(await rateLimiter.singleMsgLimit()).to.equal(1000);
+
+    // replacing a non-zero limit reports the current value
+    await expect(rateLimiter.setSingleMsgLimit(2000))
+      .to.emit(rateLimiter, "DelayedOpRequest")
+      .withArgs(OP("OP_SET_SINGLE_MSG_LIMIT"), 1000, 2000, anyValue);
+    await rateLimiter.setSingleMsgLimit(2000);
+    expect(await rateLimiter.singleMsgLimit()).to.equal(2000);
   });
 
   it("setSingleMsgLimit rejects out-of-range param", async function () {
@@ -170,15 +197,22 @@ describe("MTokenRateLimiter", function () {
       .to.be.revertedWithCustomError(rateLimiter, "OwnableUnauthorizedAccount")
       .withArgs(alice.address);
 
-    // first call: request (whitelist unchanged)
+    // first call: request (whitelist unchanged). reqHash already binds sender+receiver,
+    // so both uint160 slots stay 0 and the args ride along in DelayedOpExtraData.
+    const wl = addToWhitelistReqId(aliceBytes, bob.address);
     await expect(rateLimiter.addToWhitelist(aliceBytes, bob.address))
-      .to.emit(rateLimiter, "AddToWhitelistRequest");
+      .to.emit(rateLimiter, "DelayedOpExtraData")
+      .withArgs(wl.reqHash, OP("OP_ADD_TO_WHITELIST"), wl.payload)
+      .and.to.emit(rateLimiter, "DelayedOpRequest")
+      .withArgs(wl.reqHash, 0, 0, anyValue);
     expect(await rateLimiter.isInWhitelist(aliceBytes, bob.address)).to.equal(false);
 
     // second call: execute
     await expect(rateLimiter.addToWhitelist(aliceBytes, bob.address))
-      .to.emit(rateLimiter, "AddToWhitelistEffected")
-      .withArgs(aliceBytes, bob.address);
+      .to.emit(rateLimiter, "AddedToWhitelist")
+      .withArgs(aliceBytes, bob.address)
+      .and.to.emit(rateLimiter, "DelayedOpEffected")
+      .withArgs(wl.reqHash, 0);
     expect(await rateLimiter.isInWhitelist(aliceBytes, bob.address)).to.equal(true);
   });
 
@@ -374,11 +408,13 @@ describe("MTokenRateLimiter", function () {
 
     // ccProcessRateLimitedMsg is delayed (delay=0: two calls)
     await expect(mt.connect(operator).ccProcessRateLimitedMsg(1))
-      .to.emit(mt, "RateLimitedMsgProcessRequest").withArgs(1, anyValue);
+      .to.emit(mt, "DelayedOpRequest")
+      .withArgs(procReqId(rateLimiter.target, 1), 0, 1, anyValue);
     const tx = mt.connect(operator).ccProcessRateLimitedMsg(1);
     await expect(tx).to.emit(mt, "CCReceiveToken")
       .withArgs(bob.address.toLowerCase(), alice.address, 4000);
-    await expect(tx).to.emit(mt, "RateLimitedMsgProcessEffected").withArgs(1);
+    await expect(tx).to.emit(mt, "DelayedOpEffected")
+      .withArgs(procReqId(rateLimiter.target, 1), 1);
     await expect(tx).to.emit(rateLimiter, "RateLimitedMsgRemoved").withArgs(1);
     expect(await mt.balanceOf(alice.address)).to.equal(4000);
     expect(await rateLimiter.rateLimitedMsgs(1))
@@ -400,7 +436,7 @@ describe("MTokenRateLimiter", function () {
     await mt.unpause();
     await mt.connect(operator).ccProcessRateLimitedMsg(0);
     await expect(mt.connect(operator).ccProcessRateLimitedMsg(0))
-      .to.emit(mt, "RateLimitedMsgProcessEffected").withArgs(0);
+      .to.emit(mt, "DelayedOpEffected").withArgs(procReqId(rateLimiter.target, 0), 0);
   });
 
   it("ccDiscardRateLimitedMsg", async function () {
@@ -418,9 +454,11 @@ describe("MTokenRateLimiter", function () {
 
     // ccDiscardRateLimitedMsg is delayed (delay=0: two calls)
     await expect(mt.connect(operator).ccDiscardRateLimitedMsg(1))
-      .to.emit(mt, "RateLimitedMsgDiscardRequest").withArgs(1, anyValue);
+      .to.emit(mt, "DelayedOpRequest")
+      .withArgs(discardReqId(rateLimiter.target, 1), 0, 1, anyValue);
     const tx = mt.connect(operator).ccDiscardRateLimitedMsg(1);
-    await expect(tx).to.emit(mt, "RateLimitedMsgDiscardEffected").withArgs(1);
+    await expect(tx).to.emit(mt, "DelayedOpEffected")
+      .withArgs(discardReqId(rateLimiter.target, 1), 1);
     await expect(tx).to.emit(rateLimiter, "RateLimitedMsgRemoved").withArgs(1);
     expect(await mt.balanceOf(alice.address)).to.equal(0);
     expect(await rateLimiter.rateLimitedMsgs(1))
@@ -452,7 +490,7 @@ describe("MTokenRateLimiter", function () {
     await mt.ccReceiveToken(alice.address, bob.address, 8000);
     await mt.ccReceiveToken(alice.address, bob.address, 3000); // #0
     await expect(mt.connect(operator).ccProcessRateLimitedMsg(0))
-      .to.emit(mt, "RateLimitedMsgProcessRequest").withArgs(0, anyValue);
+      .to.emit(mt, "DelayedOpRequest").withArgs(procReqId(rateLimiter.target, 0), 0, 0, anyValue);
   });
 
   it("a request tied to a since-replaced rate limiter cannot be matured against a new one", async function () {
@@ -466,7 +504,7 @@ describe("MTokenRateLimiter", function () {
     // pre-register a process request against the old rate limiter's #0, but
     // never mature/execute it
     await expect(mt.connect(operator).ccProcessRateLimitedMsg(0))
-      .to.emit(mt, "RateLimitedMsgProcessRequest").withArgs(0, anyValue);
+      .to.emit(mt, "DelayedOpRequest").withArgs(procReqId(rateLimiter.target, 0), 0, 0, anyValue);
 
     // drain the old rate limiter so it can be swapped out
     await mt.connect(operator).ccDiscardRateLimitedMsg(0);
@@ -496,7 +534,7 @@ describe("MTokenRateLimiter", function () {
     // the stale request from the old rate limiter must NOT mature this
     // unrelated message instantly; it should register as a brand-new request
     await expect(mt.connect(operator).ccProcessRateLimitedMsg(0))
-      .to.emit(mt, "RateLimitedMsgProcessRequest").withArgs(0, anyValue);
+      .to.emit(mt, "DelayedOpRequest").withArgs(procReqId(rateLimiter2.target, 0), 0, 0, anyValue);
     expect(await rateLimiter2.rateLimitedMsgs(0))
       .to.deep.equal([alice.address, 5000, bob.address.toLowerCase()]);
   });

@@ -15,9 +15,7 @@ import {ICCClient} from "./interfaces/ICCClient.sol";
 ---------------------------------------+--------------------------------
 addAllowedPeer / removeAllowedPeer     | lzAddPeer / lzRemovePeer
 sendTokenToChain                       | lzSendTokenToChain
-sendMintBudgetToChain                  | lzSendMintBudgetToChain
 calculateCCSendTokenFeeAndMessage      | lzCalculateSendTokenFee
-calculateCcSendMintBudgetFeeAndMessage | lzCalculateSendMintBudgetFee
 
 */
 
@@ -37,12 +35,10 @@ contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
 
     bytes32 constant OP_ADD_ALLOWED_PEER = keccak256("OP_ADD_ALLOWED_PEER");
 
-    event AddAllowedPeerEffected(uint64 chainSelector, bytes messenger, uint8 addrLen);
+    event AllowedPeerAdded(uint64 chainSelector, bytes messenger, uint8 addrLen);
     event AllowedPeerRemoved(uint64 chainSelector, bytes messenger);
-    event AddAllowedPeerRequest(uint64 chainSelector, bytes messenger, uint8 addrLen, uint64 et);
     event CCReceive(bytes32 indexed messageID, bytes messageData);
     event CCSendToken(bytes32 indexed messageID, bytes messageData);
-    event CCSendMintBudget(bytes32 indexed messageID, bytes messageData);
 
     error NotInAllowListed(uint64 chainSelector, bytes messenger);
     error InsufficientFee(uint256 required, uint256 actual);
@@ -61,15 +57,19 @@ contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
         bytes calldata messenger,
         uint8 addrLen
     ) external onlyOwner {
-        uint64 et = ensureDelay(_addAllowedPeerReqHash(chainSelector, messenger), addrLen, delay);
-        if (et == 0) {
+        bytes32 reqHash = _addAllowedPeerReqHash(chainSelector, messenger);
+        PeerInfo memory curr = allowedPeer[chainSelector][messenger];
+        uint160 oldVal = _allowedPeerVal(curr.allowed, curr.addrLen);
+        uint160 newVal = _allowedPeerVal(true, addrLen);
+        if (ensureDelay(reqHash, oldVal, newVal, delay)) {
             allowedPeer[chainSelector][messenger] = PeerInfo({
                 allowed: true,
                 addrLen: addrLen
             });
-            emit AddAllowedPeerEffected(chainSelector, messenger, addrLen);
+            emit AllowedPeerAdded(chainSelector, messenger, addrLen);
         } else {
-            emit AddAllowedPeerRequest(chainSelector, messenger, addrLen, et);
+            emit DelayedOpExtraData(reqHash, OP_ADD_ALLOWED_PEER,
+                abi.encode(chainSelector, messenger, addrLen));
         }
     }
 
@@ -95,6 +95,13 @@ contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
         bytes calldata messenger
     ) private pure returns (bytes32) {
         return keccak256(abi.encode(OP_ADD_ALLOWED_PEER, chainSelector, messenger));
+    }
+
+    // encodes PeerInfo into ensureDelay's uint160 value slot: bit 8 marks "allowed",
+    // the low 8 bits carry addrLen. An absent peer maps to 0, which keeps it
+    // distinguishable from an allowed peer whose addrLen is 0 (no length check).
+    function _allowedPeerVal(bool allowed, uint8 addrLen) private pure returns (uint160) {
+        return allowed ? (uint160(1) << 8) | uint160(addrLen) : 0;
     }
 
     function _ccipReceive(
@@ -135,25 +142,6 @@ contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
         );
     }
 
-    function calculateCcSendMintBudgetFeeAndMessage(
-        uint64 destinationChainSelector,
-        bytes calldata messageReceiver,
-        uint112 value,
-        bytes calldata extraArgs
-    )
-        public
-        view
-        returns (uint256 fee, Client.EVM2AnyMessage memory evm2AnyMessage)
-    {
-        bytes memory data = ICCClient(ccClient).msgOfCcSendMintBudget(value);
-        (fee, evm2AnyMessage) = getFeeAndMessage(
-            destinationChainSelector,
-            messageReceiver,
-            extraArgs,
-            data
-        );
-    }
-
     // note: unlike LayerZero component, there is no way to specifically pause CCIP
     // send transactions. To pause CCIP requires enabling disableCcSend which will
     // pause both CCIP & LayerZero send txns. We are gradually deprecating CCIP
@@ -183,25 +171,6 @@ contract MTokenMessenger is CCIPReceiver, MTokenMessengerLZ {
             data
         );
         emit CCSendToken(messageId, data);
-    }
-
-    function sendMintBudgetToChain(
-        uint64 destinationChainSelector,
-        bytes calldata messageReceiver,
-        uint112 value,
-        bytes calldata extraArgs
-    ) external payable returns (bytes32 messageId) {
-        if (!allowedPeer[destinationChainSelector][messageReceiver].allowed) {
-            revert NotInAllowListed(destinationChainSelector, messageReceiver);
-        }
-        bytes memory data = ICCClient(ccClient).ccSendMintBudget(value, msg.sender);
-        messageId = sendDataToChain(
-            destinationChainSelector,
-            messageReceiver,
-            extraArgs,
-            data
-        );
-        emit CCSendMintBudget(messageId, data);
     }
 
     function getFeeAndMessage(

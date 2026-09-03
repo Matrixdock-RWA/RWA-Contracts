@@ -32,13 +32,11 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
 
     event CCReceiveLZ(bytes32 indexed messageID, bytes messageData);
     event CCSendTokenLZ(bytes32 indexed messageID, bytes messageData);
-    event CCSendMintBudgetLZ(bytes32 indexed messageID, bytes messageData);
     event LZPaused();
-    event LZUnpauseRequest(uint64 et);
-    event LZUnpauseEffected();
-    event LZAddPeerEffected(uint32 indexed eid, bytes32 peer, uint8 addrLen);
+    event LZUnpaused();
+
+    event LZPeerAdded(uint32 indexed eid, bytes32 peer, uint8 addrLen);
     event LZPeerRemoved(uint32 indexed eid);
-    event LZAddPeerRequest(uint32 indexed eid, bytes32 peer, uint8 addrLen, uint64 et);
 
     error InvalidRecipientLength(uint8 expected, uint8 actual);
     error LZNotPaused();
@@ -104,12 +102,9 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
         if (!$.lzPaused) {
             revert LZNotPaused();
         }
-        uint64 et = ensureDelay(OP_LZ_UNPAUSE, 0, delay);
-        if (et == 0) {
+        if (ensureDelay(OP_LZ_UNPAUSE, 0, 0, delay)) {
             $.lzPaused = false;
-            emit LZUnpauseEffected();
-        } else {
-            emit LZUnpauseRequest(et);
+            emit LZUnpaused();
         }
     }
 
@@ -131,14 +126,18 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
         bytes32 _peer,
         uint8 _addrLen
     ) public onlyOwner {
-        uint64 et = ensureDelay(_lzAddPeerReqHash(_eid), _lzAddPeerVal(_peer, _addrLen), delay);
-        if (et == 0) {
+        bytes32 reqHash = _lzAddPeerReqHash(_eid);
+        MsgLzStorage storage $ = _getMsgLzStorage();
+        bytes32 currPeer = peers(_eid);
+        uint160 oldVal = _lzAddPeerVal(currPeer, $.eidToAddrLen[_eid]);
+        uint160 newVal = _lzAddPeerVal(_peer, _addrLen);
+        if (ensureDelay(reqHash, oldVal, newVal, delay)) {
             super.setPeer(_eid, _peer);
-            MsgLzStorage storage $ = _getMsgLzStorage();
             $.eidToAddrLen[_eid] = _addrLen;
-            emit LZAddPeerEffected(_eid, _peer, _addrLen);
+            emit LZPeerAdded(_eid, _peer, _addrLen);
         } else {
-            emit LZAddPeerRequest(_eid, _peer, _addrLen, et);
+            emit DelayedOpExtraData(reqHash, OP_LZ_ADD_PEER,
+                abi.encode(_eid, _peer, _addrLen));
         }
     }
 
@@ -161,10 +160,11 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
         return keccak256(abi.encode(OP_LZ_ADD_PEER, _eid));
     }
 
-    // fingerprints (peer, addrLen) into the ensureDelay value slot (uint160), since
-    // _peer (bytes32) cannot be packed there directly; collision risk is negligible
+    // packs (peer, addrLen) into the uint160 value slot: addrLen in the low 8 bits,
+    // the low 152 bits of _peer above it — the dropped high bits are fine, the full
+    // args go out in DelayedOpExtraData. An absent peer (0, 0) packs to 0.
     function _lzAddPeerVal(bytes32 _peer, uint8 _addrLen) private pure returns (uint160) {
-        return uint160(uint256(keccak256(abi.encode(_peer, _addrLen))));
+        return (uint160(uint256(_peer)) << 8) | _addrLen;
     }
 
     // lz OApp receive implementation
@@ -201,16 +201,6 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
         emit CCSendTokenLZ(messageId, _data);
     }
 
-    function lzSendMintBudgetToChain(
-        uint32 _dstEid,
-        uint112 value,
-        bytes calldata _options
-    ) external payable onlyLZNotPaused returns (bytes32 messageId) {
-        bytes memory _data = ICCClient(ccClient).ccSendMintBudget(value, msg.sender);
-        messageId = sendThroughLZ(_dstEid, _data, _options, msg.value);
-        emit CCSendMintBudgetLZ(messageId, _data);
-    }
-
     // lz OApp send implementation
     function sendThroughLZ(
         uint32 _dstEid,
@@ -244,16 +234,6 @@ contract MTokenMessengerLZ is MTokenMessengerBaseUpgradeable, OAppUpgradeable {
             recipient,
             value
         );
-        MessagingFee memory fee = _quote(_dstEid, _data, _options, false);
-        return fee.nativeFee;
-    }
-
-    function lzCalculateSendMintBudgetFee(
-        uint32 _dstEid, // Destination chain's endpoint ID.
-        uint112 value,
-        bytes calldata _options
-    ) public view returns (uint256 nativeFee) {
-        bytes memory _data = ICCClient(ccClient).msgOfCcSendMintBudget(value);
         MessagingFee memory fee = _quote(_dstEid, _data, _options, false);
         return fee.nativeFee;
     }

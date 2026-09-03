@@ -25,12 +25,8 @@ abstract contract MTokenMessengerBaseUpgradeable is DelayedUpgradeable {
 
     function setDelay(uint64 _delay) public onlyOwner {
         checkDelay(_delay);
-        uint64 et = ensureDelay(OP_SET_DELAY, _delay, delay);
-        if (et == 0) {
+        if (ensureDelay(OP_SET_DELAY, delay, _delay, delay)) {
             delay = _delay;
-            emit SetDelayEffected(_delay);
-        } else {
-            emit SetDelayRequest(delay, _delay, et);
         }
     }
 

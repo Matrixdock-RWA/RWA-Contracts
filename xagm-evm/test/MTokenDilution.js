@@ -183,32 +183,6 @@ describe("MTokenDilution", function () {
     expect(await mt.ozPerTokenBaseTime()).to.equal(currDayStartTS + 30 * SECONDS_PER_DAY);
   });
 
-  describe("ccManually", function () {
-
-    it("ccSendMintBudgetManually", async function () {
-      const {mt, reserveFeed, operator, alice} = await loadFixture(deployTestFixture);
-      await expect(mt.connect(alice).ccSendMintBudgetManually(1000e9))
-        .to.be.revertedWithCustomError(mt, "NotOperator");
-
-      await reserveFeed.setReserve(2000e9);
-      await mt.connect(operator).increaseMintBudget(2000e9);
-      await expect(mt.connect(operator).ccSendMintBudgetManually(1000e9))
-        .to.emit(mt, "CCSendMintBudgetManually")
-        .withArgs(1000e9);
-    });
-
-    it("ccReceiveMintBudgetManually", async function () {
-      const {mt, operator, alice} = await loadFixture(deployTestFixture);
-      await expect(mt.connect(alice).ccReceiveMintBudgetManually(1000e9))
-        .to.be.revertedWithCustomError(mt, "NotOperator");
-
-      await expect(mt.connect(operator).ccReceiveMintBudgetManually(1000e9))
-        .to.emit(mt, "CCReceiveMintBudgetManually")
-        .withArgs(1000e9);
-    });
-
-  });
-
   describe("expectedOzPerToken", function () {
 
     it("mint request", async function () {
