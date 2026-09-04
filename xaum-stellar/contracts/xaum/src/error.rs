@@ -5,6 +5,7 @@ use soroban_sdk::contracterror;
 pub enum TokenError {
     // -------- generic --------
     NegativeAmountNotAllowed = 1,
+    ZeroValue = 2,
 
     // -------- auth / role --------
     NotOwner = 10,
@@ -13,6 +14,8 @@ pub enum TokenError {
     NoPendingOwner = 13,
     Unauthorized = 14, // caller is neither of the accepted roles (owner-or-revoker / owner-or-operator)
     NoPendingRevoker = 15,
+    NotMintBudgetSubmitter = 16,
+    OperatorSubmitterConflict = 17, // operator and mintBudgetSubmitter must stay distinct
 
     // -------- delay / timelock --------
     DelayTooSmall = 20,
@@ -26,6 +29,11 @@ pub enum TokenError {
 
     // -------- mint / budget --------
     MintBudgetNotEnough = 30,
+    StaleMintBudgetSubmission = 31, // cumulative total not strictly above the recorded one
+    WrongTargetChain = 32, // submission carries another chain's eid
+    LocalEidNotSet = 33,
+    LocalEidLocked = 34, // local eid is frozen once mintBudget has moved under it
+    MintBudgetAmountTooLarge = 35, // relay totals must fit the canonical EVM uint112 ABI
 
     // -------- block list --------
     UserBlocked = 40,

@@ -58,4 +58,13 @@ pub enum DataKey {
     ForcedTransferReceiver,
     NextForcedTransferReceiver,
     EtNextForcedTransferReceiver,
+    // global mintBudget management. Appended last: DataKey is a #[contracttype] enum, whose
+    // unit variants are keyed by name, so new variants never disturb the deployed contract's
+    // existing entries.
+    MintBudgetSubmitter,
+    NextMintBudgetSubmitter,
+    EtNextMintBudgetSubmitter,
+    LocalEid,
+    TotalAllocatedAmount,
+    TotalReturnedAmount,
 }

@@ -70,7 +70,7 @@ impl TokenInterface for MockToken {
     fn burn(_env: Env, _from: Address, _amount: i128) {}
     fn burn_from(_env: Env, _spender: Address, _from: Address, _amount: i128) {}
     fn decimals(_env: Env) -> u32 {
-        7
+        9
     }
     fn name(env: Env) -> String {
         String::from_str(&env, "Mock")

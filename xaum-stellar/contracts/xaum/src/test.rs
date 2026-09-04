@@ -1,11 +1,12 @@
 #![cfg(test)]
 extern crate std;
 
-use crate::contract::Token;
+use crate::contract::{Token, SHARED_DECIMALS};
+use crate::error::TokenError;
 use crate::TokenClient;
 use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    testutils::{Address as _, Ledger},
+    testutils::{Address as _, Ledger, MockAuth, MockAuthInvoke},
     map, Address, Bytes, BytesN, Env, IntoVal, Map, String, Symbol, TryIntoVal, Val,
 };
 
@@ -14,6 +15,10 @@ const GOV_DELAY: u64 = 3600 * 24; // 24h (MIN_GOV_DELAY)
 const MAX_GOV_DELAY: u64 = 3600 * 24 * 7; // 7d
 const DELAY: u64 = 3_600; // 1h (MIN_DELAY)
 const MAX_DELAY: u64 = 3600 * 24 * 2; // 48h
+// This chain's own eid and some other chain's, both arbitrary here: the real value is
+// configured per deployment via set_local_eid.
+const LOCAL_EID: u32 = 30_316;
+const OTHER_EID: u32 = 30_184;
 
 // ---- helpers ----
 
@@ -29,7 +34,7 @@ fn create_token<'a>(
             owner,
             operator,
             revoker,
-            7_u32,
+            SHARED_DECIMALS,
             String::from_str(e, "XAUM Gold"),
             String::from_str(e, "XAUM"),
         ),
@@ -65,6 +70,39 @@ fn arm_delays(e: &Env, t: &TokenClient) {
     arm_delay(e, t, DELAY);
 }
 
+/// Wire the mintBudget relay: declare this chain's eid and install `submitter`.
+/// set_mint_budget_submitter sits at the gov tier and uses the two-call pattern, so it
+/// costs one gov_delay window (+1s, since the second call must land strictly after et).
+fn arm_mint_budget_submitter(e: &Env, t: &TokenClient, submitter: &Address) {
+    t.set_local_eid(&LOCAL_EID);
+    t.set_mint_budget_submitter(submitter);
+    warp(e, t.gov_delay() + 1);
+    t.set_mint_budget_submitter(submitter);
+    assert_eq!(t.mint_budget_submitter(), Some(submitter.clone()));
+}
+
+/// An Ethereum tx hash. The contract records it verbatim and never verifies it; the
+/// BytesN<32> type makes any other length unrepresentable at the ABI.
+fn src_tx_hash(e: &Env) -> BytesN<32> {
+    BytesN::from_array(e, &[0xab_u8; 32])
+}
+
+/// Claim mintBudget from Ethereum. `new_total` is the *cumulative* total, not a delta.
+fn claim_budget(e: &Env, t: &TokenClient, new_total: i128) {
+    t.claim_mint_budget_from_eth(&LOCAL_EID, &new_total, &src_tx_hash(e));
+}
+
+/// Give this chain `total` of mintBudget over the relay, wiring a submitter on first use.
+/// Claiming from Ethereum is the only way budget is created here, so every test that
+/// needs budget goes through it.
+fn fund_budget(e: &Env, t: &TokenClient, total: i128) {
+    if t.mint_budget_submitter().is_none() {
+        let submitter = Address::generate(e);
+        arm_mint_budget_submitter(e, t, &submitter);
+    }
+    claim_budget(e, t, total);
+}
+
 /// Two-phase mint that works for any current delay (registers, waits delay+1, executes).
 fn do_mint(e: &Env, t: &TokenClient, to: &Address, amount: i128, nonce: u64) {
     let r = t.mint_to(to, &amount, &nonce);
@@ -97,7 +135,7 @@ fn ft_req_hash(
 
 #[test]
 #[should_panic]
-fn test_constructor_decimal_too_large() {
+fn test_constructor_rejects_non_shared_decimals() {
     let e = Env::default();
     let owner = Address::generate(&e);
     let operator = Address::generate(&e);
@@ -108,7 +146,7 @@ fn test_constructor_decimal_too_large() {
             &owner,
             &operator,
             &revoker,
-            19_u32,
+            SHARED_DECIMALS - 1,
             String::from_str(&e, "X"),
             String::from_str(&e, "X"),
         ),
@@ -128,7 +166,7 @@ fn test_constructor_state() {
     assert_eq!(token.owner(), owner);
     assert_eq!(token.operator(), operator);
     assert_eq!(token.revoker(), revoker);
-    assert_eq!(token.decimals(), 7);
+    assert_eq!(token.decimals(), SHARED_DECIMALS);
     assert_eq!(token.total_supply(), 0);
     assert_eq!(token.mint_budget(), 0);
     // timelocks start disarmed
@@ -136,6 +174,11 @@ fn test_constructor_state() {
     assert_eq!(token.gov_delay(), 0);
     assert!(!token.paused());
     assert!(token.forced_transfer_receiver().is_none());
+    // the mintBudget relay starts unwired: no submitter, no declared chain id, no history
+    assert!(token.mint_budget_submitter().is_none());
+    assert_eq!(token.local_eid(), 0);
+    assert_eq!(token.total_allocated_amount(), 0);
+    assert_eq!(token.total_returned_amount(), 0);
 }
 
 // ---- mint_to ----
@@ -151,7 +194,7 @@ fn test_mint_to_two_phase() {
     let user = Address::generate(&e);
     let token = create_token(&e, &owner, &operator, &revoker);
 
-    token.change_mint_budget(&1000_i128);
+    fund_budget(&e, &token, 1000);
 
     let r = token.mint_to(&user, &500, &1);
     assert!(!r);
@@ -178,7 +221,7 @@ fn test_mint_to_executes_after_et() {
     let token = create_token(&e, &owner, &operator, &revoker);
 
     arm_delays(&e, &token);
-    token.change_mint_budget(&1000_i128);
+    fund_budget(&e, &token, 1000);
 
     let t0 = e.ledger().timestamp();
     token.mint_to(&user, &500, &1); // registers, et = t0 + DELAY
@@ -201,7 +244,7 @@ fn test_mint_to_too_early_panics() {
     let token = create_token(&e, &owner, &operator, &revoker);
 
     arm_delays(&e, &token);
-    token.change_mint_budget(&1000_i128);
+    fund_budget(&e, &token, 1000);
     token.mint_to(&user, &500, &1); // registers, et = now + DELAY
     warp(&e, DELAY - 1); // still before et
     token.mint_to(&user, &500, &1); // TooEarlyToExecute
@@ -218,7 +261,7 @@ fn test_mint_to_different_nonces_are_independent() {
     let user = Address::generate(&e);
     let token = create_token(&e, &owner, &operator, &revoker);
 
-    token.change_mint_budget(&2000_i128);
+    fund_budget(&e, &token, 2000);
     token.mint_to(&user, &300, &1);
     token.mint_to(&user, &700, &2);
     warp(&e, 1);
@@ -239,7 +282,7 @@ fn test_revoke_mint_request_by_owner_and_revoker() {
     let user = Address::generate(&e);
     let token = create_token(&e, &owner, &operator, &revoker);
 
-    token.change_mint_budget(&2000_i128);
+    fund_budget(&e, &token, 2000);
 
     // register nonce 1, revoke by owner
     token.mint_to(&user, &300, &1);
@@ -282,7 +325,7 @@ fn test_revoke_mint_request_by_stranger_panics() {
     let user = Address::generate(&e);
     let token = create_token(&e, &owner, &operator, &revoker);
 
-    token.change_mint_budget(&1000_i128);
+    fund_budget(&e, &token, 1000);
     token.mint_to(&user, &300, &1);
     let req = {
         let mut bytes = Bytes::new(&e);
@@ -298,39 +341,6 @@ fn test_revoke_mint_request_by_stranger_panics() {
 // ---- mint_budget ----
 
 #[test]
-fn test_change_mint_budget_increase_and_decrease() {
-    let e = Env::default();
-    e.mock_all_auths();
-    e.ledger().set_timestamp(START_TIME);
-    let owner = Address::generate(&e);
-    let operator = Address::generate(&e);
-    let revoker = Address::generate(&e);
-    let token = create_token(&e, &owner, &operator, &revoker);
-
-    token.change_mint_budget(&1000_i128);
-    assert_eq!(token.mint_budget(), 1000);
-    token.change_mint_budget(&500_i128);
-    assert_eq!(token.mint_budget(), 1500);
-    token.change_mint_budget(&-300_i128);
-    assert_eq!(token.mint_budget(), 1200);
-}
-
-#[test]
-#[should_panic]
-fn test_change_mint_budget_below_zero_panics() {
-    let e = Env::default();
-    e.mock_all_auths();
-    e.ledger().set_timestamp(START_TIME);
-    let owner = Address::generate(&e);
-    let operator = Address::generate(&e);
-    let revoker = Address::generate(&e);
-    let token = create_token(&e, &owner, &operator, &revoker);
-
-    token.change_mint_budget(&100_i128);
-    token.change_mint_budget(&-200_i128);
-}
-
-#[test]
 #[should_panic]
 fn test_mint_exceeds_budget_panics() {
     let e = Env::default();
@@ -342,7 +352,7 @@ fn test_mint_exceeds_budget_panics() {
     let user = Address::generate(&e);
     let token = create_token(&e, &owner, &operator, &revoker);
 
-    token.change_mint_budget(&100_i128);
+    fund_budget(&e, &token, 100);
     token.mint_to(&user, &200, &1);
     warp(&e, 1);
     token.mint_to(&user, &200, &1); // 200 > budget 100
@@ -362,7 +372,7 @@ fn test_transfer_basic() {
     let user2 = Address::generate(&e);
     let token = create_token(&e, &owner, &operator, &revoker);
 
-    token.change_mint_budget(&1000_i128);
+    fund_budget(&e, &token, 1000);
     do_mint(&e, &token, &user1, 1000, 1);
 
     token.transfer(&user1, &user2, &400);
@@ -383,7 +393,7 @@ fn test_transfer_insufficient_balance_panics() {
     let user2 = Address::generate(&e);
     let token = create_token(&e, &owner, &operator, &revoker);
 
-    token.change_mint_budget(&1000_i128);
+    fund_budget(&e, &token, 1000);
     do_mint(&e, &token, &user1, 1000, 1);
     token.transfer(&user1, &user2, &1001);
 }
@@ -403,7 +413,7 @@ fn test_approve_and_transfer_from() {
     let spender = Address::generate(&e);
     let token = create_token(&e, &owner, &operator, &revoker);
 
-    token.change_mint_budget(&1000_i128);
+    fund_budget(&e, &token, 1000);
     do_mint(&e, &token, &user1, 1000, 1);
 
     let exp = e.ledger().sequence() + 100;
@@ -428,7 +438,7 @@ fn test_burn_deducts_operator_balance_and_refunds_budget() {
     let user = Address::generate(&e);
     let token = create_token(&e, &owner, &operator, &revoker);
 
-    token.change_mint_budget(&1000_i128);
+    fund_budget(&e, &token, 1000);
     do_mint(&e, &token, &operator, 1000, 1);
     assert_eq!(token.mint_budget(), 0);
 
@@ -471,7 +481,7 @@ fn test_blocked_sender_cannot_transfer() {
     let user2 = Address::generate(&e);
     let token = create_token(&e, &owner, &operator, &revoker);
 
-    token.change_mint_budget(&1000_i128);
+    fund_budget(&e, &token, 1000);
     do_mint(&e, &token, &user1, 1000, 1);
     token.add_to_blocked_list(&user1);
     token.transfer(&user1, &user2, &100);
@@ -489,7 +499,7 @@ fn test_blocked_user_can_still_receive() {
     let user2 = Address::generate(&e);
     let token = create_token(&e, &owner, &operator, &revoker);
 
-    token.change_mint_budget(&1000_i128);
+    fund_budget(&e, &token, 1000);
     do_mint(&e, &token, &user1, 1000, 1);
     token.add_to_blocked_list(&user2);
     token.transfer(&user1, &user2, &400);
@@ -1125,7 +1135,7 @@ fn test_pause_blocks_transfer() {
     let user2 = Address::generate(&e);
     let token = create_token(&e, &owner, &operator, &revoker);
 
-    token.change_mint_budget(&1000_i128);
+    fund_budget(&e, &token, 1000);
     do_mint(&e, &token, &user1, 1000, 1);
     token.pause();
     assert!(token.paused());
@@ -1144,7 +1154,7 @@ fn test_pause_blocks_mint() {
     let user = Address::generate(&e);
     let token = create_token(&e, &owner, &operator, &revoker);
 
-    token.change_mint_budget(&1000_i128);
+    fund_budget(&e, &token, 1000);
     token.pause();
     token.mint_to(&user, &100, &1); // ContractPaused
 }
@@ -1166,7 +1176,7 @@ fn test_forced_transfer_works_while_paused() {
     warp(&e, 1);
     token.set_forced_transfer_receiver(&receiver);
 
-    token.change_mint_budget(&1000_i128);
+    fund_budget(&e, &token, 1000);
     do_mint(&e, &token, &user, 1000, 1);
     token.add_to_blocked_list(&user);
     token.pause();
@@ -1193,7 +1203,7 @@ fn test_unpause_two_phase_restores_transfer() {
     let user2 = Address::generate(&e);
     let token = create_token(&e, &owner, &operator, &revoker);
 
-    token.change_mint_budget(&1000_i128);
+    fund_budget(&e, &token, 1000);
     do_mint(&e, &token, &user1, 1000, 1);
     token.pause();
 
@@ -1356,7 +1366,7 @@ fn setup_forced_transfer<'a>(
     warp(e, 1);
     token.set_forced_transfer_receiver(receiver);
     // fund `from` and block it
-    token.change_mint_budget(&1000_i128);
+    fund_budget(e, &token, 1000);
     do_mint(e, &token, from, 1000, 1);
     token.add_to_blocked_list(from);
     token
@@ -1400,7 +1410,7 @@ fn test_forced_transfer_requires_blocked_from() {
     token.set_forced_transfer_receiver(&receiver);
     warp(&e, 1);
     token.set_forced_transfer_receiver(&receiver);
-    token.change_mint_budget(&1000_i128);
+    fund_budget(&e, &token, 1000);
     do_mint(&e, &token, &from, 1000, 1);
     // NOT blocked
     let data = String::from_str(&e, "x");
@@ -1440,7 +1450,7 @@ fn test_forced_transfer_no_receiver_panics() {
     let receiver = Address::generate(&e);
     let token = create_token(&e, &owner, &operator, &revoker);
 
-    token.change_mint_budget(&1000_i128);
+    fund_budget(&e, &token, 1000);
     do_mint(&e, &token, &from, 1000, 1);
     token.add_to_blocked_list(&from);
     let data = String::from_str(&e, "x");
@@ -1468,4 +1478,617 @@ fn test_forced_transfer_revoke() {
     assert!(token.forced_transfer_request_et(&req).is_some());
     token.revoke_forced_transfer(&revoker, &req);
     assert!(token.forced_transfer_request_et(&req).is_none());
+}
+
+// ---- global mintBudget management (claim / return, submitter, local eid) ----
+
+/// Fresh token plus the three role addresses, with the relay already wired to `submitter`.
+fn setup_relay<'a>(
+    e: &Env,
+    owner: &Address,
+    operator: &Address,
+    revoker: &Address,
+    submitter: &Address,
+) -> TokenClient<'a> {
+    let token = create_token(e, owner, operator, revoker);
+    arm_mint_budget_submitter(e, &token, submitter);
+    token
+}
+
+#[test]
+fn test_claim_mint_budget_credits_cumulative_delta() {
+    let e = Env::default();
+    e.mock_all_auths();
+    e.ledger().set_timestamp(START_TIME);
+    let owner = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let revoker = Address::generate(&e);
+    let submitter = Address::generate(&e);
+    let token = setup_relay(&e, &owner, &operator, &revoker, &submitter);
+
+    claim_budget(&e, &token, 10_000);
+    assert_eq!(token.mint_budget(), 10_000);
+    assert_eq!(token.total_allocated_amount(), 10_000);
+
+    // the argument is the new cumulative total, not a delta: 15_000 credits 5_000 more
+    claim_budget(&e, &token, 15_000);
+    assert_eq!(token.mint_budget(), 15_000);
+    assert_eq!(token.total_allocated_amount(), 15_000);
+
+    // a replayed or stale submission fails outright — never a silent no-op, so off-chain
+    // can always tell "already applied" from "applied again" (PRD §4.4)
+    let hash = src_tx_hash(&e);
+    assert_eq!(
+        token.try_claim_mint_budget_from_eth(&LOCAL_EID, &15_000, &hash),
+        Err(Ok(TokenError::StaleMintBudgetSubmission.into()))
+    );
+    assert_eq!(
+        token.try_claim_mint_budget_from_eth(&LOCAL_EID, &14_999, &hash),
+        Err(Ok(TokenError::StaleMintBudgetSubmission.into()))
+    );
+    assert_eq!(token.mint_budget(), 15_000);
+    assert_eq!(token.total_allocated_amount(), 15_000);
+
+    // negative cumulative totals are rejected before anything else looks at them
+    assert_eq!(
+        token.try_claim_mint_budget_from_eth(&LOCAL_EID, &-1, &hash),
+        Err(Ok(TokenError::NegativeAmountNotAllowed.into()))
+    );
+}
+
+#[test]
+fn test_mint_budget_watermarks_match_canonical_uint112_domain() {
+    let e = Env::default();
+    e.mock_all_auths();
+    e.ledger().set_timestamp(START_TIME);
+    let owner = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let revoker = Address::generate(&e);
+    let submitter = Address::generate(&e);
+    let token = setup_relay(&e, &owner, &operator, &revoker, &submitter);
+    let hash = src_tx_hash(&e);
+    let too_large = 1_i128 << 112;
+
+    assert_eq!(
+        token.try_claim_mint_budget_from_eth(&LOCAL_EID, &too_large, &hash),
+        Err(Ok(TokenError::MintBudgetAmountTooLarge.into()))
+    );
+    assert_eq!(token.total_allocated_amount(), 0);
+
+    assert_eq!(
+        token.try_return_mint_budget_to_eth(&too_large),
+        Err(Ok(TokenError::MintBudgetAmountTooLarge.into()))
+    );
+    assert_eq!(token.total_returned_amount(), 0);
+}
+
+#[test]
+fn test_claim_mint_budget_requires_a_submitter() {
+    let e = Env::default();
+    e.mock_all_auths();
+    e.ledger().set_timestamp(START_TIME);
+    let owner = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let revoker = Address::generate(&e);
+    let submitter = Address::generate(&e);
+    let token = create_token(&e, &owner, &operator, &revoker);
+    let hash = src_tx_hash(&e);
+
+    // no submitter installed yet: nothing at all can credit budget on this chain
+    token.set_local_eid(&LOCAL_EID);
+    assert_eq!(
+        token.try_claim_mint_budget_from_eth(&LOCAL_EID, &100, &hash),
+        Err(Ok(TokenError::NotMintBudgetSubmitter.into()))
+    );
+    assert_eq!(token.mint_budget(), 0);
+
+    arm_mint_budget_submitter(&e, &token, &submitter);
+    token.claim_mint_budget_from_eth(&LOCAL_EID, &100, &hash);
+    assert_eq!(token.mint_budget(), 100);
+}
+
+#[test]
+fn test_claim_and_return_authorize_only_their_own_role() {
+    let e = Env::default();
+    e.mock_all_auths();
+    e.ledger().set_timestamp(START_TIME);
+    let owner = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let revoker = Address::generate(&e);
+    let submitter = Address::generate(&e);
+    let token = setup_relay(&e, &owner, &operator, &revoker, &submitter);
+    let hash = src_tx_hash(&e);
+
+    // the operator signing a claim is not enough — that is exactly the pairing the
+    // submitter role exists to break up
+    e.mock_auths(&[MockAuth {
+        address: &operator,
+        invoke: &MockAuthInvoke {
+            contract: &token.address,
+            fn_name: "claim_mint_budget_from_eth",
+            args: (LOCAL_EID, 10_000_i128, hash.clone()).into_val(&e),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(token
+        .try_claim_mint_budget_from_eth(&LOCAL_EID, &10_000, &hash)
+        .is_err());
+    assert_eq!(token.mint_budget(), 0);
+
+    // the same call signed by the submitter goes through
+    e.mock_auths(&[MockAuth {
+        address: &submitter,
+        invoke: &MockAuthInvoke {
+            contract: &token.address,
+            fn_name: "claim_mint_budget_from_eth",
+            args: (LOCAL_EID, 10_000_i128, hash.clone()).into_val(&e),
+            sub_invokes: &[],
+        },
+    }]);
+    token.claim_mint_budget_from_eth(&LOCAL_EID, &10_000, &hash);
+    assert_eq!(token.mint_budget(), 10_000);
+
+    // and the return direction answers to the operator, not the submitter
+    e.mock_auths(&[MockAuth {
+        address: &submitter,
+        invoke: &MockAuthInvoke {
+            contract: &token.address,
+            fn_name: "return_mint_budget_to_eth",
+            args: (4_000_i128,).into_val(&e),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(token.try_return_mint_budget_to_eth(&4_000).is_err());
+    assert_eq!(token.mint_budget(), 10_000);
+
+    e.mock_auths(&[MockAuth {
+        address: &operator,
+        invoke: &MockAuthInvoke {
+            contract: &token.address,
+            fn_name: "return_mint_budget_to_eth",
+            args: (4_000_i128,).into_val(&e),
+            sub_invokes: &[],
+        },
+    }]);
+    token.return_mint_budget_to_eth(&4_000);
+    assert_eq!(token.mint_budget(), 6_000);
+}
+
+#[test]
+fn test_claim_mint_budget_rejects_another_chains_submission() {
+    let e = Env::default();
+    e.mock_all_auths();
+    e.ledger().set_timestamp(START_TIME);
+    let owner = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let revoker = Address::generate(&e);
+    let submitter = Address::generate(&e);
+    let token = setup_relay(&e, &owner, &operator, &revoker, &submitter);
+    let hash = src_tx_hash(&e);
+
+    // prepared for a different chain but delivered here — must fail rather than be taken
+    // for this chain's own cumulative value
+    assert_eq!(
+        token.try_claim_mint_budget_from_eth(&OTHER_EID, &10_000, &hash),
+        Err(Ok(TokenError::WrongTargetChain.into()))
+    );
+    assert_eq!(token.mint_budget(), 0);
+    assert_eq!(token.total_allocated_amount(), 0);
+
+    // the same submission addressed to this chain goes through
+    token.claim_mint_budget_from_eth(&LOCAL_EID, &10_000, &hash);
+    assert_eq!(token.mint_budget(), 10_000);
+    assert_eq!(token.total_allocated_amount(), 10_000);
+}
+
+#[test]
+fn test_both_directions_fail_closed_until_local_eid_is_set() {
+    let e = Env::default();
+    e.mock_all_auths();
+    e.ledger().set_timestamp(START_TIME);
+    let owner = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let revoker = Address::generate(&e);
+    let submitter = Address::generate(&e);
+    let token = create_token(&e, &owner, &operator, &revoker);
+    let hash = src_tx_hash(&e);
+
+    // install the submitter without declaring which chain this is
+    token.set_mint_budget_submitter(&submitter);
+    warp(&e, 1);
+    token.set_mint_budget_submitter(&submitter);
+    assert_eq!(token.local_eid(), 0);
+
+    assert_eq!(
+        token.try_claim_mint_budget_from_eth(&LOCAL_EID, &100, &hash),
+        Err(Ok(TokenError::LocalEidNotSet.into()))
+    );
+    assert_eq!(
+        token.try_return_mint_budget_to_eth(&100),
+        Err(Ok(TokenError::LocalEidNotSet.into()))
+    );
+
+    token.set_local_eid(&LOCAL_EID);
+    token.claim_mint_budget_from_eth(&LOCAL_EID, &100, &hash);
+    assert_eq!(token.mint_budget(), 100);
+}
+
+#[test]
+fn test_set_local_eid_bounds_and_lock() {
+    let e = Env::default();
+    e.mock_all_auths();
+    e.ledger().set_timestamp(START_TIME);
+    let owner = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let revoker = Address::generate(&e);
+    let submitter = Address::generate(&e);
+    let token = create_token(&e, &owner, &operator, &revoker);
+
+    // 0 is the "not set" sentinel, so it is never a legal value to declare
+    assert_eq!(
+        token.try_set_local_eid(&0),
+        Err(Ok(TokenError::ZeroValue.into()))
+    );
+
+    // freely correctable while no mintBudget has moved under it
+    token.set_local_eid(&OTHER_EID);
+    assert_eq!(token.local_eid(), OTHER_EID);
+    token.set_local_eid(&LOCAL_EID);
+    assert_eq!(token.local_eid(), LOCAL_EID);
+
+    arm_mint_budget_submitter(&e, &token, &submitter);
+    claim_budget(&e, &token, 10_000);
+
+    // locked once a watermark exists: re-labelling the chain now would strand the
+    // cumulative history recorded under the old id
+    assert_eq!(
+        token.try_set_local_eid(&OTHER_EID),
+        Err(Ok(TokenError::LocalEidLocked.into()))
+    );
+    assert_eq!(token.local_eid(), LOCAL_EID);
+
+    // ...but restating the same id stays idempotent, and 0 stays rejected
+    token.set_local_eid(&LOCAL_EID);
+    assert_eq!(token.local_eid(), LOCAL_EID);
+    assert_eq!(
+        token.try_set_local_eid(&0),
+        Err(Ok(TokenError::ZeroValue.into()))
+    );
+
+    // a stranger cannot declare it at all
+    let stranger = Address::generate(&e);
+    e.mock_auths(&[MockAuth {
+        address: &stranger,
+        invoke: &MockAuthInvoke {
+            contract: &token.address,
+            fn_name: "set_local_eid",
+            args: (LOCAL_EID,).into_val(&e),
+            sub_invokes: &[],
+        },
+    }]);
+    assert!(token.try_set_local_eid(&LOCAL_EID).is_err());
+}
+
+#[test]
+fn test_claim_mint_budget_src_tx_hash_is_type_enforced_bytes32() {
+    let e = Env::default();
+    e.mock_all_auths();
+    e.ledger().set_timestamp(START_TIME);
+    let owner = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let revoker = Address::generate(&e);
+    let submitter = Address::generate(&e);
+    let token = setup_relay(&e, &owner, &operator, &revoker, &submitter);
+
+    // src_tx_hash is BytesN<32>, the Soroban counterpart of the EVM bytes32: an empty,
+    // short, or Solana-length (64-byte) value cannot even be encoded for this entrypoint,
+    // so there is no runtime length check left to exercise. An Ethereum tx hash is accepted.
+    let hash: BytesN<32> = BytesN::from_array(&e, &[0xcd_u8; 32]);
+    token.claim_mint_budget_from_eth(&LOCAL_EID, &100, &hash);
+    assert_eq!(token.mint_budget(), 100);
+}
+
+#[test]
+fn test_return_mint_budget_shrinks_budget_by_cumulative_delta() {
+    let e = Env::default();
+    e.mock_all_auths();
+    e.ledger().set_timestamp(START_TIME);
+    let owner = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let revoker = Address::generate(&e);
+    let submitter = Address::generate(&e);
+    let token = setup_relay(&e, &owner, &operator, &revoker, &submitter);
+    claim_budget(&e, &token, 10_000);
+
+    // 0 is not "strictly above" the recorded 0
+    assert_eq!(
+        token.try_return_mint_budget_to_eth(&0),
+        Err(Ok(TokenError::StaleMintBudgetSubmission.into()))
+    );
+    // more than this chain actually holds
+    assert_eq!(
+        token.try_return_mint_budget_to_eth(&10_001),
+        Err(Ok(TokenError::MintBudgetNotEnough.into()))
+    );
+    assert_eq!(token.mint_budget(), 10_000);
+    assert_eq!(token.total_returned_amount(), 0);
+
+    token.return_mint_budget_to_eth(&4_000);
+    assert_eq!(token.mint_budget(), 6_000);
+    assert_eq!(token.total_returned_amount(), 4_000);
+
+    // cumulative again: 6_500 returns 2_500 more
+    token.return_mint_budget_to_eth(&6_500);
+    assert_eq!(token.mint_budget(), 3_500);
+    assert_eq!(token.total_returned_amount(), 6_500);
+
+    // a replayed instruction fails instead of returning a second time
+    assert_eq!(
+        token.try_return_mint_budget_to_eth(&6_500),
+        Err(Ok(TokenError::StaleMintBudgetSubmission.into()))
+    );
+    assert_eq!(token.mint_budget(), 3_500);
+    assert_eq!(
+        token.try_return_mint_budget_to_eth(&-1),
+        Err(Ok(TokenError::NegativeAmountNotAllowed.into()))
+    );
+}
+
+#[test]
+fn test_pause_blocks_claim_but_never_return() {
+    let e = Env::default();
+    e.mock_all_auths();
+    e.ledger().set_timestamp(START_TIME);
+    let owner = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let revoker = Address::generate(&e);
+    let submitter = Address::generate(&e);
+    let token = setup_relay(&e, &owner, &operator, &revoker, &submitter);
+    claim_budget(&e, &token, 10_000);
+
+    token.pause();
+    assert!(token.paused());
+
+    // risk-raising direction: while paused this chain's mint capacity must not grow
+    let hash = src_tx_hash(&e);
+    assert_eq!(
+        token.try_claim_mint_budget_from_eth(&LOCAL_EID, &20_000, &hash),
+        Err(Ok(TokenError::ContractPaused.into()))
+    );
+    assert_eq!(token.mint_budget(), 10_000);
+    assert_eq!(token.total_allocated_amount(), 10_000);
+
+    // risk-reducing direction stays open by design: its upstream is a local redemption
+    // that Ethereum's pause cannot reach, so blocking it would seal the only exit
+    token.return_mint_budget_to_eth(&4_000);
+    assert_eq!(token.mint_budget(), 6_000);
+    assert_eq!(token.total_returned_amount(), 4_000);
+
+    // and it resumes once unpaused
+    token.request_unpause();
+    warp(&e, 1);
+    token.unpause();
+    claim_budget(&e, &token, 20_000);
+    assert_eq!(token.mint_budget(), 16_000);
+}
+
+#[test]
+fn test_operator_and_submitter_must_stay_distinct() {
+    let e = Env::default();
+    e.mock_all_auths();
+    e.ledger().set_timestamp(START_TIME);
+    let owner = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let revoker = Address::generate(&e);
+    let submitter = Address::generate(&e);
+    let token = create_token(&e, &owner, &operator, &revoker);
+
+    // set_mint_budget_submitter refuses the sitting operator
+    assert_eq!(
+        token.try_set_mint_budget_submitter(&operator),
+        Err(Ok(TokenError::OperatorSubmitterConflict.into()))
+    );
+    assert!(token.mint_budget_submitter().is_none());
+    assert!(token.next_mint_budget_submitter().is_none());
+
+    // gov_delay is 0 on a fresh deploy: first call queues, the next one executes
+    token.set_mint_budget_submitter(&submitter);
+    warp(&e, 1);
+    token.set_mint_budget_submitter(&submitter);
+    assert_eq!(token.mint_budget_submitter(), Some(submitter.clone()));
+
+    // and set_operator refuses the sitting submitter
+    assert_eq!(
+        token.try_set_operator(&submitter),
+        Err(Ok(TokenError::OperatorSubmitterConflict.into()))
+    );
+
+    // neither role was disturbed by the rejections
+    assert_eq!(token.operator(), operator);
+    assert_eq!(token.mint_budget_submitter(), Some(submitter));
+    assert!(token.next_operator().is_none());
+}
+
+#[test]
+fn test_operator_submitter_conflict_appearing_inside_the_delay_window() {
+    let e = Env::default();
+    e.mock_all_auths();
+    e.ledger().set_timestamp(START_TIME);
+    let owner = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let revoker = Address::generate(&e);
+    let bob = Address::generate(&e);
+    let token = create_token(&e, &owner, &operator, &revoker);
+    arm_delays(&e, &token);
+
+    // both requests are legal when queued: bob is neither the operator nor the submitter yet
+    token.set_mint_budget_submitter(&bob); // gov tier
+    token.set_operator(&bob); // delay tier
+    warp(&e, GOV_DELAY + 1);
+
+    // operator wins the race
+    token.set_operator(&bob);
+    assert_eq!(token.operator(), bob);
+
+    // the matured submitter request must not slip through now that bob is the operator
+    assert_eq!(
+        token.try_set_mint_budget_submitter(&bob),
+        Err(Ok(TokenError::OperatorSubmitterConflict.into()))
+    );
+    assert!(token.mint_budget_submitter().is_none());
+}
+
+#[test]
+fn test_set_mint_budget_submitter_two_phase_and_revoke() {
+    use soroban_sdk::testutils::Events;
+
+    let e = Env::default();
+    e.mock_all_auths();
+    e.ledger().set_timestamp(START_TIME);
+    let owner = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let revoker = Address::generate(&e);
+    let submitter = Address::generate(&e);
+    let other = Address::generate(&e);
+    let stranger = Address::generate(&e);
+    let token = create_token(&e, &owner, &operator, &revoker);
+    arm_gov_delay(&e, &token, GOV_DELAY);
+
+    // request: staged, not effective
+    token.set_mint_budget_submitter(&submitter);
+    let (_, topics, _) = e.events().all().last().unwrap();
+    let event_name: Symbol = topics.get(0).unwrap().try_into_val(&e).unwrap();
+    assert_eq!(event_name, Symbol::new(&e, "mint_budget_submitter_request"));
+    assert_eq!(token.next_mint_budget_submitter(), Some(submitter.clone()));
+    assert!(token.et_next_mint_budget_submitter().is_some());
+    assert!(token.mint_budget_submitter().is_none());
+
+    assert_eq!(
+        token.try_set_mint_budget_submitter(&submitter),
+        Err(Ok(TokenError::TooEarlyToExecute.into()))
+    );
+    assert_eq!(
+        token.try_set_mint_budget_submitter(&other),
+        Err(Ok(TokenError::PendingRequestExists.into()))
+    );
+
+    // the revoker can pull a staged rotation, exactly like the other delayed ops
+    token.revoke_mint_budget_submitter(&revoker);
+    assert!(token.next_mint_budget_submitter().is_none());
+    assert!(token.et_next_mint_budget_submitter().is_none());
+    assert!(token.mint_budget_submitter().is_none());
+
+    // ...but a stranger cannot
+    assert_eq!(
+        token.try_revoke_mint_budget_submitter(&stranger),
+        Err(Ok(TokenError::Unauthorized.into()))
+    );
+
+    // re-request and let it mature
+    token.set_mint_budget_submitter(&submitter);
+    warp(&e, GOV_DELAY + 1);
+    token.set_mint_budget_submitter(&submitter);
+    let (_, topics, _) = e.events().all().last().unwrap();
+    let event_name: Symbol = topics.get(0).unwrap().try_into_val(&e).unwrap();
+    assert_eq!(event_name, Symbol::new(&e, "mint_budget_submitter_effected"));
+    assert_eq!(token.mint_budget_submitter(), Some(submitter));
+    assert!(token.next_mint_budget_submitter().is_none());
+    assert!(token.et_next_mint_budget_submitter().is_none());
+}
+
+#[test]
+fn test_claim_and_return_events_carry_everything_needed_to_reconcile() {
+    use soroban_sdk::testutils::Events;
+    let e = Env::default();
+    e.mock_all_auths();
+    e.ledger().set_timestamp(START_TIME);
+    let owner = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let revoker = Address::generate(&e);
+    let submitter = Address::generate(&e);
+    let token = setup_relay(&e, &owner, &operator, &revoker, &submitter);
+
+    let hash = src_tx_hash(&e);
+    token.claim_mint_budget_from_eth(&LOCAL_EID, &10_000, &hash);
+
+    let (_, topics, data) = e.events().all().last().unwrap();
+    // topics = [event name, caller, chain id] — the chain id is a topic so a third party
+    // can filter the stream per chain, as the PRD requires
+    assert_eq!(topics.len(), 3);
+    let name: Symbol = topics.get(0).unwrap().try_into_val(&e).unwrap();
+    assert_eq!(name, Symbol::new(&e, "claim_mint_budget_from_eth"));
+    let caller: Address = topics.get(1).unwrap().try_into_val(&e).unwrap();
+    assert_eq!(caller, submitter);
+    let eid: u32 = topics.get(2).unwrap().try_into_val(&e).unwrap();
+    assert_eq!(eid, LOCAL_EID);
+
+    let data: Map<Symbol, Val> = data.try_into_val(&e).unwrap();
+    let expected: Map<Symbol, Val> = map![
+        &e,
+        (Symbol::new(&e, "delta_amount"), 10_000_i128.into_val(&e)),
+        (
+            Symbol::new(&e, "total_allocated_amount"),
+            10_000_i128.into_val(&e)
+        ),
+        (Symbol::new(&e, "src_tx_hash"), hash.into_val(&e)),
+    ];
+    assert_eq!(data, expected);
+
+    // the return side is filterable the same way, minus the source tx hash the PRD only
+    // asks of the claim/reclaim directions
+    token.return_mint_budget_to_eth(&4_000);
+    let (_, topics, data) = e.events().all().last().unwrap();
+    assert_eq!(topics.len(), 3);
+    let name: Symbol = topics.get(0).unwrap().try_into_val(&e).unwrap();
+    assert_eq!(name, Symbol::new(&e, "return_mint_budget_to_eth"));
+    let caller: Address = topics.get(1).unwrap().try_into_val(&e).unwrap();
+    assert_eq!(caller, operator);
+    let eid: u32 = topics.get(2).unwrap().try_into_val(&e).unwrap();
+    assert_eq!(eid, LOCAL_EID);
+
+    let data: Map<Symbol, Val> = data.try_into_val(&e).unwrap();
+    let expected: Map<Symbol, Val> = map![
+        &e,
+        (Symbol::new(&e, "delta_amount"), 4_000_i128.into_val(&e)),
+        (
+            Symbol::new(&e, "total_returned_amount"),
+            4_000_i128.into_val(&e)
+        ),
+    ];
+    assert_eq!(data, expected);
+}
+
+#[test]
+fn test_relay_round_trip_with_mint_and_redeem() {
+    let e = Env::default();
+    e.mock_all_auths();
+    e.ledger().set_timestamp(START_TIME);
+    let owner = Address::generate(&e);
+    let operator = Address::generate(&e);
+    let revoker = Address::generate(&e);
+    let submitter = Address::generate(&e);
+    let user = Address::generate(&e);
+    let token = setup_relay(&e, &owner, &operator, &revoker, &submitter);
+
+    // Ethereum has allocated 10_000 to this chain so far
+    claim_budget(&e, &token, 10_000);
+    do_mint(&e, &token, &operator, 6_000, 1);
+    assert_eq!(token.mint_budget(), 4_000);
+    assert_eq!(token.total_supply(), 6_000);
+
+    // a redemption burns supply and refunds the budget locally, untouched by this change
+    token.burn(&user, &6_000);
+    assert_eq!(token.total_supply(), 0);
+    assert_eq!(token.mint_budget(), 10_000);
+
+    // the refunded budget then goes back to Ethereum, and the cumulative pair nets out
+    token.return_mint_budget_to_eth(&10_000);
+    assert_eq!(token.mint_budget(), 0);
+    assert_eq!(token.total_allocated_amount(), 10_000);
+    assert_eq!(token.total_returned_amount(), 10_000);
+
+    // a later allocation keeps counting up from where the cumulative total left off
+    claim_budget(&e, &token, 12_500);
+    assert_eq!(token.mint_budget(), 2_500);
+    assert_eq!(token.total_allocated_amount(), 12_500);
 }

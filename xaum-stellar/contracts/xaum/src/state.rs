@@ -442,3 +442,97 @@ pub fn remove_forced_transfer_request(env: &Env, key: &BytesN<32>) {
         .temporary()
         .remove(&DataKey::ForcedTransferRequest(key.clone()));
 }
+
+//--------- global mintBudget management ----------
+
+pub fn read_mint_budget_submitter(env: &Env) -> Option<Address> {
+    env.storage().instance().get(&DataKey::MintBudgetSubmitter)
+}
+
+pub fn write_mint_budget_submitter(env: &Env, submitter: &Address) {
+    env.storage()
+        .instance()
+        .set(&DataKey::MintBudgetSubmitter, submitter);
+}
+
+pub fn read_next_mint_budget_submitter(env: &Env) -> Option<Address> {
+    env.storage()
+        .temporary()
+        .get(&DataKey::NextMintBudgetSubmitter)
+}
+
+pub fn write_next_mint_budget_submitter(env: &Env, next: &Address) {
+    let key = DataKey::NextMintBudgetSubmitter;
+    env.storage().temporary().set(&key, next);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_next_mint_budget_submitter(env: &Env) {
+    env.storage()
+        .temporary()
+        .remove(&DataKey::NextMintBudgetSubmitter);
+}
+
+pub fn read_et_next_mint_budget_submitter(env: &Env) -> Option<u64> {
+    env.storage()
+        .temporary()
+        .get(&DataKey::EtNextMintBudgetSubmitter)
+}
+
+pub fn write_et_next_mint_budget_submitter(env: &Env, et: u64) {
+    let key = DataKey::EtNextMintBudgetSubmitter;
+    env.storage().temporary().set(&key, &et);
+    env.storage()
+        .temporary()
+        .extend_ttl(&key, PENDING_TTL_LEDGERS, PENDING_TTL_LEDGERS);
+}
+
+pub fn remove_et_next_mint_budget_submitter(env: &Env) {
+    env.storage()
+        .temporary()
+        .remove(&DataKey::EtNextMintBudgetSubmitter);
+}
+
+// this chain's own eid; 0 means "not set yet"
+pub fn read_local_eid(env: &Env) -> u32 {
+    env.storage()
+        .instance()
+        .get(&DataKey::LocalEid)
+        .unwrap_or(0)
+}
+
+pub fn write_local_eid(env: &Env, new_local_eid: u32) {
+    env.storage()
+        .instance()
+        .set(&DataKey::LocalEid, &new_local_eid);
+}
+
+// cumulative total Ethereum has allocated to this chain, as last claimed here
+pub fn read_total_allocated_amount(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::TotalAllocatedAmount)
+        .unwrap_or(0)
+}
+
+pub fn write_total_allocated_amount(env: &Env, amount: i128) {
+    env.storage()
+        .instance()
+        .set(&DataKey::TotalAllocatedAmount, &amount);
+}
+
+// cumulative total this chain has returned to Ethereum
+pub fn read_total_returned_amount(env: &Env) -> i128 {
+    env.storage()
+        .instance()
+        .get(&DataKey::TotalReturnedAmount)
+        .unwrap_or(0)
+}
+
+pub fn write_total_returned_amount(env: &Env, amount: i128) {
+    env.storage()
+        .instance()
+        .set(&DataKey::TotalReturnedAmount, &amount);
+}

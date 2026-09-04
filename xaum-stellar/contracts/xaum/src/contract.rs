@@ -21,6 +21,12 @@ const MAX_GOV_DELAY: u64 = 3600 * 24 * 7; // 7 days
 // Operational-level timelock: bounds day-to-day fund/role operations.
 const MIN_DELAY: u64 = 3600; // 1 hour
 const MAX_DELAY: u64 = 3600 * 24 * 2; // 48 hours
+pub(crate) const SHARED_DECIMALS: u32 = 9;
+
+// The canonical EVM relay represents both cumulative watermarks as uint112. Keep the
+// Stellar endpoint in the same domain even though Soroban token amounts use i128, or a
+// return recorded here could be impossible to submit to reclaimMintBudgetFromChain.
+const MAX_MINT_BUDGET_RELAY_AMOUNT: i128 = (1_i128 << 112) - 1;
 
 #[contract]
 pub struct Token;
@@ -36,7 +42,7 @@ impl Token {
         name: String,
         symbol: String,
     ) {
-        if decimal > 18 {
+        if decimal != SHARED_DECIMALS {
             panic_with_error!(&env, TokenError::InvalidDecimal);
         }
         state::write_owner(&env, &owner);
@@ -192,6 +198,12 @@ impl Token {
         owner.require_auth();
 
         bump_instance(&env);
+
+        check_operator_submitter_distinct(
+            &env,
+            &new_operator,
+            &state::read_mint_budget_submitter(&env),
+        );
 
         let now = env.ledger().timestamp();
 
@@ -628,21 +640,174 @@ impl Token {
         RevokerRevoked {}.publish(&env);
     }
 
-    pub fn change_mint_budget(env: Env, delta: i128) {
-        // onlyOperator
-        let operator = state::read_operator(&env);
-        operator.require_auth();
+    // ---------- global mintBudget management ----------
+    //
+    // This chain's mintBudget is allocated by Ethereum and relayed in over an off-chain
+    // channel; there is no local way to conjure budget. Both entry points take the new
+    // *cumulative* total rather than a per-call delta and diff it against a stored
+    // watermark, so a replayed or stale submission panics instead of applying twice or
+    // silently doing nothing. Amounts are in this contract's own decimals, which already
+    // match the cross-chain shared decimals (9) — no scaling here.
+
+    // the sole address authorized to call claim_mint_budget_from_eth. Must differ from the
+    // operator: the submitter raises this chain's mint capacity and the operator consumes it
+    // via mint_to, so one key holding both could walk the whole path alone. Governance-level
+    // timelock, two-call pattern; revocable by owner-or-revoker.
+    pub fn set_mint_budget_submitter(env: Env, new_submitter: Address) {
+        // onlyOwner
+        let owner = state::read_owner(&env);
+        owner.require_auth();
 
         bump_instance(&env);
 
-        let mint_budget = state::read_mint_budget(&env);
+        // Checked on the request call and again on the execute call, since the operator
+        // may have changed inside the gov-delay window.
+        check_operator_submitter_distinct(
+            &env,
+            &state::read_operator(&env),
+            &Some(new_submitter.clone()),
+        );
 
-        let new_budget = mint_budget + delta;
-        if new_budget < 0 {
+        let now = env.ledger().timestamp();
+        let next = state::read_next_mint_budget_submitter(&env); // Option<Address>
+
+        if let Some(et) = state::read_et_next_mint_budget_submitter(&env) {
+            // next is always Some while a request is pending, no need to check
+            if next.unwrap() != new_submitter {
+                panic_with_error!(&env, TokenError::PendingRequestExists);
+            }
+            if et >= now {
+                panic_with_error!(&env, TokenError::TooEarlyToExecute);
+            }
+            state::write_mint_budget_submitter(&env, &new_submitter);
+            state::remove_et_next_mint_budget_submitter(&env);
+            state::remove_next_mint_budget_submitter(&env);
+            MintBudgetSubmitterEffected {
+                mint_budget_submitter: new_submitter,
+            }
+            .publish(&env);
+            return;
+        }
+
+        let gov_delay = state::read_gov_delay(&env);
+        let effective_time = now + gov_delay;
+        state::write_next_mint_budget_submitter(&env, &new_submitter);
+        state::write_et_next_mint_budget_submitter(&env, effective_time);
+
+        MintBudgetSubmitterRequest {
+            current_mint_budget_submitter: state::read_mint_budget_submitter(&env),
+            next_mint_budget_submitter: new_submitter,
+            effective_time,
+        }
+        .publish(&env);
+    }
+
+    pub fn revoke_mint_budget_submitter(env: Env, caller: Address) {
+        require_owner_or_revoker(&env, &caller);
+        state::remove_et_next_mint_budget_submitter(&env);
+        state::remove_next_mint_budget_submitter(&env);
+        MintBudgetSubmitterRevoked {}.publish(&env);
+    }
+
+    // declares this chain's own eid; changeable only until mintBudget has moved under it
+    pub fn set_local_eid(env: Env, new_local_eid: u32) {
+        // onlyOwner
+        let owner = state::read_owner(&env);
+        owner.require_auth();
+
+        bump_instance(&env);
+
+        if new_local_eid == 0 {
+            panic_with_error!(&env, TokenError::ZeroValue);
+        }
+        if new_local_eid != state::read_local_eid(&env)
+            && (state::read_total_allocated_amount(&env) != 0
+                || state::read_total_returned_amount(&env) != 0)
+        {
+            panic_with_error!(&env, TokenError::LocalEidLocked);
+        }
+
+        state::write_local_eid(&env, new_local_eid);
+        SetLocalEid {
+            local_eid: new_local_eid,
+        }
+        .publish(&env);
+    }
+
+    // credits mintBudget granted by Ethereum, by the new cumulative total's delta; mirrors
+    // MTokenSide.claimMintBudgetFromEth (EVM). dst_eid is misdelivery protection, not routing:
+    // a submission prepared for another side chain carries that chain's eid and fails here
+    // instead of being taken for this chain's own cumulative value. Pause-gated: while paused
+    // this chain's mint capacity must not keep growing.
+    pub fn claim_mint_budget_from_eth(
+        env: Env,
+        dst_eid: u32,
+        new_total_allocated_amount: i128,
+        src_tx_hash: BytesN<32>,
+    ) {
+        // onlyMintBudgetSubmitter
+        let submitter = require_mint_budget_submitter(&env);
+        require_not_paused(&env);
+        check_nonnegative_amount(&env, new_total_allocated_amount);
+
+        bump_instance(&env);
+
+        let local_eid = get_local_eid(&env);
+        if dst_eid != local_eid {
+            panic_with_error!(&env, TokenError::WrongTargetChain);
+        }
+
+        let delta_amount = advance_watermark(
+            &env,
+            state::read_total_allocated_amount(&env),
+            new_total_allocated_amount,
+        );
+        state::write_total_allocated_amount(&env, new_total_allocated_amount);
+        state::write_mint_budget(&env, state::read_mint_budget(&env) + delta_amount);
+
+        ClaimMintBudgetFromEth {
+            caller: submitter,
+            dst_eid: local_eid,
+            delta_amount,
+            total_allocated_amount: new_total_allocated_amount,
+            src_tx_hash,
+        }
+        .publish(&env);
+    }
+
+    // returns mintBudget to Ethereum, by the new cumulative total's delta; mirrors
+    // MTokenSide.returnMintBudgetToEth (EVM). Deliberately not pause-gated: it only ever
+    // shrinks this chain's mintBudget, and its upstream is a local redemption that Ethereum
+    // cannot pause — blocking it would seal off the one path that lowers mint capacity.
+    pub fn return_mint_budget_to_eth(env: Env, new_total_returned_amount: i128) {
+        // onlyOperator
+        let operator = state::read_operator(&env);
+        operator.require_auth();
+        check_nonnegative_amount(&env, new_total_returned_amount);
+
+        bump_instance(&env);
+
+        let local_eid = get_local_eid(&env);
+        let delta_amount = advance_watermark(
+            &env,
+            state::read_total_returned_amount(&env),
+            new_total_returned_amount,
+        );
+
+        let budget = state::read_mint_budget(&env);
+        if delta_amount > budget {
             panic_with_error!(&env, TokenError::MintBudgetNotEnough);
         }
-        state::write_mint_budget(&env, new_budget);
-        ChangeMintBudget { delta }.publish(&env);
+        state::write_total_returned_amount(&env, new_total_returned_amount);
+        state::write_mint_budget(&env, budget - delta_amount);
+
+        ReturnMintBudgetToEth {
+            caller: operator,
+            local_eid,
+            delta_amount,
+            total_returned_amount: new_total_returned_amount,
+        }
+        .publish(&env);
     }
 
     pub fn mint_to(env: Env, receiver: Address, amount: i128, nonce: u64) -> bool {
@@ -812,6 +977,34 @@ impl Token {
 
     pub fn mint_budget(env: Env) -> i128 {
         state::read_mint_budget(&env)
+    }
+
+    pub fn mint_budget_submitter(env: Env) -> Option<Address> {
+        state::read_mint_budget_submitter(&env)
+    }
+
+    pub fn next_mint_budget_submitter(env: Env) -> Option<Address> {
+        state::read_next_mint_budget_submitter(&env)
+    }
+
+    pub fn et_next_mint_budget_submitter(env: Env) -> Option<u64> {
+        state::read_et_next_mint_budget_submitter(&env)
+    }
+
+    // this chain's own eid, 0 until set_local_eid has run
+    pub fn local_eid(env: Env) -> u32 {
+        state::read_local_eid(&env)
+    }
+
+    // cumulative amount granted by Ethereum and claimed via claim_mint_budget_from_eth
+    // (never decreases)
+    pub fn total_allocated_amount(env: Env) -> i128 {
+        state::read_total_allocated_amount(&env)
+    }
+
+    // cumulative amount returned to Ethereum via return_mint_budget_to_eth (never decreases)
+    pub fn total_returned_amount(env: Env) -> i128 {
+        state::read_total_returned_amount(&env)
     }
 
     pub fn mint_request_et(env: Env, req: BytesN<32>) -> Option<u64> {
@@ -1022,10 +1215,54 @@ pub struct SetDelayRequest {
     pub effective_time: u64,
 }
 
+// mirrors MTokenSide.ClaimMintBudgetFromEth (EVM): delta_amount is what this call credited
+// and total_allocated_amount the cumulative total after it — both readable off a single event
+// so off-chain reconciliation never has to replay history. caller and dst_eid are topics so a
+// third party can filter by chain id, as required by the PRD.
 #[contractevent]
-pub struct ChangeMintBudget {
-    pub delta: i128,
+pub struct ClaimMintBudgetFromEth {
+    #[topic]
+    pub caller: Address,
+    // always this chain's own eid; carried so the two ends reconcile field for field
+    #[topic]
+    pub dst_eid: u32,
+    pub delta_amount: i128,
+    pub total_allocated_amount: i128,
+    // the Ethereum tx hash, recorded as given; the contract does not verify it. BytesN<32>
+    // makes the length part of the ABI, like bytes32 on the EVM side
+    pub src_tx_hash: BytesN<32>,
 }
+
+// mirrors MTokenSide.ReturnMintBudgetToEth (EVM)
+#[contractevent]
+pub struct ReturnMintBudgetToEth {
+    #[topic]
+    pub caller: Address,
+    #[topic]
+    pub local_eid: u32,
+    pub delta_amount: i128,
+    pub total_returned_amount: i128,
+}
+
+#[contractevent]
+pub struct SetLocalEid {
+    pub local_eid: u32,
+}
+
+#[contractevent]
+pub struct MintBudgetSubmitterRequest {
+    pub current_mint_budget_submitter: Option<Address>,
+    pub next_mint_budget_submitter: Address,
+    pub effective_time: u64,
+}
+
+#[contractevent]
+pub struct MintBudgetSubmitterEffected {
+    pub mint_budget_submitter: Address,
+}
+
+#[contractevent]
+pub struct MintBudgetSubmitterRevoked {}
 
 #[contractevent]
 pub struct MintRequest {
@@ -1206,6 +1443,43 @@ fn require_owner_or_operator(env: &Env, caller: &Address) {
     if *caller != state::read_owner(env) && *caller != state::read_operator(env) {
         panic_with_error!(env, TokenError::Unauthorized);
     }
+}
+
+// the submitter credits mintBudget and the operator spends it, so one key holding both roles
+// could walk credit -> mint alone; both setters enforce the split, on each call.
+fn check_operator_submitter_distinct(env: &Env, operator: &Address, submitter: &Option<Address>) {
+    if submitter.as_ref() == Some(operator) {
+        panic_with_error!(env, TokenError::OperatorSubmitterConflict);
+    }
+}
+
+fn require_mint_budget_submitter(env: &Env) -> Address {
+    let submitter = state::read_mint_budget_submitter(env)
+        .unwrap_or_else(|| panic_with_error!(env, TokenError::NotMintBudgetSubmitter));
+    submitter.require_auth();
+    submitter
+}
+
+// reads this chain's own eid, panicking if it has not been set yet
+fn get_local_eid(env: &Env) -> u32 {
+    let local_eid = state::read_local_eid(env);
+    if local_eid == 0 {
+        panic_with_error!(env, TokenError::LocalEidNotSet);
+    }
+    local_eid
+}
+
+// monotonic advance of one cumulative watermark, shared by both mintBudget entry points: a
+// submission must state a total strictly above the recorded one, so a replayed or stale value
+// panics rather than silently landing as a no-op (PRD §4.4).
+fn advance_watermark(env: &Env, curr: i128, new_total: i128) -> i128 {
+    if new_total > MAX_MINT_BUDGET_RELAY_AMOUNT {
+        panic_with_error!(env, TokenError::MintBudgetAmountTooLarge);
+    }
+    if curr >= new_total {
+        panic_with_error!(env, TokenError::StaleMintBudgetSubmission);
+    }
+    new_total - curr
 }
 
 fn check_nonnegative_amount(env: &Env, amount: i128) {
