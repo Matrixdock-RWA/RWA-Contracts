@@ -11,7 +11,7 @@ contract MTokenSide is MToken {
         uint32 indexed dstEid, // always this chain's own eid; indexed for uniform per-chain queries
         uint112 deltaAmount,
         uint112 totalAllocatedAmount,
-        bytes srcTxHash // recorded as given; the contract does not verify it
+        bytes32 ethTxHash // recorded as given; the contract does not verify it
     );
     event ReturnMintBudgetToEth(
         address indexed caller,
@@ -80,18 +80,17 @@ contract MTokenSide is MToken {
     function claimMintBudgetFromEth(
         uint32 dstEid,
         uint112 newTotalAllocatedAmount,
-        bytes calldata srcTxHash
+        bytes32 ethTxHash
     ) public onlyMintBudgetSubmitter whenNotPaused {
         uint32 _localEid = _getLocalEid();
         if (dstEid != _localEid) {
             revert WrongTargetChain(_localEid, dstEid);
         }
-        _checkSrcTxHash(srcTxHash);
 
         MintBudgetInfo storage mintBudgetInfo = mintBudgetMap[_localEid];
         uint112 deltaAmount = _advanceAllocated(mintBudgetInfo, newTotalAllocatedAmount);
         mintBudget += deltaAmount;
-        emit ClaimMintBudgetFromEth(msg.sender, _localEid, deltaAmount, newTotalAllocatedAmount, srcTxHash);
+        emit ClaimMintBudgetFromEth(msg.sender, _localEid, deltaAmount, newTotalAllocatedAmount, ethTxHash);
     }
 
     // returns mintBudget to Ethereum, by the new cumulative total's delta. Risk-reducing (it

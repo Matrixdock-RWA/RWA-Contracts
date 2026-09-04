@@ -126,10 +126,6 @@ contract MToken is MTokenBase, ICCClient {
 
     uint256 constant TAG_SEND_TOKEN = 2;
 
-    // generous upper bound: the longest tx identifier in use is Solana's 64-byte
-    // signature, and the check only exists to keep an unbounded blob out of calldata
-    uint256 constant MAX_SRC_TX_HASH_LEN = 128;
-
     uint64 constant SECONDS_PER_DAY = 24 * 3600; // lastReconcileTime & ozPerTokenBaseTime are rounded to daily boundary
     uint64 constant DAYS_PER_YEAR = 365; // dailyFeeRate is annualFeeRate / DAYS_PER_YEAR
     uint64 constant FEE_RATE_BASE = 10 ** 9; // feeRate is 9 decimals
@@ -180,7 +176,6 @@ contract MToken is MTokenBase, ICCClient {
     error OperatorSubmitterConflict(address);
     error MintBudgetNotEnough(uint256 budget, uint256 amount);
     error StaleMintBudgetSubmission(uint112 recorded, uint112 submitted);
-    error InvalidSrcTxHash(uint256 length);
     error TransferToContract();
     error ZeroValue();
     error CcSendDisabled();
@@ -263,15 +258,6 @@ contract MToken is MTokenBase, ICCClient {
     function _checkOperatorSubmitterDistinct(address _operator, address _submitter) private pure {
         if (_operator == _submitter) {
             revert OperatorSubmitterConflict(_operator);
-        }
-    }
-
-    // the source-chain tx that authorized a mintBudget submission: variable-length because
-    // chains disagree on tx id size (32 bytes on EVM/Sui/Stellar, 64 on Solana), and only
-    // recorded — the contract can't read another chain, so verification is off-chain.
-    function _checkSrcTxHash(bytes calldata srcTxHash) internal pure {
-        if (srcTxHash.length == 0 || srcTxHash.length > MAX_SRC_TX_HASH_LEN) {
-            revert InvalidSrcTxHash(srcTxHash.length);
         }
     }
 

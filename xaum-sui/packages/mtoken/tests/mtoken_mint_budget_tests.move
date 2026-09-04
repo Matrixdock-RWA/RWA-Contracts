@@ -13,7 +13,7 @@ use sui::test_scenario;
 // constants are not exported, so we need to redefine them here
 const INIT_DELAY: u64 = 5;
 const INIT_GOV_DELAY: u64 = 5;
-const MAX_SRC_TX_HASH_LEN: u64 = 128;
+const ETH_TX_HASH_LEN: u64 = 32;
 
 // LayerZero endpoint ids: this chain's own, and another branch chain's
 const SUI_EID: u32 = 30101;
@@ -350,26 +350,46 @@ fun claim_mint_budget_from_eth_err_empty_src_tx_hash() {
 }
 
 #[test, expected_failure(abort_code = mtoken::EInvalidSrcTxHash)]
+fun claim_mint_budget_from_eth_err_src_tx_hash_too_short() {
+    let (mut scenario, mut _clock) = init_xaum();
+    setup_submitter(&mut scenario, &mut _clock);
+    set_local_eid(&mut scenario, ADMIN, SUI_EID);
+    let mut too_short = vector[];
+    (ETH_TX_HASH_LEN - 1).do!(|_| too_short.push_back(0xAB));
+    claim_mint_budget_from_eth(&mut scenario, SUBMITTER, SUI_EID, 100, too_short);
+    abort
+}
+
+#[test, expected_failure(abort_code = mtoken::EInvalidSrcTxHash)]
 fun claim_mint_budget_from_eth_err_src_tx_hash_too_long() {
     let (mut scenario, mut _clock) = init_xaum();
     setup_submitter(&mut scenario, &mut _clock);
     set_local_eid(&mut scenario, ADMIN, SUI_EID);
     let mut too_long = vector[];
-    (MAX_SRC_TX_HASH_LEN + 1).do!(|_| too_long.push_back(0xAB));
+    (ETH_TX_HASH_LEN + 1).do!(|_| too_long.push_back(0xAB));
     claim_mint_budget_from_eth(&mut scenario, SUBMITTER, SUI_EID, 100, too_long);
     abort
 }
 
-// the longest identifier a submission must carry is Solana's 64-byte signature; the bound
-// itself is what is pinned here
-#[test]
-fun claim_mint_budget_from_eth_max_src_tx_hash_ok() {
+#[test, expected_failure(abort_code = mtoken::EInvalidSrcTxHash)]
+fun claim_mint_budget_from_eth_err_solana_signature_length() {
     let (mut scenario, mut _clock) = init_xaum();
     setup_submitter(&mut scenario, &mut _clock);
     set_local_eid(&mut scenario, ADMIN, SUI_EID);
-    let mut max_len = vector[];
-    MAX_SRC_TX_HASH_LEN.do!(|_| max_len.push_back(0xAB));
-    claim_mint_budget_from_eth(&mut scenario, SUBMITTER, SUI_EID, 100, max_len);
+    let mut solana_signature = vector[];
+    64u64.do!(|_| solana_signature.push_back(0xAB));
+    claim_mint_budget_from_eth(&mut scenario, SUBMITTER, SUI_EID, 100, solana_signature);
+    abort
+}
+
+#[test]
+fun claim_mint_budget_from_eth_exact_src_tx_hash_length_ok() {
+    let (mut scenario, mut _clock) = init_xaum();
+    setup_submitter(&mut scenario, &mut _clock);
+    set_local_eid(&mut scenario, ADMIN, SUI_EID);
+    let mut exact_length = vector[];
+    ETH_TX_HASH_LEN.do!(|_| exact_length.push_back(0xAB));
+    claim_mint_budget_from_eth(&mut scenario, SUBMITTER, SUI_EID, 100, exact_length);
 
     scenario.next_tx(ADMIN);
     {

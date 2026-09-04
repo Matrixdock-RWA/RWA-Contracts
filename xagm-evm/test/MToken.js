@@ -1235,6 +1235,17 @@ describe("MTokenFT", function () {
         await expect(mt.connect(alice).reclaimMintBudgetFromChain(PEER_EID, 100, solanaSig))
           .to.emit(mt, "ReclaimMintBudgetFromChain")
           .withArgs(alice.address, PEER_EID, 100, 100, anyValue, solanaSig);
+
+        // both accepted boundaries: 1 byte and exactly MAX_SRC_TX_HASH_LEN (128) go through
+        // (cumulative totals keep climbing so the watermark does not reject them as stale)
+        const oneByte = "0xab";
+        await expect(mt.connect(alice).reclaimMintBudgetFromChain(PEER_EID, 200, oneByte))
+          .to.emit(mt, "ReclaimMintBudgetFromChain")
+          .withArgs(alice.address, PEER_EID, 100, 200, anyValue, oneByte);
+        const maxLen = "0x" + "cd".repeat(128);
+        await expect(mt.connect(alice).reclaimMintBudgetFromChain(PEER_EID, 300, maxLen))
+          .to.emit(mt, "ReclaimMintBudgetFromChain")
+          .withArgs(alice.address, PEER_EID, 100, 300, anyValue, maxLen);
       });
     });
 
@@ -1397,18 +1408,24 @@ describe("MTokenFT", function () {
           .withArgs(alice.address, SIDE_EID, 10000, 10000, SRC_TX);
       });
 
-      it("srcTxHash: rejects empty and over-long", async function () {
+      it("ethTxHash: fixed 32 bytes — anything else is unencodable, the value itself is recorded unverified", async function () {
         const { mtSide, owner, alice } = await loadFixture(deployTestFixture);
         await mtSide.connect(owner).setMintBudgetSubmitter(alice.address);
         await mtSide.connect(owner).setMintBudgetSubmitter(alice.address);
         await mtSide.connect(owner).setLocalEid(SIDE_EID);
 
-        await expect(mtSide.connect(alice).claimMintBudgetFromEth(SIDE_EID, 100, "0x"))
-          .to.be.revertedWithCustomError(mtSide, "InvalidSrcTxHash")
-          .withArgs(0);
-        await expect(mtSide.connect(alice).claimMintBudgetFromEth(SIDE_EID, 100, "0x" + "cd".repeat(129)))
-          .to.be.revertedWithCustomError(mtSide, "InvalidSrcTxHash")
-          .withArgs(129);
+        // the source is always Ethereum, so the width is pinned by the type: no in-contract
+        // length check exists because a wrong-length identifier can't even be encoded
+        for (const bad of ["0x", "0x" + "cd".repeat(31), "0x" + "cd".repeat(33)]) {
+          expect(() => mtSide.interface.encodeFunctionData(
+            "claimMintBudgetFromEth", [SIDE_EID, 100, bad])).to.throw();
+        }
+
+        // any 32-byte value goes through as-is — the contract can't read Ethereum, so it
+        // never judges whether the hash is real; even the zero hash is recorded
+        await expect(mtSide.connect(alice).claimMintBudgetFromEth(SIDE_EID, 100, ethers.ZeroHash))
+          .to.emit(mtSide, "ClaimMintBudgetFromEth")
+          .withArgs(alice.address, SIDE_EID, 100, 100, ethers.ZeroHash);
       });
 
       it("returnMintBudgetToEth: reduces local mintBudget, tracks the cumulative return", async function () {

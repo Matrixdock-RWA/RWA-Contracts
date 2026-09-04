@@ -11,6 +11,10 @@ contract MTokenMain is MToken {
 
     uint256 constant ORACLE_OFFLINE_THRESHOLD = 2 days;
 
+    // generous upper bound: the longest tx identifier in use is Solana's 64-byte
+    // signature, and the check only exists to keep an unbounded blob out of calldata
+    uint256 constant MAX_SRC_TX_HASH_LEN = 128;
+
     event ConfigMintBudgetPeer(uint32 indexed eid, bool enabled);
     event AllocateMintBudgetToChain(
         address indexed caller,
@@ -31,6 +35,7 @@ contract MTokenMain is MToken {
     error ReserveNotEnough(int max, int amount);
     error MintBudgetPeerNotSet(uint32 eid);
     error UsedReserveBelowFloor(uint256 usedReserve, uint256 floor);
+    error InvalidSrcTxHash(uint256 length);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -170,6 +175,15 @@ contract MTokenMain is MToken {
         usedReserve = _usedReserve;
         emit ReclaimMintBudgetFromChain(msg.sender, srcEid, deltaAmount, newTotalReturnedAmount,
             _usedReserve, srcTxHash);
+    }
+
+    // the source-chain tx that authorized a mintBudget submission: variable-length because
+    // chains disagree on tx id size (32 bytes on EVM/Sui/Stellar, 64 on Solana), and only
+    // recorded — the contract can't read another chain, so verification is off-chain.
+    function _checkSrcTxHash(bytes calldata srcTxHash) private pure {
+        if (srcTxHash.length == 0 || srcTxHash.length > MAX_SRC_TX_HASH_LEN) {
+            revert InvalidSrcTxHash(srcTxHash.length);
+        }
     }
 
 }

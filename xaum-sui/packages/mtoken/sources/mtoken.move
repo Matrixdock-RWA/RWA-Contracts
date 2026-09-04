@@ -50,12 +50,9 @@ const ELocalEidLocked: u64 = 129;
 
 const VERSION: u64 = 3;
 
-// generous upper bound: the longest tx identifier in use is Solana's 64-byte signature,
-// and the check only exists to keep an unbounded blob out of the transaction payload
-const MAX_SRC_TX_HASH_LEN: u64 = 128;
-
 const REQ_TTL: u64 = 3600 * 12; // 12 hours, time to live after effective
 const MIN_GOV_DELAY: u64 = 3600 * 24; // 1 day
+const ETH_TX_HASH_LEN: u64 = 32;
 
 // must stay in sync with mtoken_gov (constants are module-private in Move)
 const OP_UNPAUSE: u256 = 10;
@@ -1143,12 +1140,8 @@ fun check_non_zero(amount: u64) {
     assert!(amount > 0, EZeroValue);
 }
 
-// the source-chain tx that authorized a mintBudget submission: variable-length because chains
-// disagree on tx id size (32 bytes on EVM/Sui/Stellar, 64 on Solana), and only recorded — the
-// contract cannot read another chain, so verification is off-chain.
 fun check_src_tx_hash(src_tx_hash: &vector<u8>) {
-    let len = src_tx_hash.length();
-    assert!(len > 0 && len <= MAX_SRC_TX_HASH_LEN, EInvalidSrcTxHash);
+    assert!(src_tx_hash.length() == ETH_TX_HASH_LEN, EInvalidSrcTxHash);
 }
 
 // reads this chain's own eid, aborting if it has not been set yet
