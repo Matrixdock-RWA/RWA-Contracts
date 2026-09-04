@@ -130,8 +130,42 @@ pub struct Redeem {
 }
 
 #[event]
-pub struct ChangeMintBudget {
-    pub delta: i64,
+pub struct SetMintBudgetSubmitterRequest {
+    pub old_mint_budget_submitter: Pubkey,
+    pub new_mint_budget_submitter: Pubkey,
+    pub et: i64,
+}
+
+#[event]
+pub struct SetMintBudgetSubmitterEffected {
+    pub new_mint_budget_submitter: Pubkey,
+}
+
+#[event]
+pub struct RevokeNextMintBudgetSubmitter {
+    pub pending_mint_budget_submitter: Pubkey,
+}
+
+#[event]
+pub struct SetLocalEid {
+    pub local_eid: u32,
+}
+
+#[event]
+pub struct ClaimMintBudgetFromEth {
+    pub caller: Pubkey,
+    pub dst_eid: u32,
+    pub delta_amount: u64,
+    pub total_allocated_amount: u64,
+    pub src_tx_hash: [u8; 32],
+}
+
+#[event]
+pub struct ReturnMintBudgetToEth {
+    pub caller: Pubkey,
+    pub local_eid: u32,
+    pub delta_amount: u64,
+    pub total_returned_amount: u64,
 }
 
 #[event]

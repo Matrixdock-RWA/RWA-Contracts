@@ -85,4 +85,31 @@ pub enum ErrorCode {
 
     #[msg("NotPaused")]
     NotPaused,
+
+    #[msg("InvalidMintBudgetSubmitter")]
+    InvalidMintBudgetSubmitter,
+
+    #[msg("OperatorSubmitterConflict")]
+    OperatorSubmitterConflict,
+
+    #[msg("NotMintBudgetSubmitter")]
+    NotMintBudgetSubmitter,
+
+    #[msg("StaleMintBudgetSubmission")]
+    StaleMintBudgetSubmission,
+
+    #[msg("WrongTargetChain")]
+    WrongTargetChain,
+
+    #[msg("LocalEidNotSet")]
+    LocalEidNotSet,
+
+    #[msg("LocalEidLocked")]
+    LocalEidLocked,
+
+    #[msg("Paused")]
+    Paused,
+
+    #[msg("ZeroValue")]
+    ZeroValue,
 }

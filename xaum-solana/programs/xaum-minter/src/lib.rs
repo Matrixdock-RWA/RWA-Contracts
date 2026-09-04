@@ -62,6 +62,32 @@ pub mod xaum_minter {
         Ok(())
     }
 
+    // Step 2: the pending owner (next_owner) accepts the transfer once the timelock elapses.
+    pub fn accept_ownership(ctx: Context<AcceptOwner>) -> Result<()> {
+        let state = &mut ctx.accounts.state;
+        require!(state.next_owner_et != 0, ErrorCode::NoPendingOwner);
+        let clock = Clock::get()?;
+        require!(
+            state.next_owner_et <= clock.unix_timestamp,
+            ErrorCode::NotEffective
+        );
+        state.owner = state.next_owner;
+        state.next_owner_et = 0;
+        emit!(SetOwnerEffected {
+            new_owner: state.owner,
+        });
+        Ok(())
+    }
+
+    // Owner can cancel a pending ownership transfer before it takes effect.
+    pub fn revoke_next_owner(ctx: Context<OnlyOwner>) -> Result<()> {
+        ctx.accounts.state.next_owner_et = 0;
+        emit!(RevokeNextOwner {
+            pending_owner: ctx.accounts.state.next_owner,
+        });
+        Ok(())
+    }
+
     // One-time growth of the production state account to the V2 INIT_SPACE (adds the
     // gov_delay group). Kept as its own instruction so the frequently-called governance
     // ops (set_gov_delay request/execute/revoke) don't carry realloc overhead or require
@@ -115,32 +141,6 @@ pub mod xaum_minter {
         state.next_gov_delay_et = 0;
         emit!(RevokeNextGovDelay {
             pending_gov_delay: pending,
-        });
-        Ok(())
-    }
-
-    // Step 2: the pending owner (next_owner) accepts the transfer once the timelock elapses.
-    pub fn accept_ownership(ctx: Context<AcceptOwner>) -> Result<()> {
-        let state = &mut ctx.accounts.state;
-        require!(state.next_owner_et != 0, ErrorCode::NoPendingOwner);
-        let clock = Clock::get()?;
-        require!(
-            state.next_owner_et <= clock.unix_timestamp,
-            ErrorCode::NotEffective
-        );
-        state.owner = state.next_owner;
-        state.next_owner_et = 0;
-        emit!(SetOwnerEffected {
-            new_owner: state.owner,
-        });
-        Ok(())
-    }
-
-    // Owner can cancel a pending ownership transfer before it takes effect.
-    pub fn revoke_next_owner(ctx: Context<OnlyOwner>) -> Result<()> {
-        ctx.accounts.state.next_owner_et = 0;
-        emit!(RevokeNextOwner {
-            pending_owner: ctx.accounts.state.next_owner,
         });
         Ok(())
     }

@@ -8,7 +8,8 @@ use anchor_lang::prelude::*;
 // next_forced_transfer_et/next_forced_transfer_hash and next_unpause_et have not
 // shipped to mainnet, so they carry no legacy layout to preserve and were declared
 // (and reordered) freely: 40 bytes for the forced-transfer pair (et + hash), then 8
-// bytes for next_unpause_et = 112 remaining. Total INIT_SPACE is unchanged — no
+// bytes for next_unpause_et = 112 remaining. The mint-budget relay consumes 92 more
+// bytes, leaving 20. Total INIT_SPACE is unchanged — no
 // account reallocation required on upgrade.
 #[account]
 #[derive(InitSpace)]
@@ -73,12 +74,23 @@ pub struct State {
     // above to keep next_forced_transfer_et and next_forced_transfer_hash adjacent.
     pub next_unpause_et: i64,
 
+    // In-house mint-budget relay. All fields are carved from the old zero-filled
+    // reserve, so an existing account upgrades with the feature disabled until the
+    // owner configures submitter and local_eid.
+    pub mint_budget_submitter: Pubkey,
+    pub next_mint_budget_submitter: Pubkey,
+    pub next_mint_budget_submitter_et: i64,
+    pub mint_budget_total_allocated_amount: u64,
+    pub mint_budget_total_returned_amount: u64,
+    pub local_eid: u32,
+
     // reserved for future fields (running total, in declaration order above)
     // 256 - 24 consumed by gov_delay group = 232 remaining
     // 232 - 72 consumed by forced_transfer_receiver group = 160 remaining
     // 160 - 40 consumed by next_forced_transfer_et (8) + next_forced_transfer_hash (32) = 120 remaining
     // 120 - 8 consumed by next_unpause_et = 112 remaining
-    pub _reserved: [u8; 112],
+    // 112 - 92 consumed by mint-budget relay fields = 20 remaining
+    pub _reserved: [u8; 20],
 
     pub bump: u8,
 }
@@ -97,6 +109,12 @@ impl State {
         self.gov_delay = gov_delay;
         self.next_mint_recipient = owner;
         self.next_mint_nonce = [0; 32];
+        self.mint_budget_submitter = Pubkey::default();
+        self.next_mint_budget_submitter = Pubkey::default();
+        self.next_mint_budget_submitter_et = 0;
+        self.mint_budget_total_allocated_amount = 0;
+        self.mint_budget_total_returned_amount = 0;
+        self.local_eid = 0;
         self.bump = bump;
     }
 }

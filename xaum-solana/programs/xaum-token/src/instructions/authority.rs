@@ -41,18 +41,6 @@ pub struct AcceptRevokerOp<'info> {
     next_revoker: Signer<'info>,
 }
 
-#[derive(Accounts)]
-pub struct OperatorOp<'info> {
-    #[account(
-        mut,
-        seeds = [b"state"],
-        bump = state.bump,
-        has_one = operator @ ErrorCode::NotOperator,
-    )]
-    state: Account<'info, State>,
-    operator: Signer<'info>,
-}
-
 // Revocation context: signer must be owner OR revoker (checked in-handler).
 // Anchor `has_one` cannot express an OR, so the check is manual.
 #[derive(Accounts)]
@@ -150,6 +138,10 @@ pub fn revoke_next_owner(ctx: Context<OwnerOrRevokerOp>) -> Result<()> {
 
 pub fn set_operator(ctx: Context<OwnerOp>, new_operator: Pubkey) -> Result<()> {
     let state = &mut ctx.accounts.state;
+    require!(
+        new_operator != state.mint_budget_submitter,
+        ErrorCode::OperatorSubmitterConflict
+    );
     let clock = Clock::get()?;
     if state.next_operator_et == 0 {
         state.next_operator = new_operator;
@@ -167,6 +159,12 @@ pub fn set_operator(ctx: Context<OwnerOp>, new_operator: Pubkey) -> Result<()> {
         require!(
             state.next_operator == new_operator,
             ErrorCode::RequestMismatch
+        );
+        // Recheck after the delay in case the submitter changed while this
+        // request was pending.
+        require!(
+            new_operator != state.mint_budget_submitter,
+            ErrorCode::OperatorSubmitterConflict
         );
         state.operator = state.next_operator;
         state.next_operator_et = 0;
@@ -387,23 +385,6 @@ pub fn revoke_mint(ctx: Context<OwnerOrRevokerOp>) -> Result<()> {
     Ok(())
 }
 
-pub fn change_mint_budget(ctx: Context<OperatorOp>, delta: i64) -> Result<()> {
-    let state = &mut ctx.accounts.state;
-
-    if delta > 0 {
-        state.mint_budget += delta as u64;
-    } else {
-        require!(
-            state.mint_budget >= -delta as u64,
-            ErrorCode::MintBudgetNotEnough
-        );
-        state.mint_budget -= -delta as u64;
-    }
-    emit!(ChangeMintBudget { delta });
-
-    Ok(())
-}
-
 //================================================================================
 // #11 setForcedTransferReceiver — gov_delay, revoke by owner/revoker.
 
@@ -465,5 +446,91 @@ pub fn revoke_unpause(ctx: Context<OwnerOrRevokerOp>) -> Result<()> {
     let pending_et = state.next_unpause_et;
     state.next_unpause_et = 0;
     emit!(RevokeNextUnpause { pending_et });
+    Ok(())
+}
+
+//================================================================================
+// MintBudget relay configuration — submitter is gov_delay-gated with revoke by
+// owner/revoker; local EID is owner-only and locks once any budget has moved.
+
+pub fn set_mint_budget_submitter(
+    ctx: Context<OwnerOp>,
+    new_submitter: Pubkey,
+) -> Result<()> {
+    require!(
+        new_submitter != Pubkey::default(),
+        ErrorCode::InvalidMintBudgetSubmitter
+    );
+
+    let state = &mut ctx.accounts.state;
+    require!(
+        new_submitter != state.operator,
+        ErrorCode::OperatorSubmitterConflict
+    );
+
+    let clock = Clock::get()?;
+    if state.next_mint_budget_submitter_et == 0 {
+        state.next_mint_budget_submitter = new_submitter;
+        state.next_mint_budget_submitter_et = clock.unix_timestamp + state.gov_delay;
+        emit!(SetMintBudgetSubmitterRequest {
+            old_mint_budget_submitter: state.mint_budget_submitter,
+            new_mint_budget_submitter: new_submitter,
+            et: state.next_mint_budget_submitter_et,
+        });
+    } else {
+        require!(
+            state.next_mint_budget_submitter_et <= clock.unix_timestamp,
+            ErrorCode::NotEffective
+        );
+        require!(
+            state.next_mint_budget_submitter == new_submitter,
+            ErrorCode::RequestMismatch
+        );
+        // Recheck at execution: a conflicting operator request may have become
+        // effective while this request waited out gov_delay.
+        require!(
+            new_submitter != state.operator,
+            ErrorCode::OperatorSubmitterConflict
+        );
+        state.mint_budget_submitter = new_submitter;
+        state.next_mint_budget_submitter_et = 0;
+        emit!(SetMintBudgetSubmitterEffected {
+            new_mint_budget_submitter: new_submitter,
+        });
+    }
+    Ok(())
+}
+
+pub fn revoke_next_mint_budget_submitter(
+    ctx: Context<OwnerOrRevokerOp>,
+) -> Result<()> {
+    let signer = ctx.accounts.signer.key();
+    require_owner_or_revoker(&ctx.accounts.state, &signer)?;
+    let state = &mut ctx.accounts.state;
+    let pending_mint_budget_submitter = state.next_mint_budget_submitter;
+    state.next_mint_budget_submitter_et = 0;
+    emit!(RevokeNextMintBudgetSubmitter {
+        pending_mint_budget_submitter,
+    });
+    Ok(())
+}
+
+pub fn set_local_eid(
+    ctx: Context<OwnerOp>,
+    new_local_eid: u32,
+) -> Result<()> {
+    require!(new_local_eid != 0, ErrorCode::ZeroValue);
+    let state = &mut ctx.accounts.state;
+    if new_local_eid != state.local_eid {
+        require!(
+            state.mint_budget_total_allocated_amount == 0
+                && state.mint_budget_total_returned_amount == 0,
+            ErrorCode::LocalEidLocked
+        );
+    }
+    state.local_eid = new_local_eid;
+    emit!(SetLocalEid {
+        local_eid: new_local_eid,
+    });
     Ok(())
 }

@@ -31,8 +31,42 @@ pub mod xaum_token {
         authority::revoke_mint(ctx)
     }
 
-    pub fn change_mint_budget(ctx: Context<OperatorOp>, delta: i64) -> Result<()> {
-        authority::change_mint_budget(ctx, delta)
+    pub fn set_mint_budget_submitter(
+        ctx: Context<OwnerOp>,
+        new_submitter: Pubkey,
+    ) -> Result<()> {
+        authority::set_mint_budget_submitter(ctx, new_submitter)
+    }
+
+    pub fn revoke_next_mint_budget_submitter(
+        ctx: Context<OwnerOrRevokerOp>,
+    ) -> Result<()> {
+        authority::revoke_next_mint_budget_submitter(ctx)
+    }
+
+    pub fn set_local_eid(ctx: Context<OwnerOp>, new_local_eid: u32) -> Result<()> {
+        authority::set_local_eid(ctx, new_local_eid)
+    }
+
+    pub fn claim_mint_budget_from_eth(
+        ctx: Context<ClaimMintBudget>,
+        dst_eid: u32,
+        new_total_allocated_amount: u64,
+        src_tx_hash: [u8; 32],
+    ) -> Result<()> {
+        mint_budget::claim_mint_budget_from_eth(
+            ctx,
+            dst_eid,
+            new_total_allocated_amount,
+            src_tx_hash,
+        )
+    }
+
+    pub fn return_mint_budget_to_eth(
+        ctx: Context<ReturnMintBudget>,
+        new_total_returned_amount: u64,
+    ) -> Result<()> {
+        mint_budget::return_mint_budget_to_eth(ctx, new_total_returned_amount)
     }
 
     pub fn redeem_token(
